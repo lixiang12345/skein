@@ -40,6 +40,11 @@ describe('terminal presentation', () => {
     expect(output).toContain('Run tests');
   });
 
+  it('labels the explicit planning mode in the header', () => {
+    const output = renderToString(<Header config={config} askMode planMode />);
+    expect(output).toContain('PLAN');
+  });
+
   it('reveals bounded tool output without allowing ANSI or control-sequence injection', () => {
     const output = renderToString(
       <Timeline showToolOutput items={[{

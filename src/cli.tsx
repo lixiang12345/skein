@@ -39,6 +39,7 @@ import type {MosaicConfig, ProviderName, Session} from './types.js';
 import type {IndexProgress} from './context/local-index.js';
 import {workspaceAliasPath} from './utils/path.js';
 import {PRODUCT_COMMAND} from './brand.js';
+import {PLAN_MODE_INSTRUCTIONS} from './agent/prompt.js';
 import packageJson from '../package.json' with {type: 'json'};
 
 const cliGlyphs = resolveCliGlyphs();
@@ -70,6 +71,7 @@ program
   .argument('[prompt...]', 'instruction for the agent')
   .option('-p, --print', 'run once and print the result')
   .option('-a, --ask', 'retrieval and inspection mode; mutation tools are denied')
+  .option('--plan', 'read-only planning mode; propose changes without mutating the workspace')
   .option('-q, --quiet', 'print only the final response in text mode')
   .addOption(new Option('--output-format <format>', 'text, json, or stream-json')
     .choices(['text', 'json', 'stream-json']).default('text'))
@@ -580,6 +582,7 @@ program.parseAsync(process.argv).catch((error: unknown) => {
 interface RootOptions {
   print?: boolean;
   ask?: boolean;
+  plan?: boolean;
   quiet?: boolean;
   outputFormat: OutputFormat;
   compact?: boolean;
@@ -634,6 +637,12 @@ interface RuntimeConfigOptions {
 }
 
 async function runChat(prompts: string[], options: RootOptions): Promise<void> {
+  const shouldPrint = options.print === true || !process.stdin.isTTY || !process.stdout.isTTY;
+  if (options.ask && options.plan) throw new Error('--ask and --plan cannot be used together.');
+  if (!shouldPrint && options.queue.length) throw new Error('--queue is only available with --print.');
+  const stdinPrompt = !process.stdin.isTTY ? await readStdin() : '';
+  const firstPrompt = [...prompts, stdinPrompt].filter(Boolean).join('\n\n').trim();
+  if (shouldPrint && !firstPrompt) throw new Error('Provide a prompt argument or pipe input on stdin.');
   const workspace = resolve(options.workspace);
   const config = await runtimeConfig(workspace, options);
   const store = new SessionStore(workspace);
@@ -659,11 +668,7 @@ async function runChat(prompts: string[], options: RootOptions): Promise<void> {
     promptContextProvider: extensions,
     ...(selectedSession ? {session: selectedSession} : {}),
   });
-  const stdinPrompt = !process.stdin.isTTY ? await readStdin() : '';
-  const firstPrompt = [...prompts, stdinPrompt].filter(Boolean).join('\n\n').trim();
-  const shouldPrint = options.print === true || !process.stdin.isTTY || !process.stdout.isTTY;
   if (!shouldPrint) {
-    if (options.queue.length) throw new Error('--queue is only available with --print.');
     await store.save(runner.getSession());
     try {
       await runInteractiveTui({
@@ -671,14 +676,14 @@ async function runChat(prompts: string[], options: RootOptions): Promise<void> {
         config,
         extensions,
         ...(firstPrompt ? {initialPrompt: firstPrompt} : {}),
-        askMode: options.ask === true,
+        askMode: options.ask === true || options.plan === true,
+        planMode: options.plan === true,
       });
     } finally {
       await extensions.close();
     }
     return;
   }
-  if (!firstPrompt) throw new Error('Provide a prompt argument or pipe input on stdin.');
   const reporter = new HeadlessReporter({
     format: options.outputFormat,
     quiet: options.quiet ?? false,
@@ -696,14 +701,16 @@ async function runChat(prompts: string[], options: RootOptions): Promise<void> {
   try {
     validateModelSetup(config);
     let session = await runner.run(firstPrompt, {
-      askMode: options.ask === true,
+      askMode: options.ask === true || options.plan === true,
+      ...(options.plan ? {turnInstructions: PLAN_MODE_INSTRUCTIONS} : {}),
       maxTurns: positiveInt(options.maxTurns, config.agent.maxTurns),
       onEvent: reporter.onEvent,
       requestPermission,
     });
     for (const queued of options.queue) {
       session = await runner.run(queued, {
-        askMode: options.ask === true,
+        askMode: options.ask === true || options.plan === true,
+        ...(options.plan ? {turnInstructions: PLAN_MODE_INSTRUCTIONS} : {}),
         maxTurns: positiveInt(options.maxTurns, config.agent.maxTurns),
         onEvent: reporter.onEvent,
         requestPermission,

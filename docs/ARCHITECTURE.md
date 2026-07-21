@@ -117,7 +117,9 @@ useful without silently accumulating guesses.
 - Destructive commands are denied before ordinary approval rules are evaluated.
 - Allow-listed commands cannot contain shell control or substitution syntax.
 - Allow rules do not override derived write or network permission categories.
-- Ask mode removes mutating capabilities from autonomous execution.
+- Ask and Plan modes remove mutating capabilities from autonomous execution.
+  Plan mode additionally injects a read-only, approval-oriented planning
+  directive; Build mode is required before workspace mutation is possible.
 - Hooks are bounded subprocesses and receive structured environment metadata.
 - Checkpoint restore validates paths before writing snapshots back.
 - Session and checkpoint directories reject symlinked `.mosaic` storage paths;

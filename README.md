@@ -133,8 +133,11 @@ Useful interactive commands include `/workflow`, `/context`, `/mode`, `/memory`,
 `/remember`, `/skills`, `/agents`, `/mcp`, `/tools`, `/permissions`, and
 `/theme`. `/transcript` reveals bounded full tool results, `/changes` lists
 session writes, `/diff` opens the current Git diff through the normal permission
-policy, and `/checkpoints` shows recoverable pre-mutation snapshots. `/mode ask`
-and `/mode build` switch the permission posture without restarting. `/context`
+policy, and `/checkpoints` shows recoverable pre-mutation snapshots. `/mode ask`,
+`/mode plan`, and `/mode build` switch the workflow posture without restarting.
+Plan mode is read-only and produces an approval-ready implementation plan;
+Build mode is the only mode that can mutate under the configured policy.
+`/context`
 toggles one live inspector for the active transcript, mutable working memory,
 compacted session summary, and durable retrieval layer separately. Model-
 suggested durable memories can be reviewed with `/memory candidates` and then
@@ -178,6 +181,9 @@ skein --print --queue "Run focused tests" --queue "Summarize risks" "Fix the bug
 
 # Read-only investigation
 skein --ask --print "Trace request authentication"
+
+# Read-only implementation planning
+skein --plan --print "Design the storage migration"
 ```
 
 Non-interactive permission requests are denied unless the operation is already

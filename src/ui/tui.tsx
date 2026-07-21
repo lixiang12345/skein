@@ -2,6 +2,7 @@ import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {Box, render, Text, useApp, useInput, useWindowSize} from 'ink';
 import {relative} from 'node:path';
 import type {AgentRunner} from '../agent/index.js';
+import {PLAN_MODE_INSTRUCTIONS} from '../agent/prompt.js';
 import {saveUiPreference} from '../config.js';
 import {
   activeMentionToken,
@@ -82,12 +83,13 @@ export interface TuiOptions {
   extensions?: ExtensionRuntime;
   initialPrompt?: string;
   askMode?: boolean;
+  planMode?: boolean;
 }
 
 let itemCounter = 0;
 const nextId = () => `ui-${Date.now()}-${itemCounter++}`;
 
-export function SkeinApp({runner, config, extensions, initialPrompt, askMode = false}: TuiOptions) {
+export function SkeinApp({runner, config, extensions, initialPrompt, askMode = false, planMode = false}: TuiOptions) {
   const {exit} = useApp();
   const {columns, rows} = useWindowSize();
   const terminalWidth = Math.max(1, columns || 80);
@@ -108,7 +110,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const [theme, setTheme] = useState(() => resolveThemeWithColor(config.ui.theme, colorEnabled));
   const [themeCatalogRevision, setThemeCatalogRevision] = useState(0);
   const [compact, setCompact] = useState(config.ui.compact);
-  const [interactionMode, setInteractionMode] = useState<'ask' | 'build'>(askMode ? 'ask' : 'build');
+  const [interactionMode, setInteractionMode] = useState<'ask' | 'plan' | 'build'>(planMode ? 'plan' : askMode ? 'ask' : 'build');
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [timeline, setTimeline] = useState<TimelineItem[]>(() => initialTimeline(initialSession, setupProblem));
@@ -409,7 +411,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       if (!tool) throw new Error('The built-in Git tool is unavailable.');
       const id = nextId();
       const call: ToolCall = {id, name: 'git', arguments: {args: ['diff', '--']}};
-      const decision = evaluatePermission(config.permissions, call, 'git', {forceAsk: interactionMode === 'ask'});
+      const decision = evaluatePermission(config.permissions, call, 'git', {forceAsk: interactionMode !== 'build'});
       if (decision.outcome === 'deny') throw new Error(`Git diff denied: ${decision.reason}`);
       if (decision.outcome === 'ask' && !(await requestPermission(call, 'git'))) {
         append({id: nextId(), kind: 'notice', tone: 'info', text: 'Git diff was not approved.'});
@@ -588,12 +590,12 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     }
     if (command === 'mode') {
       const normalized = argument.toLocaleLowerCase();
-      const next = normalized === 'ask' || normalized === 'build'
+      const next = normalized === 'ask' || normalized === 'plan' || normalized === 'build'
         ? normalized
         : normalized === '' || normalized === 'toggle'
-          ? interactionMode === 'ask' ? 'build' : 'ask'
+          ? interactionMode === 'ask' ? 'plan' : interactionMode === 'plan' ? 'build' : 'ask'
           : undefined;
-      if (!next) throw new Error('Usage: /mode [ask|build]');
+      if (!next) throw new Error('Usage: /mode [ask|plan|build]');
       setInteractionMode(next);
       append({
         id: nextId(),
@@ -601,7 +603,9 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         tone: 'success',
         text: next === 'ask'
           ? 'Ask mode enabled. Mutating tools are unavailable.'
-          : 'Build mode enabled. The configured permission policy is active.',
+          : next === 'plan'
+            ? 'Plan mode enabled. Read-only implementation planning is active.'
+            : 'Build mode enabled. The configured permission policy is active.',
       });
       return true;
     }
@@ -780,9 +784,14 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         lastEventError.current = undefined;
         try {
           const nextSession = await runner.run(current.runInput, {
-            askMode: interactionMode === 'ask',
+            askMode: interactionMode !== 'build',
             signal: abortController.signal,
-            ...(current.turnInstructions ? {turnInstructions: current.turnInstructions} : {}),
+            ...((current.turnInstructions || interactionMode === 'plan') ? {
+              turnInstructions: [
+                ...(interactionMode === 'plan' ? [PLAN_MODE_INSTRUCTIONS] : []),
+                ...(current.turnInstructions ? [current.turnInstructions] : []),
+              ].join('\n\n'),
+            } : {}),
             onEvent,
             requestPermission,
           });
@@ -1020,7 +1029,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     : 0;
   const attachments = composerAttachments(input);
   const visibleAttachments = compactComposer ? [] : attachments;
-  const composerPreview = input || (busy ? `follow-up${ellipsis}` : interactionMode === 'ask' ? `trace or explain${ellipsis}` : `inspect, change, or verify${ellipsis}`);
+  const composerPreview = input || (busy ? `follow-up${ellipsis}` : interactionMode === 'ask' ? `trace or explain${ellipsis}` : interactionMode === 'plan' ? `outline the implementation${ellipsis}` : `inspect, change, or verify${ellipsis}`);
   const composerRows = permission
     ? permissionRows(contentWidth, Boolean(typeof permission.call.arguments.cwd === 'string' || runner.workspace.primaryRoot), constrainedHeight)
     : 3 + visibleAttachments.length + composerValueRows(composerPreview, Math.max(1, contentWidth - 2), compactComposer ? 1 : 4);
@@ -1054,7 +1063,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   return (
     <ThemeProvider theme={theme}>
       <Box flexDirection="column" paddingX={horizontalPadding} height={terminalHeight} overflowY="hidden">
-        {showHeader ? <Header config={config} askMode={interactionMode === 'ask'} width={contentWidth} glyphMode={glyphMode} /> : null}
+        {showHeader ? <Header config={config} askMode={interactionMode !== 'build'} planMode={interactionMode === 'plan'} width={contentWidth} glyphMode={glyphMode} /> : null}
         {timelineRows > 0 ? (
           <Box flexDirection="column" height={timelineRows} overflowY="hidden">
             <Timeline
@@ -1119,7 +1128,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
               {...(cursorRequest?.value === input ? {externalCursorOffset: cursorRequest.offset} : {})}
               focus
               captureVerticalArrows={suggestionMode === 'mention' || suggestionMode === 'command' || Boolean(historySearch)}
-              placeholder={busy ? `follow-up${ellipsis}` : interactionMode === 'ask' ? `trace or explain${ellipsis}` : `inspect, change, or verify${ellipsis}`}
+              placeholder={busy ? `follow-up${ellipsis}` : interactionMode === 'ask' ? `trace or explain${ellipsis}` : interactionMode === 'plan' ? `outline the implementation${ellipsis}` : `inspect, change, or verify${ellipsis}`}
             />
           </PromptBar>
         </> : <PermissionCard call={permission.call} category={permission.category} workspace={runner.workspace.primaryRoot} width={contentWidth} glyphMode={glyphMode} compact={constrainedHeight} />}

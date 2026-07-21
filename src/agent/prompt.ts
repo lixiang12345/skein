@@ -4,6 +4,8 @@ import type {ResolvedMention} from '../context/mentions.js';
 import {formatMentionContext} from '../context/mentions.js';
 import {PRODUCT_NAME} from '../brand.js';
 
+export const PLAN_MODE_INSTRUCTIONS = `Plan mode is active. You may inspect the workspace and use read-only tools, but you must not modify files, run mutating commands, or change external state. Produce a concrete implementation plan with the relevant files, sequencing, risks, and verification commands. Clearly separate confirmed evidence from assumptions. Stop after presenting the plan and wait for user approval before implementation.`;
+
 export function buildSystemPrompt(
   config: MosaicConfig,
   session: Session,

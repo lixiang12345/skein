@@ -147,9 +147,10 @@ export function resolveGlyphs(mode: GlyphMode = 'auto'): UiGlyphs {
   return mode === 'ascii' || (mode === 'auto' && forceAscii) ? asciiGlyphs : unicodeGlyphs;
 }
 
-export function Header({config, askMode, width = 80, glyphMode = 'auto'}: {
+export function Header({config, askMode, planMode = false, width = 80, glyphMode = 'auto'}: {
   config: MosaicConfig;
   askMode: boolean;
+  planMode?: boolean;
   width?: number;
   glyphMode?: GlyphMode;
 }) {
@@ -157,7 +158,7 @@ export function Header({config, askMode, width = 80, glyphMode = 'auto'}: {
   const glyphs = resolveGlyphs(glyphMode);
   const root = config.workspaceRoots[0] ?? process.cwd();
   const terminalWidth = safeWidth(width);
-  const mode = askMode ? 'ASK' : 'BUILD';
+  const mode = planMode ? 'PLAN' : askMode ? 'ASK' : 'BUILD';
   const brand = `${glyphs.brand} ${PRODUCT_NAME.toUpperCase()}`;
   const modeLabel = `${glyphs.activity} ${mode}`;
   const separator = ` ${glyphs.separator} `;

@@ -29,7 +29,7 @@ export const commandDefinitions: CommandDefinition[] = [
   command('checkpoints', 'List recoverable pre-mutation snapshots'),
   command('transcript', 'Expand or collapse complete tool output', '/transcript [on|off]'),
   command('hotkeys', 'Show terminal editing and run controls'),
-  command('mode', 'Switch between read-only Ask and action-capable Build mode', '/mode [ask|build]'),
+  command('mode', 'Switch between read-only Ask, Plan, and action-capable Build modes', '/mode [ask|plan|build]'),
   command('density', 'Switch between compact and comfortable terminal rhythm', '/density [compact|comfortable]'),
   command('theme', 'Preview, select, or cycle terminal themes', '/theme [name|list]'),
   command('tasks', 'Show the current execution plan'),
@@ -77,6 +77,7 @@ export function commandSuggestions(
     const query = argument.trim().toLocaleLowerCase();
     return [
       {name: 'ask', description: 'Inspect and explain without approving mutations'},
+      {name: 'plan', description: 'Create a read-only implementation plan for approval'},
       {name: 'build', description: 'Allow edits and commands under the permission policy'},
     ].filter((item) => item.name.includes(query)).map((item) => ({
       value: `/mode ${item.name}`,

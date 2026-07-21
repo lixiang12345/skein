@@ -39,6 +39,25 @@ describe('SkeinApp completion flows', () => {
     }
   });
 
+  it('offers an explicit read-only Plan mode before Build', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-plan-ui-'));
+    const session = testSession(root);
+    const {runner, run} = mockRunner(root, session);
+    const harness = await mountApp(runner, root);
+
+    try {
+      harness.stdin.write('/mode plan\r');
+      await vi.waitFor(() => expect(harness.output()).toContain('Plan mode enabled.'));
+      harness.stdin.write('design the migration\r');
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      expect(run.mock.calls[0]?.[1]).toMatchObject({askMode: true});
+      expect(run.mock.calls[0]?.[1]?.turnInstructions).toContain('Plan mode is active');
+    } finally {
+      await harness.cleanup();
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
   it('filters and cycles resumed prompt history with Ctrl+R before submitting it', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-history-ui-'));
     const session = testSession(root);
@@ -294,7 +313,7 @@ async function mountApp(runner: AgentRunner, root: string): Promise<{
 }
 
 interface MockRunnerOptions {
-  run?: (input: string, options?: {onEvent?: (event: AgentEvent) => void}) => Promise<Session>;
+  run?: (input: string, options?: {onEvent?: (event: AgentEvent) => void; turnInstructions?: string; askMode?: boolean}) => Promise<Session>;
   compactContext?: (instructions?: string) => Promise<{omittedMessages: number; summaryTokens: number}>;
 }
 
