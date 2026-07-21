@@ -10,8 +10,9 @@ one of the milestones below.
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
 - Current release: `0.2.0`.
-- Runtime requirement: Node.js `>=22.12.0` (the runtime uses `node:sqlite`,
-  and current CLI/build dependencies require this Node 22 baseline).
+- Runtime requirement: Node.js `>=22.13.0` (the runtime uses unflagged
+  `node:sqlite`, and current CLI/build dependencies require this Node 22
+  baseline).
 - Retrieval: local BM25/path/symbol index with automatic ContextEngine-plugin
   detection and fallback.
 - Agent: provider-agnostic multi-turn runner for OpenAI, Anthropic, Gemini, and

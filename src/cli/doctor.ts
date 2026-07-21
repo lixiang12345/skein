@@ -15,6 +15,8 @@ interface Check {
   required: boolean;
 }
 
+export const MINIMUM_NODE_VERSION = '22.13.0';
+
 export interface DoctorOptions {
   json?: boolean;
   visual?: boolean;
@@ -25,11 +27,13 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
   const glyphs = resolveCliGlyphs();
   const root = config.workspaceRoots[0] ?? process.cwd();
   const checks: Check[] = [];
-  const major = Number(process.versions.node.split('.')[0]);
+  const nodeOk = supportsNodeVersion(process.versions.node);
   checks.push({
     name: 'Node.js',
-    ok: major >= 22,
-    detail: process.version,
+    ok: nodeOk,
+    detail: nodeOk
+      ? process.version
+      : `${process.version}; requires >=${MINIMUM_NODE_VERSION}`,
     required: true,
   });
   if (config.model.provider === 'compatible') {
@@ -117,6 +121,18 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
     if (options.visual) printVisualCalibration(glyphs);
   }
   return checks.every((check) => !check.required || check.ok);
+}
+
+export function supportsNodeVersion(version: string): boolean {
+  const match = version.trim().replace(/^v/u, '').match(/^(\d+)\.(\d+)\.(\d+)/u);
+  if (!match) return false;
+  const current = match.slice(1).map(Number);
+  const minimum = MINIMUM_NODE_VERSION.split('.').map(Number);
+  for (let index = 0; index < minimum.length; index += 1) {
+    if ((current[index] ?? 0) > (minimum[index] ?? 0)) return true;
+    if ((current[index] ?? 0) < (minimum[index] ?? 0)) return false;
+  }
+  return true;
 }
 
 function visualChecks(glyphs: CliGlyphs): Check[] {
