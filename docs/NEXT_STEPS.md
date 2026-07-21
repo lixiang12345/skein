@@ -50,12 +50,12 @@ tests.
 
 ## Recommended Order
 
-### P0: Continuous Integration And Release Reproducibility
+### P0: Continuous Integration And Release Reproducibility (Branch Rule Pending)
 
-Add `.github/workflows/ci.yml` for Node 22 on macOS and Linux. The workflow
-should run typecheck, unit tests, build, smoke, the PTY suite when `expect` is
-available, audit, and an isolated `npm pack` install. Add a release workflow
-that records the package checksum and verifies all three bin aliases.
+`.github/workflows/ci.yml` now covers Node 22 on macOS and Linux. It runs
+typecheck, unit tests, build, smoke, the PTY suite when `expect` is available,
+audit, and an isolated `npm pack` install. The release workflow records the
+package checksum and verifies all three bin aliases.
 
 Definition of done:
 
@@ -63,6 +63,19 @@ Definition of done:
 - A clean checkout can reproduce the package without local `dist/` or
   `.mosaic/` state.
 - CI logs retain the PTY dimensions and package metadata.
+
+Implementation notes:
+
+- `.github/workflows/ci.yml` runs the Node 22 contract on Linux and macOS and
+  exposes a stable `check` status for branch protection.
+- `.github/workflows/release.yml` rebuilds tagged or manually dispatched
+  packages, verifies tag/version agreement, and retains the tarball plus its
+  SHA-256 checksum.
+- `npm run release:verify` reproduces the package from source, installs it into
+  an isolated prefix, rejects packaged local state, and exercises `skein`,
+  `mosaic`, and `mosaic-code`.
+- Configure the `main` branch rule to require the `check` status after the
+  workflow is present on GitHub.
 
 ### P1: Skein Storage Namespace And Migration
 

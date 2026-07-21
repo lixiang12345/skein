@@ -37,6 +37,8 @@
     "test:watch": "vitest",
     "pretest:pty": "npm run build",
     "test:pty": "sh test/pty/run-visual.sh",
+    "verify:package": "node scripts/verify-package.mjs",
+    "release:verify": "npm run check && npm run verify:package --",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm test && npm run build && npm run smoke:dist",
     "smoke:dist": "node dist/cli.js --help",

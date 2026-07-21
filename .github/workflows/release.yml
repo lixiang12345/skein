@@ -1,0 +1,50 @@
+name: Release verification
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  verify-package:
+    name: verify package and aliases
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.5.0
+          cache: npm
+
+      - name: Install dependencies from lockfile
+        run: npm ci
+
+      - name: Check release tag matches package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          test "$RELEASE_TAG" = "v$PACKAGE_VERSION"
+
+      - name: Rebuild and verify package
+        run: npm run release:verify -- --output-dir release-artifacts
+
+      - name: Verify recorded checksum
+        working-directory: release-artifacts
+        run: sha256sum --check *.sha256
+
+      - name: Upload release package and checksum
+        uses: actions/upload-artifact@v7
+        with:
+          name: skein-package-${{ github.run_id }}
+          path: release-artifacts
+          if-no-files-found: error

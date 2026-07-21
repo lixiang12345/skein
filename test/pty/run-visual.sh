@@ -6,7 +6,7 @@ if ! command -v expect >/dev/null 2>&1; then
   exit 1
 fi
 
-artifacts=".mosaic/pty-artifacts"
+artifacts="${SKEIN_PTY_ARTIFACTS:-.mosaic/pty-artifacts}"
 workspace=$(mktemp -d "${TMPDIR:-/tmp}/skein-pty.XXXXXX")
 trap 'rm -rf "$workspace"' EXIT HUP INT TERM
 

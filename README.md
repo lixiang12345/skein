@@ -394,6 +394,8 @@ npm run typecheck
 npm test
 npm run build
 npm run check
+npm run test:pty
+npm run release:verify
 ```
 
 Skein is licensed under MIT.

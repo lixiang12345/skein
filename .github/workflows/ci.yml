@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: validate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.5.0
+          cache: npm
+
+      - name: Install dependencies from lockfile
+        run: npm ci
+
+      - name: Typecheck, unit tests, build, and smoke test
+        run: npm run check
+
+      - name: Run PTY regression suite when expect is available
+        env:
+          SKEIN_PTY_ARTIFACTS: artifacts/pty/${{ runner.os }}
+        run: |
+          if command -v expect >/dev/null 2>&1; then
+            expect -v
+            npm run test:pty
+          else
+            echo "expect is unavailable on this runner; PTY suite skipped"
+          fi
+
+      - name: Audit production dependencies
+        if: runner.os == 'Linux'
+        run: npm audit --omit=dev
+
+      - name: Verify isolated package install and bin aliases
+        run: npm run verify:package -- --output-dir artifacts/package
+
+      - name: Upload PTY logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pty-logs-${{ runner.os }}
+          path: artifacts/pty
+          if-no-files-found: ignore
+
+      - name: Upload package metadata and checksum
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: package-verification-${{ runner.os }}
+          path: artifacts/package
+          if-no-files-found: error
+
+  required-check:
+    name: check
+    if: always()
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every validation job to pass
+        env:
+          VALIDATION_RESULT: ${{ needs.validate.result }}
+        run: test "$VALIDATION_RESULT" = success
