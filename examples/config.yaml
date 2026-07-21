@@ -1,0 +1,53 @@
+# When this file is placed under a repository's .mosaic directory, hooks,
+# permissions, verification commands, checkpoint overrides, and custom context
+# executables require --trust-project-config. User-level config is trusted.
+model:
+  provider: openai
+  model: gpt-5
+  temperature: 0.2
+  maxTokens: 8192
+
+context:
+  engine: auto
+  maxTokens: 12000
+  topK: 12
+  contextEngineCommand: contextengine
+
+permissions:
+  read: allow
+  write: ask
+  shell: ask
+  git: ask
+  network: ask
+  allowCommands:
+    - git status
+    - git diff
+    - git log
+    - npm test
+    - npm run typecheck
+    - npm run build
+  denyCommands:
+    - rm -rf /
+    - git reset --hard
+    - git clean -fd
+    - git checkout --
+    - sudo
+
+agent:
+  maxTurns: 24
+  maxSessionTokens: 250000
+  autoVerify: true
+  verifyCommands:
+    - npm run typecheck
+    - npm test
+  checkpointBeforeWrite: true
+
+hooks:
+  beforeTool: []
+  afterTool: []
+  afterTurn: []
+
+ui:
+  color: true
+  compact: false
+  theme: auto

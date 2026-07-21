@@ -1,0 +1,141 @@
+#!/usr/bin/expect -f
+
+set timeout 12
+match_max 100000
+
+if {$argc != 4} {
+  puts stderr "usage: interactive.exp <columns> <unicode|ascii> <output> <workspace>"
+  exit 2
+}
+
+set width [lindex $argv 0]
+set mode [lindex $argv 1]
+set output [lindex $argv 2]
+set workspace [lindex $argv 3]
+
+if {[info exists env(SKEIN_PTY_VERBOSE)]} {
+  log_user 1
+} else {
+  log_user 0
+}
+log_file -noappend -a $output
+unset -nocomplain env(FORCE_COLOR)
+set env(SKEIN_HOME) "$workspace/.skein-home"
+if {$mode eq "ascii"} {
+  set env(SKEIN_GLYPHS) ascii
+  set env(NO_COLOR) 1
+  set env(TERM) xterm-256color
+} else {
+  unset -nocomplain env(NO_COLOR)
+  unset -nocomplain env(SKEIN_GLYPHS)
+  set env(TERM) xterm-256color
+  set env(COLORTERM) truecolor
+}
+
+proc await_pattern {pattern label} {
+  expect {
+    -re $pattern { return }
+    timeout {
+      puts stderr "Timed out waiting for $label"
+      exit 1
+    }
+    eof {
+      puts stderr "Skein exited while waiting for $label"
+      exit 1
+    }
+  }
+}
+
+proc await_frame {label} {
+  expect {
+    -exact "\033\[?2026l" { return }
+    timeout {
+      puts stderr "Timed out waiting for the end of $label"
+      exit 1
+    }
+    eof {
+      puts stderr "Skein exited during $label"
+      exit 1
+    }
+  }
+}
+
+spawn -noecho node dist/cli.js \
+  --workspace $workspace \
+  --provider compatible \
+  --base-url http://127.0.0.1:9/v1 \
+  --context-engine local
+stty rows 24 columns $width < $spawn_out(slave,name)
+
+# Do not send input until Ink has entered raw input and bracketed-paste mode.
+# Without this handshake, narrow renders can fill the PTY before Expect reads
+# it and leave Return buffered by the terminal line discipline.
+await_pattern {SKEIN} startup
+await_frame {the startup frame}
+expect {
+  -exact "\033\[?2004h" {}
+  timeout {
+    puts stderr "Timed out waiting for terminal input setup"
+    exit 1
+  }
+  eof {
+    puts stderr "Skein exited before terminal input setup"
+    exit 1
+  }
+}
+
+# Ink holds input briefly while checking whether the terminal supports the
+# Kitty protocol. A bare PTY cannot answer that query, so let its 200 ms probe
+# finish before exercising the standard terminal key sequences.
+after 300
+set enter "\r"
+set escape "\033"
+set ctrl_c "\003"
+set ctrl_r "\022"
+
+send -- "/hotkeys"
+await_pattern {/hotkeys} {the hotkey command}
+await_frame {the hotkey command frame}
+send -- $enter
+await_pattern {Keyboard} {the hotkey panel}
+await_frame {the hotkey panel frame}
+
+send -- "/diff"
+await_pattern {/diff} {the diff command}
+await_frame {the diff command frame}
+send -- $enter
+await_pattern {Permission} {the permission panel}
+await_frame {the permission panel frame}
+send -- $escape
+await_pattern {approved} {the denied permission result}
+await_frame {the permission result frame}
+
+send -- $ctrl_r
+await_pattern {History search} {history search}
+await_frame {the history search frame}
+send -- "hot"
+await_pattern {History search:} {filtered history search}
+await_frame {the filtered history frame}
+send -- $escape
+await_pattern {Type a request} {the restored composer}
+await_frame {the restored composer frame}
+
+send -- "review @src/ui/tui"
+await_pattern {Files} {file completion}
+await_pattern {@src/ui/tui\.tsx} {the indexed file match}
+await_frame {the indexed file frame}
+send -- "\t"
+await_pattern {@src/ui/tui\.tsx} {the completed file mention}
+await_frame {the completed file mention frame}
+
+send -- $ctrl_c
+await_pattern {Type a request} {the cleared composer}
+await_frame {the cleared composer frame}
+send -- $ctrl_c
+expect {
+  eof {}
+  timeout {
+    puts stderr "Skein did not exit after Ctrl+C"
+    exit 1
+  }
+}

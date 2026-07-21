@@ -1,0 +1,114 @@
+#!/usr/bin/expect -f
+
+set timeout 12
+match_max 100000
+
+if {$argc != 2} {
+  puts stderr "usage: short-height.exp <output> <workspace>"
+  exit 2
+}
+
+set output [lindex $argv 0]
+set workspace [lindex $argv 1]
+
+if {[info exists env(SKEIN_PTY_VERBOSE)]} {
+  log_user 1
+} else {
+  log_user 0
+}
+log_file -noappend -a $output
+unset -nocomplain env(FORCE_COLOR)
+set env(SKEIN_HOME) "$workspace/.skein-home-short"
+set env(TERM) xterm-256color
+unset -nocomplain env(NO_COLOR)
+unset -nocomplain env(SKEIN_GLYPHS)
+set env(COLORTERM) truecolor
+
+proc await_pattern {pattern label} {
+  expect {
+    -re $pattern { return }
+    timeout {
+      puts stderr "Timed out waiting for $label"
+      exit 1
+    }
+    eof {
+      puts stderr "Skein exited while waiting for $label"
+      exit 1
+    }
+  }
+}
+
+proc await_frame {label} {
+  expect {
+    -exact "\033\[?2026l" { return }
+    timeout {
+      puts stderr "Timed out waiting for the end of $label"
+      exit 1
+    }
+    eof {
+      puts stderr "Skein exited during $label"
+      exit 1
+    }
+  }
+}
+
+spawn -noecho node dist/cli.js \
+  --workspace $workspace \
+  --provider compatible \
+  --base-url http://127.0.0.1:9/v1 \
+  --context-engine local
+stty rows 10 columns 40 < $spawn_out(slave,name)
+
+# At ten rows the header is deliberately omitted. The test therefore starts
+# from the composer rather than relying on the normal branded header.
+await_pattern {Type a request} startup
+await_frame {the startup frame}
+expect {
+  -exact "\033\[?2004h" {}
+  timeout {
+    puts stderr "Timed out waiting for terminal input setup"
+    exit 1
+  }
+  eof {
+    puts stderr "Skein exited before terminal input setup"
+    exit 1
+  }
+}
+
+after 300
+set enter "\r"
+set escape "\033"
+set ctrl_c "\003"
+
+send -- "/context"
+await_pattern {/context} {the context command}
+await_frame {the context command frame}
+send -- $enter
+await_pattern {Context} {the compact context inspector}
+await_frame {the context inspector frame}
+
+send -- "/diff"
+await_pattern {/diff} {the diff command}
+await_frame {the diff command frame}
+send -- $enter
+await_pattern {Permission} {the compact permission panel}
+await_frame {the compact permission frame}
+send -- $escape
+await_pattern {Git diff was not approved} {the denied compact permission result}
+await_frame {the permission result frame}
+
+send -- "/ho"
+await_pattern {Commands} {the compact command palette}
+await_frame {the command palette frame}
+
+send -- $ctrl_c
+await_pattern {Type a request} {the restored compact composer}
+await_frame {the restored composer frame}
+send -- $ctrl_c
+expect {
+  eof {}
+  timeout {
+    puts stderr "Skein did not exit after Ctrl+C"
+    exit 1
+  }
+}

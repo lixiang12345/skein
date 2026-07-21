@@ -1,0 +1,69 @@
+{
+  "name": "@skein-code/cli",
+  "version": "0.2.0",
+  "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "ai",
+    "coding-agent",
+    "cli",
+    "mcp",
+    "terminal"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "skein": "dist/cli.js",
+    "mosaic": "dist/cli.js",
+    "mosaic-code": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "docs",
+    "examples",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx src/cli.tsx",
+    "start": "node dist/cli.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "pretest:pty": "npm run build",
+    "test:pty": "sh test/pty/run-visual.sh",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test && npm run build && npm run smoke:dist",
+    "smoke:dist": "node dist/cli.js --help",
+    "prepublishOnly": "npm run check"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "chalk": "^5.6.2",
+    "commander": "^15.0.0",
+    "diff": "^9.0.0",
+    "fast-glob": "^3.3.3",
+    "ignore": "^7.0.5",
+    "ink": "^7.1.1",
+    "ink-text-input": "^6.0.0",
+    "react": "^19.2.3",
+    "string-width": "^8.2.2",
+    "strip-ansi": "^7.2.0",
+    "yaml": "^2.8.2",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/diff": "^8.0.0",
+    "@types/node": "^22.19.7",
+    "@types/react": "^19.2.7",
+    "tsup": "^8.5.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}

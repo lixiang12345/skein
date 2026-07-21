@@ -1,0 +1,8 @@
+node_modules/
+dist/
+coverage/
+.mosaic/
+.env
+*.log
+*.tgz
+.DS_Store

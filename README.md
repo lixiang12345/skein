@@ -1,0 +1,399 @@
+# Skein
+
+**An open, context-first coding agent for the terminal.**
+
+Skein understands the change surface before it edits, exposes every tool call,
+and keeps sessions and pre-write checkpoints on your machine. It supports
+OpenAI, Anthropic, Gemini, and OpenAI-compatible endpoints, with
+[ContextEngine-plugin](https://github.com/lixiang12345/ContextEngine-plugin) as
+an optional high-quality retrieval layer and a built-in local index as the
+zero-service fallback.
+
+```text
+◆ SKEIN  ·  ~/work/api                                      ● BUILD
+  anthropic/claude-sonnet-4-5  ·  context auto  ·  memory on  ·  agents 3
+
+› Find the webhook retry bug and add a regression test.
+◇ context  contextengine · 12 spans · ~8.4k
+· prompt/debug  intent:debug · working-memory · code:contextengine
+✓ read_file  src/billing/webhook.ts  31ms
+✓ apply_patch  src/billing/webhook.ts  18ms
+
+◆ Skein
+  The retry timestamp was advanced before the failed attempt was persisted.
+  I moved the update after persistence and added the timeout regression test.
+
+────────────────────────────────────────────────────────────────────
+› ask anything…
+  Type a request · @file · /command
+
+● ready  ·  ctx 18%  ·  14.2k tokens  ·  2 changed     graphite · /help
+```
+
+## Why Skein
+
+- **Open automation:** text, quiet, JSON, and JSONL event modes are core
+  features, suitable for local scripts and CI.
+- **Model ownership:** use four provider families without changing the agent or
+  session format.
+- **Retrieval you control:** select ContextEngine for hybrid
+  FTS/symbol/vector/graph retrieval, or run the local BM25/path/symbol index.
+- **Visible trust:** per-category permissions, deny rules, hooks, workspace path
+  enforcement, changed-file telemetry, and persisted tool results.
+- **Reversible work:** Skein snapshots affected files before mutation without
+  touching your Git history.
+- **Resumable by default:** conversations, tasks, usage, and changed files live
+  in project-local session files.
+- **Layered agent runtime:** progressive Skills, MCP tools, typed workflows,
+  isolated read-only experts, working memory, compacted session state, and
+  reviewed durable memory share one permission and audit model.
+
+The product rationale and competitor research are in
+[docs/PRODUCT.md](docs/PRODUCT.md); the implementation model is in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Requirements
+
+- Node.js 22.5 or newer
+- A model API key, or an OpenAI-compatible local endpoint
+- Optional: Git and ripgrep
+- Optional: ContextEngine-plugin plus PostgreSQL/pgvector
+
+## Install
+
+From this repository:
+
+```bash
+npm install
+npm run build
+npm link
+```
+
+To install the packaged artifact included with this checkout:
+
+```bash
+npm install -g ./skein-code-cli-0.2.0.tgz
+```
+
+After the public package is published, install it from the registry with:
+
+```bash
+npm install -g @skein-code/cli
+```
+
+`skein` is the primary command. Existing installations can continue using
+`mosaic` or `mosaic-code`; the `.mosaic/` project state and `MOSAIC_*`
+environment variables remain compatible with this release.
+
+## Quick start
+
+Set credentials for one provider:
+
+```bash
+export OPENAI_API_KEY=...
+# or ANTHROPIC_API_KEY / GEMINI_API_KEY / SKEIN_API_KEY
+```
+
+For an OpenAI-compatible local or self-hosted endpoint, provide the endpoint
+explicitly so Skein never guesses where workspace code should be sent:
+
+```bash
+export SKEIN_API_KEY=... # omit when the local endpoint needs no authentication
+skein init --provider compatible --base-url http://localhost:11434/v1 --yes
+```
+
+Create project configuration, index, and start the TUI:
+
+```bash
+cd /path/to/project
+skein init --provider openai --model gpt-5 --yes
+skein index
+skein
+```
+
+Use `@path` to guarantee a file is attached to the current request:
+
+```text
+Explain the race in @src/queue/worker.ts and fix it with the smallest change.
+```
+
+### Interactive workspace
+
+The transcript stays on the terminal's native background. A thin rule marks the
+composer; consequential permission requests become an inline warning band with
+the exact tool target and working directory. Enter sends a request, or steers the current run when it is busy;
+`Alt+Enter` queues a follow-up, while `Ctrl+J` or `Shift+Enter` inserts a
+newline. `Ctrl+R` searches prompt history, `Ctrl+O` expands or collapses the
+latest tool result, and Escape interrupts the current run. The composer supports
+multiline cursor movement, word movement/deletion, `Ctrl+U`/`Ctrl+K`, and
+bounded undo/redo. Type `/` for a keyboard-navigable command palette, or run
+`/hotkeys` inside Skein.
+
+Useful interactive commands include `/workflow`, `/context`, `/mode`, `/memory`,
+`/remember`, `/skills`, `/agents`, `/mcp`, `/tools`, `/permissions`, and
+`/theme`. `/transcript` reveals bounded full tool results, `/changes` lists
+session writes, `/diff` opens the current Git diff through the normal permission
+policy, and `/checkpoints` shows recoverable pre-mutation snapshots. `/mode ask`
+and `/mode build` switch the permission posture without restarting. `/context`
+toggles one live inspector for the active transcript, mutable working memory,
+compacted session summary, and durable retrieval layer separately. Model-
+suggested durable memories can be reviewed with `/memory candidates` and then
+approved or rejected.
+
+The default `/theme auto` follows
+`SKEIN_APPEARANCE=light|dark` or a terminal `COLORFGBG` hint and otherwise uses
+the dark-safe graphite palette. Cinder and Mono mirror the interactive prototype;
+Midnight and Paper remain available compatibility choices. Place data-only JSON palettes in `~/.mosaic/themes/` (or
+`SKEIN_THEME_DIR`) and run `/theme reload`; each palette uses semantic keys such
+as `accent`, `text`, `muted`, `success`, and `error`. Set
+`SKEIN_GLYPHS=ascii` when a terminal or multiplexer renders Unicode symbols
+inconsistently. `NO_COLOR=1` or `ui.color: false` removes palette colors while
+keeping status symbols and semantic labels intact. `/density compact` and
+`/density comfortable` control vertical rhythm.
+
+Run `skein doctor --visual` to inspect terminal width, color mode, glyph
+fallback, keyboard protocol support, and a CJK/emoji/box-drawing calibration
+sample. Skein cannot force a terminal font; Iosevka Term is a compact default,
+JetBrains Mono NL maximizes compatibility, and Sarasa Mono SC is recommended
+for Chinese-heavy work.
+
+## Automation
+
+```bash
+# One-shot progress plus final answer
+skein --print "Fix the failing typecheck"
+
+# Final answer only
+skein --print --quiet "Summarize the staged changes"
+
+# A deterministic object for CI
+skein --print --output-format json "Review this branch"
+
+# One JSON event per line
+skein --print --output-format stream-json "Run tests and fix failures"
+
+# Pipeline input and sequential follow-up
+cat build.log | skein --print --quiet "Find the root cause"
+skein --print --queue "Run focused tests" --queue "Summarize risks" "Fix the bug"
+
+# Read-only investigation
+skein --ask --print "Trace request authentication"
+```
+
+Non-interactive permission requests are denied unless the operation is already
+allowed by policy. Use `--auto-edit` to allow file edits while retaining prompts
+for shell/Git/network, or `--yes` for intentionally unattended runs. Hard deny
+rules still win over both flags.
+
+## Commands
+
+```text
+skein [prompt]                       interactive workspace
+skein --print [prompt]               headless agent run
+skein init                           project setup
+skein doctor                         prerequisite and fallback checks
+skein doctor --visual                terminal rendering and input calibration
+skein config show                    resolved, redacted configuration
+skein index                          build/update the selected index
+skein search <query>                 ranked grounded spans
+skein context <task>                 packed model context
+skein status                         model and index status
+skein session list|show|delete       local session management
+skein session export <id>            Markdown audit export
+skein checkpoint list <session>      inspect snapshots
+skein checkpoint restore <s> <c>     restore a snapshot
+skein tools                          tool schemas and categories
+skein rules                          loaded user/workspace rule files
+```
+
+Run `skein <command> --help` for complete flags.
+
+### Project configuration trust
+
+A cloned repository must not be able to execute commands merely by committing
+`.mosaic/config.*`. Skein therefore ignores project-defined hooks, custom
+ContextEngine executables, verification commands, checkpoint overrides, and
+permission policy by default. It also ignores remote model provider/endpoint
+overrides and their project-stored API keys; loopback compatible endpoints and
+local credentials remain available for local models. Review the file first,
+then opt in explicitly:
+
+```bash
+skein --trust-project-config --print "Run the project checks and fix failures"
+skein --trust-project-config index
+```
+
+User-level configuration and an explicitly supplied `--config` file remain the
+recommended locations for trusted automation policy.
+
+`skein init` records an owner-only fingerprint of the model settings it just
+created under `~/.mosaic` (or `SKEIN_HOME`). This lets Anthropic, Gemini, and
+remote compatible setup work normally without trusting project hooks or
+permissions. If those model settings are later edited, that narrow routing
+trust is invalidated automatically.
+
+## Configuration
+
+Skein merges configuration in this order:
+
+1. defaults and environment variables;
+2. `~/.mosaic/config.yaml`;
+3. `<workspace>/.mosaic/config.yaml`;
+4. `<workspace>/.mosaic/config.json`;
+5. command-line overrides.
+
+Example:
+
+```yaml
+model:
+  provider: anthropic
+  model: claude-sonnet-4-5
+  temperature: 0.2
+  maxTokens: 8192
+
+context:
+  engine: auto
+  maxTokens: 12000
+  topK: 12
+  contextEngineCommand: contextengine
+
+permissions:
+  read: allow
+  write: ask
+  shell: ask
+  git: ask
+  network: ask
+  allowCommands:
+    - git status
+    - git diff
+    - npm test
+  denyCommands:
+    - rm -rf /
+    - git reset --hard
+    - sudo
+
+agent:
+  maxTurns: 24
+  maxSessionTokens: 250000
+  autoVerify: true
+  verifyCommands:
+    - npm run typecheck
+    - npm test
+  checkpointBeforeWrite: true
+
+hooks:
+  beforeTool: []
+  afterTool: []
+  afterTurn: []
+```
+
+See [examples/config.yaml](examples/config.yaml) for a ready-to-adapt file.
+Secrets should normally stay in environment variables instead of committed
+configuration.
+
+`provider: compatible` must be paired with `model.baseUrl` (or the
+`--base-url` flag). Additional roots declared in project config are constrained
+to the project directory; use `--add-workspace` for an intentionally external
+root.
+
+## ContextEngine integration
+
+Skein's `auto` mode checks for the `contextengine` executable. If it is healthy
+or merely unindexed, `skein index/search/context` uses it. If it is missing or a
+query fails, Skein falls back to its local index.
+
+```bash
+git clone https://github.com/lixiang12345/ContextEngine-plugin.git
+cd ContextEngine-plugin
+npm install && npm run build && npm link
+npm run db:up
+export CONTEXTENGINE_DATABASE_URL=postgresql://contextengine:contextengine@127.0.0.1:54329/contextengine
+
+cd /path/to/project
+skein index
+skein status
+```
+
+ContextEngine is an optional adapter, not a hidden hard dependency. The local
+fallback keeps Skein useful offline and makes degraded mode obvious in context
+telemetry and `skein doctor`.
+
+## Safety model
+
+- `read`, `write`, `shell`, `git`, and `network` have independent policies.
+- File tools reject lexical and symlink escapes from configured workspace roots.
+- Writes and patches are atomic; multi-file patches roll back partial commits.
+- A checkpoint manifest and file blobs are saved before mutation.
+- Command allow rules cannot bypass approval with shell control or substitution.
+- Command allow rules approve only the shell/Git execution category; derived
+  write and network policies still apply to package scripts and mutations.
+- Ask mode only exposes inspection and planning tools to the model.
+- Hooks receive JSON on stdin and run with bounded time/output.
+- Project configuration cannot enable executable hooks or relax safety policy
+  unless `--trust-project-config` is explicitly supplied.
+- Untrusted project configuration cannot switch providers or redirect
+  credentials/source code to a remote custom endpoint; these require trust.
+- Git aliases, Git config overrides, repository hooks, and workspace overrides
+  are disabled by the built-in Git tool; use an explicitly approved shell
+  command when a repository workflow genuinely needs them.
+- Git operations that may invoke transport, signing, merge, or checkout helpers
+  require the `shell` category in addition to Git/write/network as applicable.
+  Git and ContextEngine executables are resolved outside workspace-controlled
+  `PATH` entries.
+- Git checkpoints include dirty and explicitly named paths before a mutation.
+  Branch switches can change clean tracked files that cannot be predicted
+  without snapshotting the entire repository, so review the checkpoint list.
+
+Shell approval is still powerful: an approved shell program can perform actions
+that a file tool cannot. Custom environments require a fresh approval, common
+mutation targets are checkpointed and audited, and network detection is
+conservative but necessarily heuristic. Review the shown command, and use an
+OS/container sandbox around Skein for untrusted repositories or fully
+unattended agents.
+
+## Project data
+
+Skein writes only under `<workspace>/.mosaic/` by default:
+
+```text
+.mosaic/
+  config.json
+  index.json
+  sessions/
+  checkpoints/
+```
+
+The default durable memory database is user-owned at `~/.mosaic/memory.sqlite`
+(or under `SKEIN_HOME`). Set `memory.databasePath` when a team or deployment
+needs a different local SQLite location. Working memory and compacted summaries
+remain inside each session, while durable facts are retrieved only when their
+lexical evidence and confidence clear the configured threshold.
+
+Memory is intentionally layered: the active prompt holds the current turn,
+`working_memory` holds bounded goals/constraints/decisions for the session,
+compaction produces a fallible handoff summary, and SQLite FTS5 stores durable
+semantic/episodic/procedural facts. A model can call `memory_propose`, but its
+candidate is inactive, expires automatically, and carries provenance until a
+person approves it with `/memory candidates` and `/memory approve <id>`. The
+interactive `/remember` command and `skein memory add` are explicit user writes.
+This prevents retrieved text from becoming an unreviewed instruction or
+permission grant.
+
+Add `.mosaic/` to `.gitignore` unless the team intentionally shares a sanitized
+configuration file elsewhere.
+
+Session JSON also keeps a bounded audit trail of permission decisions, tool
+outcomes, changed files, and checkpoint ids. `skein session export` includes
+that trail in the Markdown export.
+
+## Development
+
+```bash
+npm run dev -- "explain this project"
+npm run typecheck
+npm test
+npm run build
+npm run check
+```
+
+Skein is licensed under MIT.
