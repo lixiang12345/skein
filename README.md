@@ -394,7 +394,8 @@ Conflicting or ambiguous candidates remain untouched. Migration, rollback, and
 recovery also share a stale-aware process lock so concurrent namespace mutation
 commands cannot act on an operation that is still running. Stop other Skein
 sessions that may still be writing legacy storage before applying migration,
-rollback, or recovery.
+rollback, or recovery. Custom legacy and canonical paths must be separate and
+non-nested after symbolic links are resolved.
 
 The default durable memory database is user-owned at `~/.mosaic/memory.sqlite`
 until user storage is migrated to `~/.skein/` (or overridden by `SKEIN_HOME`).

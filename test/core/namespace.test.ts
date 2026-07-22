@@ -123,6 +123,34 @@ describe('storage namespace migration', () => {
     await rm(home, {recursive: true, force: true});
   });
 
+  it('rejects overlapping logical or physical user namespace paths', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'skein-home-overlap-'));
+    const legacy = join(home, 'legacy');
+    await mkdir(legacy);
+    await writeFile(join(legacy, 'config.json'), 'legacy');
+    const nested = {
+      MOSAIC_HOME: legacy,
+      SKEIN_HOME: join(legacy, 'canonical'),
+    };
+    await expect(resolveHomeStorageNamespace(nested)).rejects.toThrow('non-nested paths');
+    await expect(migrateHomeNamespace(nested)).rejects.toThrow('non-nested paths');
+    await expect(resolveHomeStorageNamespace({
+      MOSAIC_HOME: join(home, 'canonical', 'legacy'),
+      SKEIN_HOME: join(home, 'canonical'),
+    })).rejects.toThrow('non-nested paths');
+    await expect(migrateHomeNamespace({MOSAIC_HOME: legacy, SKEIN_HOME: legacy})).rejects.toThrow('non-nested paths');
+
+    const alias = join(home, 'legacy-alias');
+    await symlink(legacy, alias);
+    await expect(inspectHomeNamespace({
+      MOSAIC_HOME: legacy,
+      SKEIN_HOME: join(alias, 'canonical'),
+    })).rejects.toThrow('overlapping paths');
+    expect(await readFile(join(legacy, 'config.json'), 'utf8')).toBe('legacy');
+    await expect(access(join(legacy, 'canonical.lock'))).rejects.toMatchObject({code: 'ENOENT'});
+    await rm(home, {recursive: true, force: true});
+  });
+
   it('treats partial or extra canonical state as a conflict', async () => {
     const root = await workspace();
     await mkdir(join(root, '.mosaic', 'sessions'), {recursive: true});

@@ -103,6 +103,7 @@ export async function resolveProjectNamespace(workspace: string): Promise<Namesp
   const root = resolve(workspace);
   const canonical = join(root, CANONICAL_PROJECT_NAMESPACE);
   const legacy = join(root, LEGACY_PROJECT_NAMESPACE);
+  await assertNamespacePathsSeparated(legacy, canonical);
   const [canonicalExists, legacyExists] = await Promise.all([isDirectory(canonical), isDirectory(legacy)]);
   // Keep installations on the legacy location until the user opts in to
   // migration. This compatibility release deliberately avoids silently
@@ -161,6 +162,7 @@ export async function resolveHomeStorageNamespace(
   const legacy = configuredMosaic
     ? resolve(configuredMosaic)
     : join(dirname(canonical), LEGACY_HOME_NAMESPACE);
+  await assertNamespacePathsSeparated(legacy, canonical);
   const root = dirname(canonical);
   const [canonicalExists, legacyExists] = await Promise.all([isDirectory(canonical), isDirectory(legacy)]);
   const activeKind: NamespaceKind = canonicalExists ? 'canonical' : 'legacy';
@@ -193,6 +195,7 @@ async function inspectNamespacePaths(
   source: string,
   destination: string,
 ): Promise<NamespaceMigrationManifest> {
+  await assertNamespacePathsSeparated(source, destination);
   const entries: NamespaceFileEntry[] = [];
   const conflicts: string[] = [];
   const sourceInfo = await lstatIfExists(source);
@@ -465,7 +468,23 @@ async function recoverNamespace(
       }
       await verifyRollbackManifest(recovered);
     } catch (error) {
-      await rename(destination, primary.path).catch(() => undefined);
+      try {
+        await rename(destination, primary.path);
+      } catch (restoreError) {
+        const fallback = `${destination}.${primary.kind === 'migration' ? 'migrating' : 'rollback'}-${randomUUID()}`;
+        try {
+          await rename(destination, fallback);
+        } catch (quarantineError) {
+          throw new AggregateError(
+            [error, restoreError, quarantineError],
+            `Recovery verification failed and the namespace could not be returned to a safe candidate path: ${destination}`,
+          );
+        }
+        throw new AggregateError(
+          [error, restoreError],
+          `Recovery verification failed; the namespace was preserved at ${fallback}`,
+        );
+      }
       throw error;
     }
   }
@@ -634,6 +653,38 @@ async function lstatIfExists(path: string): Promise<Awaited<ReturnType<typeof ls
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw error;
+  }
+}
+
+async function assertNamespacePathsSeparated(source: string, destination: string): Promise<void> {
+  const logicalSource = resolve(source);
+  const logicalDestination = resolve(destination);
+  if (isInside(logicalSource, logicalDestination) || isInside(logicalDestination, logicalSource)) {
+    throw new Error(`Namespace source and destination must be separate, non-nested paths: ${source} -> ${destination}`);
+  }
+  const [physicalSource, physicalDestination] = await Promise.all([
+    resolvePhysicalPath(logicalSource),
+    resolvePhysicalPath(logicalDestination),
+  ]);
+  if (isInside(physicalSource, physicalDestination) || isInside(physicalDestination, physicalSource)) {
+    throw new Error(`Namespace source and destination resolve to overlapping paths: ${source} -> ${destination}`);
+  }
+}
+
+async function resolvePhysicalPath(path: string): Promise<string> {
+  let current = resolve(path);
+  const missing: string[] = [];
+  while (true) {
+    try {
+      return resolve(await realpath(current), ...missing);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
+      const parent = dirname(current);
+      if (parent === current) throw error;
+      missing.unshift(basename(current));
+      current = parent;
+    }
   }
 }
 
