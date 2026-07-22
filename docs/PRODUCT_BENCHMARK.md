@@ -26,7 +26,7 @@ product surfaces.
 | Parallel work | Claude documents isolated subagents and agent teams; Copilot CLI offers background delegation and fleet-style parallel work. | Routed multi-model councils now share bounded reports, run reviewer acceptance/revision, and appear in a responsive Team Cockpit. The main agent remains the only writer. | Add per-route budgets and worktree-isolated writers without weakening the visible review gate. |
 | Trust and execution | Gemini CLI documents sandboxing and trusted folders; Claude exposes lifecycle hooks and permission events. See the [Gemini CLI repository](https://github.com/google-gemini/gemini-cli) and [Claude hooks](https://code.claude.com/docs/en/hooks). | Category permissions, project trust, checkpoints, hooks, and audit trails are strong; process sandboxing and first-run trust inspection are incomplete. | Explain trust before activation and offer an optional OS/container sandbox. |
 | Collaboration | Auggie supports integrations and conversation export; Copilot supports GitHub-native MCP and shareable workflows. | Session export and resumability are local; no shareable artifact or review bundle. | Add a deterministic redacted session/review bundle before any hosted sharing. |
-| Distribution and recovery | Competitors provide guided installation, auth, update channels, and workflow-specific entry points. | Package/release verification is reproducible; `skein doctor` now reports `.skein`/`.mosaic` state and `skein migrate` provides a dry-run manifest plus atomic opt-in copy. | Keep legacy state intact for rollback, then add capability review and upgrade UX. |
+| Distribution and recovery | Competitors provide guided installation, auth, update channels, and workflow-specific entry points. | Package/release verification is reproducible; `skein doctor` reports project and user namespace state, while `skein migrate` provides verified migration and rollback without deleting changed canonical data. | Add capability review and upgrade UX, then define the measured legacy-alias window. |
 
 ## Prioritized Roadmap
 
@@ -38,7 +38,8 @@ product surfaces.
    recognized canonical names, while existing `.mosaic/` state remains active
    until an explicit `skein migrate --yes`. The command emits a hash-bearing
    manifest, blocks conflicts/symlinks, copies through a temporary directory,
-   and retains the legacy source as the rollback copy.
+   and retains the legacy source. `--rollback` verifies hashes before atomically
+   quarantining the canonical copy; `--home` covers user-level state.
 4. **P1 MCP progressive disclosure:** search and activate remote tool schemas
    on demand instead of placing every schema in every model request.
 5. **P1 scheduler and isolation:** enforce budgets, cancellation, deterministic

@@ -7,7 +7,7 @@ import {ContextEngine} from '../context/context-engine.js';
 import {resolveExecutableRuntime, runProcess} from '../utils/process.js';
 import {PRODUCT_COMMAND, PRODUCT_NAME} from '../brand.js';
 import {resolveCliGlyphs, type CliGlyphs} from './glyphs.js';
-import {inspectProjectNamespace} from '../utils/namespace.js';
+import {inspectHomeNamespace, inspectProjectNamespace} from '../utils/namespace.js';
 
 interface Check {
   name: string;
@@ -29,6 +29,7 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
   const root = config.workspaceRoots[0] ?? process.cwd();
   const checks: Check[] = [];
   let namespace: Awaited<ReturnType<typeof inspectProjectNamespace>> | undefined;
+  let homeNamespace: Awaited<ReturnType<typeof inspectHomeNamespace>> | undefined;
   try {
     namespace = await inspectProjectNamespace(root);
     checks.push({
@@ -38,12 +39,36 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
         ? `legacy .mosaic detected; migrate to ${namespace.destination}`
         : namespace.status === 'conflict'
           ? `conflict in ${namespace.conflicts.length} path(s); migration paused`
-          : `active ${namespace.destination.includes('.skein') ? '.skein' : '.mosaic'}; migration ${namespace.status}`,
+          : !namespace.sourceExists && !namespace.destinationExists
+            ? `no durable state yet; first write uses ${namespace.source}`
+            : `active ${namespace.destinationExists ? namespace.destination : namespace.source}; migration ${namespace.status}`,
       required: false,
     });
   } catch (error) {
     checks.push({
       name: 'Storage namespace',
+      ok: false,
+      detail: error instanceof Error ? error.message : String(error),
+      required: false,
+    });
+  }
+  try {
+    homeNamespace = await inspectHomeNamespace();
+    checks.push({
+      name: 'User storage namespace',
+      ok: homeNamespace.status !== 'conflict',
+      detail: homeNamespace.status === 'ready'
+        ? `legacy ${homeNamespace.source}; migrate with ${PRODUCT_COMMAND} migrate --home --yes`
+        : homeNamespace.status === 'conflict'
+          ? `conflict in ${homeNamespace.conflicts.length} path(s); migration paused`
+          : !homeNamespace.sourceExists && !homeNamespace.destinationExists
+            ? `no user state yet; first write uses ${homeNamespace.source}`
+            : `active ${homeNamespace.destinationExists ? homeNamespace.destination : homeNamespace.source}; migration ${homeNamespace.status}`,
+      required: false,
+    });
+  } catch (error) {
+    checks.push({
+      name: 'User storage namespace',
       ok: false,
       detail: error instanceof Error ? error.message : String(error),
       required: false,
@@ -148,6 +173,7 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
       ok: checks.every((check) => !check.required || check.ok),
       checks,
       ...(namespace ? {namespace} : {}),
+      ...(homeNamespace ? {homeNamespace} : {}),
     }, null, 2)}\n`);
   } else {
     process.stdout.write(`${chalk.hex('#A78BFA').bold(`${glyphs.brand} ${PRODUCT_NAME.toUpperCase()} DOCTOR`)}\n\n`);

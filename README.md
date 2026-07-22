@@ -359,18 +359,35 @@ unattended agents.
 
 ## Project data
 
-Skein writes only under `<workspace>/.mosaic/` by default:
+Existing installations keep using `<workspace>/.mosaic/` until migration is
+explicitly requested. New canonical storage uses `<workspace>/.skein/` with
+the same layout:
 
 ```text
-.mosaic/
+.skein/
   config.json
   index.json
   sessions/
   checkpoints/
 ```
 
+Preview and apply project migration, or verify and roll it back:
+
+```bash
+skein migrate
+skein migrate --yes
+skein migrate --rollback
+skein migrate --rollback --yes
+```
+
+Use `--home` for user-level configuration, memory, themes, Skills, rules, and
+agent profiles. Migration copies through a temporary directory and retains the
+legacy source. Rollback is available only when the source, canonical copy, and
+hash-bearing migration manifest still match; changed data is never deleted.
+
 The default durable memory database is user-owned at `~/.mosaic/memory.sqlite`
-(or under `SKEIN_HOME`). Set `memory.databasePath` when a team or deployment
+until user storage is migrated to `~/.skein/` (or overridden by `SKEIN_HOME`).
+Set `memory.databasePath` when a team or deployment
 needs a different local SQLite location. Working memory and compacted summaries
 remain inside each session, while durable facts are retrieved only when their
 lexical evidence and confidence clear the configured threshold.
@@ -385,8 +402,8 @@ interactive `/remember` command and `skein memory add` are explicit user writes.
 This prevents retrieved text from becoming an unreviewed instruction or
 permission grant.
 
-Add `.mosaic/` to `.gitignore` unless the team intentionally shares a sanitized
-configuration file elsewhere.
+Add both `.mosaic/` and `.skein/` to `.gitignore` unless the team intentionally
+shares a sanitized configuration file elsewhere.
 
 Session JSON also keeps a bounded audit trail of permission decisions, tool
 outcomes, changed files, and checkpoint ids. `skein session export` includes

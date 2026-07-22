@@ -38,16 +38,16 @@ npm audit --omit=dev
 npm pack
 ```
 
-The last verified package was `skein-code-cli-0.2.0.tgz`. Its SHA-256 was:
-
-```text
-12386f9fffa9d859fb81aab91468686c308557b51daf07a44f4294008e7c62d5
-```
+The latest verified package was `skein-code-cli-0.2.0.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.2.0.tgz.sha256`, and CI
+retains the checksum beside the package metadata. The checksum is deliberately
+not copied into this packaged document because doing so would change the
+archive it describes.
 
 The final verification included a fresh install and real PTY interaction for
 all three executable aliases, `/about`, a permission prompt, denial, and clean
 Ctrl+C exit. PTY coverage included 20, 24 ASCII, 40, 80, 120 columns and a
-40x10 short-height case. The current suite contains 28 test files and 180 tests.
+40x10 short-height case. The current suite contains 29 test files and 194 tests.
 
 ## Recommended Order
 
@@ -108,8 +108,17 @@ Implementation progress:
   agent profiles follow the active namespace. Both namespace names are ignored
   by retrieval and file tools.
 - Conflict and symlink entries block migration; repeated migration is
-  idempotent. The next increment should add an explicit verified rollback
-  command and home-directory migration coverage.
+  idempotent.
+- `skein migrate --rollback` now performs a read-only verification preview;
+  `--rollback --yes` atomically moves the canonical namespace aside, verifies
+  it again, and removes it only when the legacy source, canonical files, and
+  migration manifest still match. Changed, missing, extra, partial, symlink,
+  and non-directory state blocks rollback.
+- `skein migrate --home` applies the same preview, migration, and rollback
+  contract to user-level state. `skein doctor` reports project and user
+  namespace status independently. The next increment should exercise recovery
+  from process interruption after quarantine rename and document the eventual
+  compatibility window for removing `.mosaic` aliases.
 
 ### P1: ContextEngine-Plugin Production Adapter
 

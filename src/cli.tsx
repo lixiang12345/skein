@@ -42,7 +42,17 @@ import {WorkflowCatalog} from './workflows/index.js';
 import type {MosaicConfig, ProviderName, Session} from './types.js';
 import type {IndexProgress} from './context/local-index.js';
 import {workspaceAliasPath} from './utils/path.js';
-import {inspectProjectNamespace, migrateProjectNamespace, resolveProjectNamespaceSync} from './utils/namespace.js';
+import {
+  inspectHomeNamespace,
+  inspectHomeRollback,
+  inspectProjectNamespace,
+  inspectProjectRollback,
+  migrateHomeNamespace,
+  migrateProjectNamespace,
+  rollbackHomeNamespace,
+  rollbackProjectNamespace,
+  resolveProjectNamespaceSync,
+} from './utils/namespace.js';
 import {PRODUCT_COMMAND} from './brand.js';
 import {PLAN_MODE_INSTRUCTIONS} from './agent/prompt.js';
 import packageJson from '../package.json' with {type: 'json'};
@@ -241,17 +251,53 @@ program
   .option('-w, --workspace <path>', 'workspace root')
   .option('--json', 'print a migration manifest as JSON')
   .option('--yes', 'perform the migration after conflict checks')
-  .action(async (options: {workspace?: string; json?: boolean; yes?: boolean}) => {
-    const workspace = workspaceOption(options.workspace);
-    const manifest = options.yes
-      ? await migrateProjectNamespace(workspace)
-      : await inspectProjectNamespace(workspace);
+  .option('--rollback', 'verify and roll back a completed migration')
+  .option('--home', 'operate on the user-level Skein/Mosaic namespace')
+  .action(async (options: {workspace?: string; json?: boolean; yes?: boolean; rollback?: boolean; home?: boolean}) => {
+    if (options.home && options.workspace) throw new Error('--workspace cannot be combined with --home.');
+    if (options.rollback && !options.yes) {
+      const inspection = options.home
+        ? await inspectHomeRollback()
+        : await inspectProjectRollback(workspaceOption(options.workspace));
+      const {manifest} = inspection;
+      if (options.json) {
+        printObject({...manifest, rollbackReady: inspection.ready, rollbackDetail: inspection.detail}, true);
+        return;
+      }
+      process.stdout.write(`${manifest.source} -> ${manifest.destination}\n`);
+      process.stdout.write(`${inspection.detail}\n`);
+      if (inspection.ready) {
+        process.stdout.write(`Run \`skein migrate${options.home ? ' --home' : ''} --rollback --yes\` to apply the verified rollback.\n`);
+      }
+      return;
+    }
+    const manifest = options.home
+      ? options.rollback
+        ? await rollbackHomeNamespace()
+        : options.yes
+          ? await migrateHomeNamespace()
+          : await inspectHomeNamespace()
+      : options.rollback
+        ? await rollbackProjectNamespace(workspaceOption(options.workspace))
+        : options.yes
+          ? await migrateProjectNamespace(workspaceOption(options.workspace))
+          : await inspectProjectNamespace(workspaceOption(options.workspace));
     if (options.json) {
       printObject(manifest, true);
       return;
     }
+    if (options.rollback) {
+      process.stdout.write(manifest.status === 'rolled_back'
+        ? `Rolled back ${manifest.destination}; legacy state remains at ${manifest.source}.\n`
+        : manifest.status === 'not_available'
+          ? `No completed migration found; storage remains at ${manifest.source}.\n`
+          : `Storage is already using ${manifest.source}; no rollback was needed.\n`);
+      return;
+    }
     if (manifest.status === 'complete') {
-      process.stdout.write(`Storage is already migrated to ${manifest.destination}.\n`);
+      process.stdout.write(!manifest.sourceExists && !manifest.destinationExists
+        ? 'No storage state exists yet; nothing to migrate.\n'
+        : `Storage is already migrated to ${manifest.destination}.\n`);
       return;
     }
     process.stdout.write(
@@ -260,7 +306,7 @@ program
     );
     process.stdout.write(`${manifest.entries.length} entries, ${manifest.conflicts.length} conflicts.\n`);
     if (!options.yes && manifest.status === 'ready') {
-      process.stdout.write('Run `skein migrate --yes` to copy atomically; legacy state is retained for rollback.\n');
+      process.stdout.write(`Run \`skein migrate${options.home ? ' --home' : ''} --yes\` to copy atomically; legacy state is retained for rollback.\n`);
     }
   });
 
