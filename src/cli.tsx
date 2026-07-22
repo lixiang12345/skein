@@ -16,7 +16,7 @@ import {
 } from './config.js';
 import {ContextEngine, formatContextHits} from './context/context-engine.js';
 import {AgentRunner} from './agent/index.js';
-import {AgentProfileCatalog} from './agent/profiles.js';
+import {AgentProfileCatalog, TeamRunStore} from './agent/index.js';
 import {discoverWorkspaceRules} from './agent/rules.js';
 import {createProvider} from './providers/index.js';
 import {SessionStore, type SessionSummary} from './session/index.js';
@@ -405,6 +405,58 @@ agentsCommand
     else for (const profile of roster) {
       process.stdout.write(`${profile.name.padEnd(14)} ${profile.readOnly ? 'read-only' : 'writer   '} ${profile.route.runtime}:${profile.route.provider}/${profile.route.model}  ${profile.description}\n`);
     }
+  });
+agentsCommand
+  .command('runs')
+  .description('List persisted multi-model team runs')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--json', 'print JSON')
+  .action(async (options: {workspace?: string; json?: boolean}) => {
+    const store = new TeamRunStore(workspaceOption(options.workspace));
+    const runs = await store.list();
+    if (options.json) printObject(runs, true);
+    else if (!runs.length) process.stdout.write('No team runs found.\n');
+    else for (const run of runs) {
+      process.stdout.write(`${run.id.slice(0, 8)}  ${run.status.padEnd(8)} ${run.createdAt}  ${run.agentCount} agents  ${run.objective.replace(/\s+/gu, ' ').slice(0, 180)}\n`);
+    }
+  });
+agentsCommand
+  .command('show <id>')
+  .description('Show a persisted team run and its peer reports')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--json', 'print JSON')
+  .action(async (id: string, options: {workspace?: string; json?: boolean}) => {
+    const store = new TeamRunStore(workspaceOption(options.workspace));
+    const run = await requireTeamRun(store, id);
+    const agents = await Promise.all(run.agents.map(async (agent) => ({
+      ...agent,
+      reportText: await store.readArtifact(run.id, agent.report),
+    })));
+    const messages = await Promise.all(run.messages.map(async (message) => ({
+      ...message,
+      contentText: await store.readArtifact(run.id, message.content),
+    })));
+    if (options.json) printObject({...run, agents, messages}, true);
+    else {
+      process.stdout.write(`Team run ${run.id}\n${run.status}  ${run.createdAt}\n\n${run.objective}\n\n`);
+      for (const agent of agents) process.stdout.write(`## ${agent.profile} ${agent.phase} ${agent.provider}/${agent.model} ${agent.ok ? 'ok' : 'failed'}\n${agent.reportText}\n\n`);
+      if (messages.length) {
+        process.stdout.write('Peer handoffs\n');
+        for (const message of messages) process.stdout.write(`- ${message.from} -> ${message.to}: ${message.contentText.replace(/\s+/gu, ' ').slice(0, 400)}\n`);
+      }
+    }
+  });
+agentsCommand
+  .command('delete <id>')
+  .description('Delete a persisted team run and its local reports')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--yes', 'skip confirmation')
+  .action(async (id: string, options: {workspace?: string; yes?: boolean}) => {
+    const store = new TeamRunStore(workspaceOption(options.workspace));
+    const run = await requireTeamRun(store, id);
+    if (!options.yes && !(await confirm(`Delete team run ${run.id.slice(0, 8)}?`))) return;
+    await store.remove(run.id);
+    process.stdout.write(`Deleted team run ${run.id}.\n`);
   });
 
 const workflowCommand = program.command('workflow').description('Inspect typed coding workflows');
@@ -917,6 +969,14 @@ async function requireSessionSelector(store: SessionStore, selector?: string): P
   const session = await loadSessionSelector(store, selector);
   if (!session) throw new Error(`No saved sessions in ${store.workspace}.`);
   return session;
+}
+
+async function requireTeamRun(store: TeamRunStore, selector: string): Promise<import('./agent/team-store.js').TeamRunManifest> {
+  const runs = await store.list();
+  const selected = runs.filter((run) => run.id === selector || run.id.startsWith(selector));
+  if (selected.length > 1) throw new Error(`Team run prefix is ambiguous: ${selector}. Use a longer id.`);
+  if (!selected[0]) throw new Error(`Team run not found: ${selector}`);
+  return store.load(selected[0].id);
 }
 
 async function readStdin(): Promise<string> {

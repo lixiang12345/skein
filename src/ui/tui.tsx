@@ -312,6 +312,12 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       case 'agent_message':
         append({id: event.id, kind: 'agent-message', from: event.from, to: event.to, text: event.content});
         break;
+      case 'team_start':
+        append({id: nextId(), kind: 'notice', tone: 'info', text: `Team run ${event.id.slice(0, 8)} started${separator}${event.objective.slice(0, 180)}`});
+        break;
+      case 'team_done':
+        append({id: nextId(), kind: 'notice', tone: event.accepted ? 'success' : 'error', text: `Team run ${event.id.slice(0, 8)} ${event.accepted ? 'accepted' : 'rejected'}${separator}${event.reviewRounds} revision round${event.reviewRounds === 1 ? '' : 's'}`});
+        break;
       case 'agent_done':
         setTimeline((items) => updateAgent(items, event));
         break;

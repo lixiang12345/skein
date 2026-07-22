@@ -10,6 +10,7 @@ import type {ContextProvider} from '../../src/tools/types.js';
 import {createDefaultToolRegistry, WorkspaceAccess} from '../../src/tools/index.js';
 import type {AgentEvent, MosaicConfig} from '../../src/types.js';
 import {WorkflowCatalog} from '../../src/workflows/catalog.js';
+import {TeamRunStore} from '../../src/agent/team-store.js';
 
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, {recursive: true, force: true}))));
@@ -114,6 +115,12 @@ describe('bounded orchestration', () => {
     });
     expect(result.ok).toBe(true);
     expect(result.content).toContain('VERDICT: ACCEPT');
+    const persistedRunId = (result.metadata as {teamRunId?: string}).teamRunId;
+    expect(persistedRunId).toMatch(/^[0-9a-f-]{36}$/u);
+    const persisted = await new TeamRunStore(root).load(persistedRunId!);
+    expect(persisted.status).toBe('accepted');
+    expect(persisted.agents.length).toBeGreaterThanOrEqual(4);
+    expect(persisted.messages.length).toBeGreaterThanOrEqual(2);
     expect(created).toEqual([
       'compatible/planner-model/key',
       'compatible/judge-model/key',

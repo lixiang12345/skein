@@ -66,7 +66,23 @@ flowchart LR
 
 This is intentionally not a free-form infinite group chat. Every run has an
 objective, bounded specialists, a reviewer, a revision cap, cancellation
-propagation, and a deterministic return value.
+propagation, and a deterministic return value. By default, Skein persists a
+local Team Run manifest under the active namespace's `team-runs/` directory.
+Reports and peer handoffs are content-addressed blobs; the manifest stores
+hashes, phases, providers, models, and acceptance status.
+
+Inspect or remove runs with:
+
+```bash
+skein agents runs
+skein agents show <run-id-or-prefix>
+skein agents delete <run-id-or-prefix> --yes
+```
+
+Set `agents.persistBoard` to `false` when a session must not retain team
+reports. The normal default is local persistence because it makes interrupted
+runs, reviewer disagreements, and delivery audits recoverable without sending
+the blackboard to a hosted service.
 
 ## Configuration
 

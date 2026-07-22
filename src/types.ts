@@ -59,6 +59,7 @@ export interface AgentTeamConfig {
   reviewerProfile?: string;
   maxReviewRounds?: number;
   cockpit?: boolean;
+  persistBoard?: boolean;
 }
 
 export interface AgentModelRoute {
@@ -247,6 +248,8 @@ export type AgentEvent =
   | {type: 'memory'; count: number; scope: string}
   | {type: 'agent_start'; id: string; profile: string; task: string; provider?: string; model?: string; phase?: 'work' | 'review' | 'revision'}
   | {type: 'agent_message'; id: string; from: string; to: string; content: string}
+  | {type: 'team_start'; id: string; objective: string}
+  | {type: 'team_done'; id: string; accepted: boolean; reviewRounds: number}
   | {type: 'agent_done'; id: string; profile: string; ok: boolean; summary: string; provider?: string; model?: string; phase?: 'work' | 'review' | 'revision'}
   | {type: 'workflow'; name: string; step: string; status: TaskStatus}
   | {type: 'context_compacted'; omittedMessages: number; summaryTokens: number}

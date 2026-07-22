@@ -155,6 +155,9 @@ Implementation progress:
 - Routes may also select installed `codex`, `claude`, or `grok` runtimes. They
   run without a shell in read-only/plan mode and feed normalized reports into
   the same cockpit and reviewer loop.
+- Team runs now persist a local manifest plus content-addressed reports and
+  peer handoffs. `skein agents runs/show/delete` provides recovery and audit
+  access; `agents.persistBoard=false` disables this for privacy-sensitive runs.
 - See `docs/MULTI_MODEL_TEAMS.md`. Writer worktrees, persistent blackboard
   artifacts, per-route budgets, Gemini CLI, and optional tmux/iTerm pane hosts
   remain next.

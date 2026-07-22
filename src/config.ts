@@ -54,6 +54,7 @@ const agentTeamConfigSchema = z.object({
   reviewerProfile: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/).optional(),
   maxReviewRounds: z.number().int().min(0).max(3).optional(),
   cockpit: z.boolean().optional(),
+  persistBoard: z.boolean().optional(),
   routes: z.record(z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/), z.object({
     runtime: z.enum(['api', 'codex', 'claude', 'grok']).optional(),
     provider: z.enum(['openai', 'anthropic', 'gemini', 'compatible']),
@@ -237,6 +238,7 @@ export function defaultConfig(workspace = process.cwd()): MosaicConfig {
       reviewerProfile: 'reviewer',
       maxReviewRounds: 1,
       cockpit: true,
+      persistBoard: true,
       routes: {},
     },
     mcp: {
@@ -595,6 +597,7 @@ export function configSummary(config: MosaicConfig): Record<string, unknown> {
       reviewerProfile: config.agents.reviewerProfile,
       maxReviewRounds: config.agents.maxReviewRounds,
       cockpit: config.agents.cockpit,
+      persistBoard: config.agents.persistBoard,
       routes: Object.fromEntries(Object.entries(config.agents.routes ?? {}).map(([profile, route]) => [profile, {
         runtime: route.runtime ?? 'api',
         provider: route.provider,

@@ -10,6 +10,7 @@ import type {PromptContextProvider} from './prompt-context.js';
 import {AgentRunner} from './runner.js';
 import {AgentProfileCatalog, type AgentProfile} from './profiles.js';
 import {runExternalAgent, type ExternalAgentRequest, type ExternalAgentResult} from './external-runtime.js';
+import {TeamRunStore} from './team-store.js';
 
 export interface DelegationManagerOptions {
   config: MosaicConfig;
@@ -21,6 +22,7 @@ export interface DelegationManagerOptions {
   providerFactory?: (config: ModelConfig) => ModelProvider;
   environment?: NodeJS.ProcessEnv;
   externalRunner?: (request: ExternalAgentRequest) => Promise<ExternalAgentResult>;
+  teamStore?: TeamRunStore;
 }
 
 interface DelegatedTask {
@@ -41,6 +43,7 @@ type AgentPhase = 'work' | 'review' | 'revision';
 
 export class DelegationManager {
   private readonly team: AgentTeamConfig;
+  private readonly teamStore: TeamRunStore | undefined;
 
   constructor(private readonly options: DelegationManagerOptions) {
     this.team = options.config.agents ?? {
@@ -49,6 +52,9 @@ export class DelegationManager {
       maxDelegations: 1,
       defaultProfile: 'reviewer',
     };
+    this.teamStore = options.teamStore ?? (this.team.persistBoard !== false
+      ? new TeamRunStore(options.config.workspaceRoots[0] ?? process.cwd())
+      : undefined);
   }
 
   tool(): AgentTool {
@@ -152,61 +158,98 @@ export class DelegationManager {
     emit?: (event: AgentEvent) => void | Promise<void>,
     signal?: AbortSignal,
   ) {
-    let results = await mapConcurrent(tasks, this.team.maxConcurrent, (task) =>
-      this.runOne(task, 'work', emit, signal));
     const reviewer = reviewerOverride ?? this.team.reviewerProfile ?? 'reviewer';
-    let review = await this.review(objective, results, reviewer, emit, signal);
     const rounds = Math.max(0, this.team.maxReviewRounds ?? 1);
-    let completedRounds = 0;
-    while (review.ok && reviewVerdict(review.summary) === 'revise' && completedRounds < rounds) {
-      completedRounds += 1;
-      for (const result of results) {
-        await emit?.({
-          type: 'agent_message',
-          id: randomUUID(),
-          from: reviewer,
-          to: result.profile,
-          content: review.summary.slice(0, 2_000),
-        });
+    const board = await this.teamStore?.create({objective, reviewer, maxReviewRounds: rounds});
+    const runId = board?.id ?? randomUUID();
+    await emit?.({type: 'team_start', id: runId, objective});
+    try {
+      let results = await mapConcurrent(tasks, this.team.maxConcurrent, (task) =>
+        this.runRecorded(board?.id, task, 'work', emit, signal));
+      let review = await this.review(objective, results, reviewer, board?.id, emit, signal);
+      let completedRounds = 0;
+      while (review.ok && reviewVerdict(review.summary) === 'revise' && completedRounds < rounds) {
+        completedRounds += 1;
+        for (const result of results) {
+          await this.peerMessage(board?.id, reviewer, result.profile, review.summary.slice(0, 2_000), emit);
+        }
+        results = await mapConcurrent(tasks, this.team.maxConcurrent, (task) => this.runRecorded(board?.id, {
+          ...task,
+          task: `${task.task}\n\nA reviewer requested revision. Address this feedback with fresh evidence:\n${review.summary}`,
+        }, 'revision', emit, signal));
+        review = await this.review(objective, results, reviewer, board?.id, emit, signal);
       }
-      results = await mapConcurrent(tasks, this.team.maxConcurrent, (task) => this.runOne({
-        ...task,
-        task: `${task.task}\n\nA reviewer requested revision. Address this feedback with fresh evidence:\n${review.summary}`,
-      }, 'revision', emit, signal));
-      review = await this.review(objective, results, reviewer, emit, signal);
-    }
-    const accepted = review.ok && reviewVerdict(review.summary) === 'accept';
-    return {
-      ok: accepted && results.every((result) => result.ok),
-      content: `${formatResults(results)}\n\n## ${review.profile} acceptance review\n${review.summary}`,
-      metadata: {
+      const accepted = review.ok && reviewVerdict(review.summary) === 'accept';
+      if (board) await this.teamStore?.complete(board.id, {
         accepted,
         reviewRounds: completedRounds,
-        agents: resultMetadata([...results, review]),
-      },
-    };
+        failed: !review.ok || !results.every((result) => result.ok),
+      });
+      await emit?.({type: 'team_done', id: runId, accepted, reviewRounds: completedRounds});
+      return {
+        ok: accepted && results.every((result) => result.ok),
+        content: `${formatResults(results)}\n\n## ${review.profile} acceptance review\n${review.summary}`,
+        metadata: {
+          accepted,
+          reviewRounds: completedRounds,
+          ...(board ? {teamRunId: board.id} : {}),
+          agents: resultMetadata([...results, review]),
+        },
+      };
+    } catch (error) {
+      if (board) await this.teamStore?.complete(board.id, {accepted: false, reviewRounds: 0, failed: true}).catch(() => undefined);
+      await emit?.({type: 'team_done', id: runId, accepted: false, reviewRounds: 0});
+      throw error;
+    }
   }
 
   private async review(
     objective: string,
     results: DelegatedResult[],
     reviewer: string,
+    runId?: string,
     emit?: (event: AgentEvent) => void | Promise<void>,
     signal?: AbortSignal,
   ): Promise<DelegatedResult> {
     for (const result of results) {
-      await emit?.({
-        type: 'agent_message',
-        id: randomUUID(),
-        from: result.profile,
-        to: reviewer,
-        content: result.summary.slice(0, 2_000),
-      });
+      await this.peerMessage(runId, result.profile, reviewer, result.summary.slice(0, 2_000), emit);
     }
-    return this.runOne({
+    return this.runRecorded(runId, {
       profile: reviewer,
       task: `Review a multi-agent council against the objective below. Challenge unsupported claims and identify missing evidence.\n\nObjective:\n${objective}\n\nWorker reports:\n${formatResults(results)}\n\nStart the response with exactly VERDICT: ACCEPT when the evidence is sufficient, or VERDICT: REVISE when another specialist pass is required. Then give concise reasons, conflicts, and the concrete acceptance checklist.`,
     }, 'review', emit, signal);
+  }
+
+  private async runRecorded(
+    runId: string | undefined,
+    task: DelegatedTask,
+    phase: AgentPhase,
+    emit?: (event: AgentEvent) => void | Promise<void>,
+    signal?: AbortSignal,
+  ): Promise<DelegatedResult> {
+    const result = await this.runOne(task, phase, emit, signal);
+    if (runId) await this.teamStore?.recordAgent(runId, {
+      id: result.id,
+      profile: result.profile,
+      provider: result.provider,
+      model: result.model,
+      phase,
+      ok: result.ok,
+      report: result.summary,
+    });
+    return result;
+  }
+
+  private async peerMessage(
+    runId: string | undefined,
+    from: string,
+    to: string,
+    content: string,
+    emit?: (event: AgentEvent) => void | Promise<void>,
+  ): Promise<void> {
+    const id = randomUUID();
+    if (runId) await this.teamStore?.recordMessage(runId, {id, from, to, content});
+    await emit?.({type: 'agent_message', id, from, to, content});
   }
 
   private async runOne(
