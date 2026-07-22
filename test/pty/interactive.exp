@@ -20,6 +20,8 @@ if {[info exists env(SKEIN_PTY_VERBOSE)]} {
 }
 log_file -noappend -a $output
 unset -nocomplain env(FORCE_COLOR)
+unset -nocomplain env(CI)
+unset -nocomplain env(GITHUB_ACTIONS)
 set env(SKEIN_HOME) "$workspace/.skein-home"
 if {$mode eq "ascii"} {
   set env(SKEIN_GLYPHS) ascii

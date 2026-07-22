@@ -18,6 +18,8 @@ if {[info exists env(SKEIN_PTY_VERBOSE)]} {
 }
 log_file -noappend -a $output
 unset -nocomplain env(FORCE_COLOR)
+unset -nocomplain env(CI)
+unset -nocomplain env(GITHUB_ACTIONS)
 set env(SKEIN_HOME) "$workspace/.skein-home-short"
 set env(TERM) xterm-256color
 unset -nocomplain env(NO_COLOR)
