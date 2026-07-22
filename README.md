@@ -376,6 +376,8 @@ Preview and apply project migration, or verify and roll it back:
 ```bash
 skein migrate
 skein migrate --yes
+skein migrate --recover
+skein migrate --recover --yes
 skein migrate --rollback
 skein migrate --rollback --yes
 ```
@@ -384,6 +386,15 @@ Use `--home` for user-level configuration, memory, themes, Skills, rules, and
 agent profiles. Migration copies through a temporary directory and retains the
 legacy source. Rollback is available only when the source, canonical copy, and
 hash-bearing migration manifest still match; changed data is never deleted.
+If a process exits between copy, rename, verification, and cleanup,
+`--recover` previews the remaining `.migrating-*` or `.rollback-*` directory.
+`--recover --yes` resumes a complete migration, restores a complete rollback
+snapshot, or removes only a partial copy proven redundant with legacy state.
+Conflicting or ambiguous candidates remain untouched. Migration, rollback, and
+recovery also share a stale-aware process lock so concurrent namespace mutation
+commands cannot act on an operation that is still running. Stop other Skein
+sessions that may still be writing legacy storage before applying migration,
+rollback, or recovery.
 
 The default durable memory database is user-owned at `~/.mosaic/memory.sqlite`
 until user storage is migrated to `~/.skein/` (or overridden by `SKEIN_HOME`).

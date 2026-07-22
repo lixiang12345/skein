@@ -2,7 +2,8 @@ import {createHash, randomUUID} from 'node:crypto';
 import {constants, lstatSync} from 'node:fs';
 import {chmod, lstat, mkdir, open, readdir, realpath, rename, rm} from 'node:fs/promises';
 import {homedir} from 'node:os';
-import {dirname, isAbsolute, join, relative, resolve} from 'node:path';
+import {basename, dirname, isAbsolute, join, relative, resolve} from 'node:path';
+import * as lockfile from 'proper-lockfile';
 import {isInside} from './path.js';
 
 export const CANONICAL_PROJECT_NAMESPACE = '.skein';
@@ -11,6 +12,8 @@ export const CANONICAL_HOME_NAMESPACE = '.skein';
 export const LEGACY_HOME_NAMESPACE = '.mosaic';
 const MAX_MANIFEST_BYTES = 16 * 1024 * 1024;
 const MIGRATION_MANIFEST_NAME = 'migration-manifest.json';
+const NAMESPACE_LOCK_STALE_MS = 10_000;
+const NAMESPACE_LOCK_UPDATE_MS = 2_000;
 
 export type NamespaceKind = 'canonical' | 'legacy' | 'none';
 
@@ -53,6 +56,27 @@ export interface NamespaceRollbackInspection {
   manifest: NamespaceMigrationManifest;
   ready: boolean;
   detail: string;
+}
+
+export type NamespaceRecoveryAction =
+  | 'resume_migration'
+  | 'restore_canonical'
+  | 'remove_redundant'
+  | 'blocked';
+
+export interface NamespaceRecoveryCandidate {
+  path: string;
+  kind: 'migration' | 'rollback';
+  action: NamespaceRecoveryAction;
+  detail: string;
+}
+
+export interface NamespaceRecoveryInspection {
+  workspace: string;
+  source: string;
+  destination: string;
+  status: 'clean' | 'ready' | 'blocked' | 'recovered';
+  candidates: NamespaceRecoveryCandidate[];
 }
 
 async function isDirectory(path: string): Promise<boolean> {
@@ -214,15 +238,17 @@ async function inspectNamespacePaths(
 }
 
 export async function migrateProjectNamespace(workspace: string): Promise<NamespaceMigrationManifest> {
-  const manifest = await inspectProjectNamespace(workspace);
-  return migrateNamespace(manifest);
+  const resolution = await resolveProjectNamespace(workspace);
+  return withNamespaceMutationLock(resolution.canonical, async () =>
+    migrateNamespace(await inspectNamespacePaths(resolution.workspace, resolution.legacy, resolution.canonical)));
 }
 
 export async function migrateHomeNamespace(
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<NamespaceMigrationManifest> {
-  const manifest = await inspectHomeNamespace(environment);
-  return migrateNamespace(manifest);
+  const resolution = await resolveHomeStorageNamespace(environment);
+  return withNamespaceMutationLock(resolution.canonical, async () =>
+    migrateNamespace(await inspectNamespacePaths(resolution.workspace, resolution.legacy, resolution.canonical)));
 }
 
 async function migrateNamespace(manifest: NamespaceMigrationManifest): Promise<NamespaceMigrationManifest> {
@@ -260,7 +286,9 @@ async function migrateNamespace(manifest: NamespaceMigrationManifest): Promise<N
 }
 
 export async function rollbackProjectNamespace(workspace: string): Promise<NamespaceMigrationManifest> {
-  return rollbackNamespace(await inspectProjectNamespace(workspace));
+  const resolution = await resolveProjectNamespace(workspace);
+  return withNamespaceMutationLock(resolution.canonical, async () =>
+    rollbackNamespace(await inspectNamespacePaths(resolution.workspace, resolution.legacy, resolution.canonical)));
 }
 
 export async function inspectProjectRollback(workspace: string): Promise<NamespaceRollbackInspection> {
@@ -270,13 +298,64 @@ export async function inspectProjectRollback(workspace: string): Promise<Namespa
 export async function rollbackHomeNamespace(
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<NamespaceMigrationManifest> {
-  return rollbackNamespace(await inspectHomeNamespace(environment));
+  const resolution = await resolveHomeStorageNamespace(environment);
+  return withNamespaceMutationLock(resolution.canonical, async () =>
+    rollbackNamespace(await inspectNamespacePaths(resolution.workspace, resolution.legacy, resolution.canonical)));
 }
 
 export async function inspectHomeRollback(
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<NamespaceRollbackInspection> {
   return inspectRollback(await inspectHomeNamespace(environment));
+}
+
+export async function inspectProjectRecovery(workspace: string): Promise<NamespaceRecoveryInspection> {
+  const resolution = await resolveProjectNamespace(workspace);
+  return inspectRecovery(resolution.workspace, resolution.legacy, resolution.canonical);
+}
+
+export async function recoverProjectNamespace(workspace: string): Promise<NamespaceRecoveryInspection> {
+  const resolution = await resolveProjectNamespace(workspace);
+  return withNamespaceMutationLock(resolution.canonical, async () =>
+    recoverNamespace(resolution.workspace, resolution.legacy, resolution.canonical));
+}
+
+export async function inspectHomeRecovery(
+  environment: NodeJS.ProcessEnv = process.env,
+): Promise<NamespaceRecoveryInspection> {
+  const resolution = await resolveHomeStorageNamespace(environment);
+  return inspectRecovery(resolution.workspace, resolution.legacy, resolution.canonical);
+}
+
+export async function recoverHomeNamespace(
+  environment: NodeJS.ProcessEnv = process.env,
+): Promise<NamespaceRecoveryInspection> {
+  const resolution = await resolveHomeStorageNamespace(environment);
+  return withNamespaceMutationLock(resolution.canonical, async () =>
+    recoverNamespace(resolution.workspace, resolution.legacy, resolution.canonical));
+}
+
+async function withNamespaceMutationLock<T>(destination: string, operation: () => Promise<T>): Promise<T> {
+  await mkdir(dirname(destination), {recursive: true, mode: 0o700});
+  let release: () => Promise<void>;
+  try {
+    release = await lockfile.lock(destination, {
+      realpath: false,
+      stale: NAMESPACE_LOCK_STALE_MS,
+      update: NAMESPACE_LOCK_UPDATE_MS,
+      retries: 0,
+    });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ELOCKED') {
+      throw new Error(`Another namespace operation is already running for ${destination}.`);
+    }
+    throw error;
+  }
+  try {
+    return await operation();
+  } finally {
+    await release();
+  }
 }
 
 async function rollbackNamespace(manifest: NamespaceMigrationManifest): Promise<NamespaceMigrationManifest> {
@@ -315,6 +394,165 @@ async function inspectRollback(manifest: NamespaceMigrationManifest): Promise<Na
     return {manifest, ready: true, detail: 'Rollback snapshot verified.'};
   } catch (error) {
     return {manifest, ready: false, detail: error instanceof Error ? error.message : String(error)};
+  }
+}
+
+async function inspectRecovery(
+  workspace: string,
+  source: string,
+  destination: string,
+): Promise<NamespaceRecoveryInspection> {
+  const discovered = await discoverRecoveryCandidates(destination);
+  if (!discovered.length) return {workspace, source, destination, status: 'clean', candidates: []};
+  const manifest = await inspectNamespacePaths(workspace, source, destination);
+  const candidates = await Promise.all(discovered.map((candidate) => classifyRecoveryCandidate(manifest, candidate)));
+  const primary = candidates.filter((candidate) =>
+    candidate.action === 'resume_migration' || candidate.action === 'restore_canonical');
+  if (primary.length > 1) {
+    const ambiguous = new Set(primary.map((candidate) => candidate.path));
+    for (const candidate of candidates) {
+      if (ambiguous.has(candidate.path)) {
+        candidate.action = 'blocked';
+        candidate.detail = 'Multiple complete recovery candidates exist; manual selection is required.';
+      }
+    }
+  }
+  return {
+    workspace,
+    source,
+    destination,
+    status: candidates.some((candidate) => candidate.action === 'blocked') ? 'blocked' : 'ready',
+    candidates,
+  };
+}
+
+async function recoverNamespace(
+  workspace: string,
+  source: string,
+  destination: string,
+): Promise<NamespaceRecoveryInspection> {
+  const inspection = await inspectRecovery(workspace, source, destination);
+  if (inspection.status === 'clean') return inspection;
+  if (inspection.status === 'blocked') {
+    const details = inspection.candidates
+      .filter((candidate) => candidate.action === 'blocked')
+      .map((candidate) => `${basename(candidate.path)}: ${candidate.detail}`);
+    throw new Error(`Namespace recovery is blocked: ${details.join('; ')}`);
+  }
+  for (const candidate of inspection.candidates.filter((item) => item.action === 'remove_redundant')) {
+    const quarantine = `${destination}.${candidate.kind === 'migration' ? 'migrating' : 'rollback'}-${randomUUID()}`;
+    await rename(candidate.path, quarantine);
+    try {
+      const current = await inspectNamespacePaths(workspace, source, destination);
+      await assertRemovableCandidate(current, quarantine);
+      await rm(quarantine, {recursive: true, force: false});
+    } catch (error) {
+      await rename(quarantine, candidate.path).catch(() => undefined);
+      throw error;
+    }
+  }
+  const primary = inspection.candidates.find((candidate) =>
+    candidate.action === 'resume_migration' || candidate.action === 'restore_canonical');
+  if (primary) {
+    if (await lstatIfExists(destination)) throw new Error(`Cannot recover because the destination now exists: ${destination}`);
+    const manifest = await inspectNamespacePaths(workspace, source, destination);
+    await verifyRollbackManifest(manifest, primary.path);
+    await rename(primary.path, destination);
+    try {
+      const recovered = await inspectNamespacePaths(workspace, source, destination);
+      if (recovered.status !== 'complete') {
+        throw new Error(`Recovered namespace did not pass verification: ${recovered.conflicts.join(', ')}`);
+      }
+    } catch (error) {
+      await rename(destination, primary.path).catch(() => undefined);
+      throw error;
+    }
+  }
+  return {...inspection, status: 'recovered'};
+}
+
+async function discoverRecoveryCandidates(
+  destination: string,
+): Promise<Array<{path: string; kind: 'migration' | 'rollback'}>> {
+  const parent = dirname(destination);
+  const name = basename(destination).replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  const pattern = new RegExp(`^${name}\\.(migrating|rollback)-[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$`, 'u');
+  let entries;
+  try {
+    entries = await readdir(parent, {withFileTypes: true});
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+  return entries.flatMap((entry) => {
+    const match = entry.name.match(pattern);
+    if (!match) return [];
+    return [{
+      path: join(parent, entry.name),
+      kind: match[1] === 'migrating' ? 'migration' as const : 'rollback' as const,
+    }];
+  }).sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
+}
+
+async function classifyRecoveryCandidate(
+  manifest: NamespaceMigrationManifest,
+  candidate: {path: string; kind: 'migration' | 'rollback'},
+): Promise<NamespaceRecoveryCandidate> {
+  const info = await lstatIfExists(candidate.path);
+  if (!info || !info.isDirectory() || info.isSymbolicLink()) {
+    return {...candidate, action: 'blocked', detail: 'Recovery candidate is not a real directory.'};
+  }
+  if (!manifest.sourceExists) {
+    return {...candidate, action: 'blocked', detail: 'Legacy source is missing; the candidate may contain the only copy.'};
+  }
+  if (manifest.status === 'conflict') {
+    return {...candidate, action: 'blocked', detail: 'Namespace state has conflicts that must be resolved first.'};
+  }
+  try {
+    await verifyRollbackManifest(manifest, candidate.path);
+    if (!manifest.destinationExists) {
+      return candidate.kind === 'migration'
+        ? {...candidate, action: 'resume_migration', detail: 'Complete migration snapshot can be promoted atomically.'}
+        : {...candidate, action: 'restore_canonical', detail: 'Complete rollback snapshot can be restored atomically.'};
+    }
+    return {...candidate, action: 'remove_redundant', detail: 'Verified snapshot is redundant with active storage.'};
+  } catch {
+    try {
+      await assertRedundantCandidate(manifest, candidate.path);
+      return {...candidate, action: 'remove_redundant', detail: 'Partial snapshot is a verified subset of the legacy source.'};
+    } catch (error) {
+      return {...candidate, action: 'blocked', detail: error instanceof Error ? error.message : String(error)};
+    }
+  }
+}
+
+async function assertRedundantCandidate(
+  manifest: NamespaceMigrationManifest,
+  candidatePath: string,
+): Promise<void> {
+  if (!manifest.sourceExists) throw new Error('Legacy source is missing.');
+  const expected = new Map(manifest.entries.map((entry) => [entry.relativePath, entryFingerprint(entry)]));
+  const candidateEntries: NamespaceFileEntry[] = [];
+  await collectEntries(candidatePath, '', candidateEntries);
+  if (candidateEntries.some((entry) => entry.relativePath === MIGRATION_MANIFEST_NAME)) {
+    throw new Error('Candidate contains a migration manifest that could not be verified.');
+  }
+  const dataEntries = candidateEntries.filter((entry) => entry.relativePath !== MIGRATION_MANIFEST_NAME);
+  for (const entry of dataEntries) {
+    if (entry.kind === 'symlink' || expected.get(entry.relativePath) !== entryFingerprint(entry)) {
+      throw new Error(`Candidate contains data that is not redundant with the legacy source: ${entry.relativePath}`);
+    }
+  }
+}
+
+async function assertRemovableCandidate(
+  manifest: NamespaceMigrationManifest,
+  candidatePath: string,
+): Promise<void> {
+  try {
+    await verifyRollbackManifest(manifest, candidatePath);
+  } catch {
+    await assertRedundantCandidate(manifest, candidatePath);
   }
 }
 

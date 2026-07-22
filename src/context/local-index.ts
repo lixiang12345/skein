@@ -78,7 +78,7 @@ const include = [
 ];
 
 const ignorePatterns = [
-  '**/.git/**', '**/.mosaic/**', '**/.skein/**', '**/node_modules/**', '**/dist/**',
+  '**/.git/**', '**/.mosaic/**', '**/.skein/**', '**/.skein.lock/**', '**/.skein.migrating-*/**', '**/.skein.rollback-*/**', '**/node_modules/**', '**/dist/**',
   '**/build/**', '**/coverage/**', '**/.next/**', '**/.cache/**',
   '**/vendor/**', '**/target/**', '**/*.min.js', '**/*.map',
   '**/package-lock.json', '**/pnpm-lock.yaml', '**/yarn.lock',

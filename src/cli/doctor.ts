@@ -7,7 +7,12 @@ import {ContextEngine} from '../context/context-engine.js';
 import {resolveExecutableRuntime, runProcess} from '../utils/process.js';
 import {PRODUCT_COMMAND, PRODUCT_NAME} from '../brand.js';
 import {resolveCliGlyphs, type CliGlyphs} from './glyphs.js';
-import {inspectHomeNamespace, inspectProjectNamespace} from '../utils/namespace.js';
+import {
+  inspectHomeNamespace,
+  inspectHomeRecovery,
+  inspectProjectNamespace,
+  inspectProjectRecovery,
+} from '../utils/namespace.js';
 
 interface Check {
   name: string;
@@ -30,6 +35,8 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
   const checks: Check[] = [];
   let namespace: Awaited<ReturnType<typeof inspectProjectNamespace>> | undefined;
   let homeNamespace: Awaited<ReturnType<typeof inspectHomeNamespace>> | undefined;
+  let namespaceRecovery: Awaited<ReturnType<typeof inspectProjectRecovery>> | undefined;
+  let homeRecovery: Awaited<ReturnType<typeof inspectHomeRecovery>> | undefined;
   try {
     namespace = await inspectProjectNamespace(root);
     checks.push({
@@ -53,6 +60,24 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
     });
   }
   try {
+    namespaceRecovery = await inspectProjectRecovery(root);
+    if (namespaceRecovery.status !== 'clean') {
+      checks.push({
+        name: 'Storage recovery',
+        ok: namespaceRecovery.status !== 'blocked',
+        detail: `${namespaceRecovery.candidates.length} interrupted operation(s); run ${PRODUCT_COMMAND} migrate --recover`,
+        required: false,
+      });
+    }
+  } catch (error) {
+    checks.push({
+      name: 'Storage recovery',
+      ok: false,
+      detail: error instanceof Error ? error.message : String(error),
+      required: false,
+    });
+  }
+  try {
     homeNamespace = await inspectHomeNamespace();
     checks.push({
       name: 'User storage namespace',
@@ -69,6 +94,24 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
   } catch (error) {
     checks.push({
       name: 'User storage namespace',
+      ok: false,
+      detail: error instanceof Error ? error.message : String(error),
+      required: false,
+    });
+  }
+  try {
+    homeRecovery = await inspectHomeRecovery();
+    if (homeRecovery.status !== 'clean') {
+      checks.push({
+        name: 'User storage recovery',
+        ok: homeRecovery.status !== 'blocked',
+        detail: `${homeRecovery.candidates.length} interrupted operation(s); run ${PRODUCT_COMMAND} migrate --home --recover`,
+        required: false,
+      });
+    }
+  } catch (error) {
+    checks.push({
+      name: 'User storage recovery',
       ok: false,
       detail: error instanceof Error ? error.message : String(error),
       required: false,
@@ -174,6 +217,8 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
       checks,
       ...(namespace ? {namespace} : {}),
       ...(homeNamespace ? {homeNamespace} : {}),
+      ...(namespaceRecovery ? {namespaceRecovery} : {}),
+      ...(homeRecovery ? {homeRecovery} : {}),
     }, null, 2)}\n`);
   } else {
     process.stdout.write(`${chalk.hex('#A78BFA').bold(`${glyphs.brand} ${PRODUCT_NAME.toUpperCase()} DOCTOR`)}\n\n`);

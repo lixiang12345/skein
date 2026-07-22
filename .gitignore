@@ -4,6 +4,9 @@ coverage/
 artifacts/
 .mosaic/
 .skein/
+.skein.lock/
+.skein.migrating-*/
+.skein.rollback-*/
 .env
 *.log
 *.tgz

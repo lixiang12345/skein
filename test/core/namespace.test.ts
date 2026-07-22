@@ -1,13 +1,18 @@
-import {mkdtemp, mkdir, readFile, writeFile, access, rm, stat, symlink} from 'node:fs/promises';
+import {mkdtemp, mkdir, readFile, writeFile, access, cp, rename, rm, stat, symlink} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import * as lockfile from 'proper-lockfile';
 import {describe, expect, it} from 'vitest';
 import {
   inspectProjectNamespace,
   inspectProjectRollback,
   inspectHomeNamespace,
+  inspectHomeRecovery,
+  inspectProjectRecovery,
   migrateHomeNamespace,
   migrateProjectNamespace,
+  recoverHomeNamespace,
+  recoverProjectNamespace,
   rollbackHomeNamespace,
   rollbackProjectNamespace,
   resolveProjectNamespace,
@@ -173,5 +178,118 @@ describe('storage namespace migration', () => {
     expect(manifest.conflicts).toContain('redirect.json');
     await expect(migrateProjectNamespace(root)).rejects.toThrow('conflicts');
     expect(await readFile(join(outside, 'secret.json'), 'utf8')).toBe('outside');
+  });
+
+  it('serializes namespace mutation commands across processes', async () => {
+    const root = await workspace();
+    await mkdir(join(root, '.mosaic'), {recursive: true});
+    await writeFile(join(root, '.mosaic', 'config.json'), 'legacy');
+    const candidate = join(root, '.skein.migrating-00000000-0000-4000-8000-000000000009');
+    await mkdir(candidate);
+    await writeFile(join(candidate, 'config.json'), 'legacy');
+    const release = await lockfile.lock(join(root, '.skein'), {realpath: false});
+    try {
+      await expect(migrateProjectNamespace(root)).rejects.toThrow('already running');
+      await expect(rollbackProjectNamespace(root)).rejects.toThrow('already running');
+      await expect(recoverProjectNamespace(root)).rejects.toThrow('already running');
+      expect(await readFile(join(candidate, 'config.json'), 'utf8')).toBe('legacy');
+    } finally {
+      await release();
+    }
+    await recoverProjectNamespace(root);
+    await migrateProjectNamespace(root);
+    expect(await readFile(join(root, '.skein', 'config.json'), 'utf8')).toBe('legacy');
+  });
+
+  it('resumes a complete interrupted migration', async () => {
+    const root = await workspace();
+    await mkdir(join(root, '.mosaic'), {recursive: true});
+    await writeFile(join(root, '.mosaic', 'config.json'), 'legacy');
+    await migrateProjectNamespace(root);
+    const candidate = join(root, '.skein.migrating-00000000-0000-4000-8000-000000000001');
+    await rename(join(root, '.skein'), candidate);
+    const preview = await inspectProjectRecovery(root);
+    expect(preview.status).toBe('ready');
+    expect(preview.candidates).toMatchObject([{kind: 'migration', action: 'resume_migration'}]);
+    expect((await recoverProjectNamespace(root)).status).toBe('recovered');
+    expect(await readFile(join(root, '.skein', 'config.json'), 'utf8')).toBe('legacy');
+    await expect(access(candidate)).rejects.toMatchObject({code: 'ENOENT'});
+  });
+
+  it('restores a complete interrupted rollback', async () => {
+    const root = await workspace();
+    await mkdir(join(root, '.mosaic'), {recursive: true});
+    await writeFile(join(root, '.mosaic', 'config.json'), 'legacy');
+    await migrateProjectNamespace(root);
+    const candidate = join(root, '.skein.rollback-00000000-0000-4000-8000-000000000002');
+    await rename(join(root, '.skein'), candidate);
+    expect((await inspectProjectRecovery(root)).candidates).toMatchObject([
+      {kind: 'rollback', action: 'restore_canonical'},
+    ]);
+    await recoverProjectNamespace(root);
+    expect((await inspectProjectRollback(root)).ready).toBe(true);
+  });
+
+  it('removes an interrupted partial copy only when it is redundant', async () => {
+    const root = await workspace();
+    await mkdir(join(root, '.mosaic', 'sessions'), {recursive: true});
+    await writeFile(join(root, '.mosaic', 'config.json'), 'legacy');
+    await writeFile(join(root, '.mosaic', 'sessions', 'one.json'), 'one');
+    const candidate = join(root, '.skein.migrating-00000000-0000-4000-8000-000000000003');
+    await mkdir(candidate);
+    await writeFile(join(candidate, 'config.json'), 'legacy');
+    expect((await inspectProjectRecovery(root)).candidates).toMatchObject([
+      {action: 'remove_redundant'},
+    ]);
+    await recoverProjectNamespace(root);
+    await expect(access(candidate)).rejects.toMatchObject({code: 'ENOENT'});
+    expect(await readFile(join(root, '.mosaic', 'sessions', 'one.json'), 'utf8')).toBe('one');
+  });
+
+  it('blocks changed or ambiguous recovery candidates', async () => {
+    const root = await workspace();
+    await mkdir(join(root, '.mosaic'), {recursive: true});
+    await writeFile(join(root, '.mosaic', 'config.json'), 'legacy');
+    const conflicting = join(root, '.skein.migrating-00000000-0000-4000-8000-000000000004');
+    await mkdir(conflicting);
+    await writeFile(join(conflicting, 'config.json'), 'changed');
+    expect((await inspectProjectRecovery(root)).status).toBe('blocked');
+    await expect(recoverProjectNamespace(root)).rejects.toThrow('blocked');
+    await rm(conflicting, {recursive: true});
+
+    const invalidManifest = join(root, '.skein.migrating-00000000-0000-4000-8000-000000000008');
+    await mkdir(invalidManifest);
+    await writeFile(join(invalidManifest, 'config.json'), 'legacy');
+    await writeFile(join(invalidManifest, 'migration-manifest.json'), '{}');
+    expect((await inspectProjectRecovery(root)).status).toBe('blocked');
+    await expect(recoverProjectNamespace(root)).rejects.toThrow('could not be verified');
+    await rm(invalidManifest, {recursive: true});
+
+    await migrateProjectNamespace(root);
+    const first = join(root, '.skein.migrating-00000000-0000-4000-8000-000000000005');
+    const second = join(root, '.skein.migrating-00000000-0000-4000-8000-000000000006');
+    await rename(join(root, '.skein'), first);
+    await cp(first, second, {recursive: true});
+    const ambiguous = await inspectProjectRecovery(root);
+    expect(ambiguous.status).toBe('blocked');
+    expect(ambiguous.candidates.every((candidate) => candidate.action === 'blocked')).toBe(true);
+  });
+
+  it('recovers interrupted user-level rollback state', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'skein-home-recovery-'));
+    const legacy = join(home, 'legacy-home');
+    const canonical = join(home, 'canonical-home');
+    const environment = {SKEIN_HOME: canonical, MOSAIC_HOME: legacy};
+    await mkdir(legacy);
+    await writeFile(join(legacy, 'config.json'), 'user');
+    await migrateHomeNamespace(environment);
+    const candidate = `${canonical}.rollback-00000000-0000-4000-8000-000000000007`;
+    await rename(canonical, candidate);
+    expect((await inspectHomeRecovery(environment)).candidates).toMatchObject([
+      {action: 'restore_canonical'},
+    ]);
+    await recoverHomeNamespace(environment);
+    expect(await readFile(join(canonical, 'config.json'), 'utf8')).toBe('user');
+    await rm(home, {recursive: true, force: true});
   });
 });

@@ -44,13 +44,17 @@ import type {IndexProgress} from './context/local-index.js';
 import {workspaceAliasPath} from './utils/path.js';
 import {
   inspectHomeNamespace,
+  inspectHomeRecovery,
   inspectHomeRollback,
   inspectProjectNamespace,
+  inspectProjectRecovery,
   inspectProjectRollback,
   migrateHomeNamespace,
   migrateProjectNamespace,
   rollbackHomeNamespace,
   rollbackProjectNamespace,
+  recoverHomeNamespace,
+  recoverProjectNamespace,
   resolveProjectNamespaceSync,
 } from './utils/namespace.js';
 import {PRODUCT_COMMAND} from './brand.js';
@@ -252,9 +256,32 @@ program
   .option('--json', 'print a migration manifest as JSON')
   .option('--yes', 'perform the migration after conflict checks')
   .option('--rollback', 'verify and roll back a completed migration')
+  .option('--recover', 'inspect or recover interrupted migration/rollback state')
   .option('--home', 'operate on the user-level Skein/Mosaic namespace')
-  .action(async (options: {workspace?: string; json?: boolean; yes?: boolean; rollback?: boolean; home?: boolean}) => {
+  .action(async (options: {workspace?: string; json?: boolean; yes?: boolean; rollback?: boolean; recover?: boolean; home?: boolean}) => {
     if (options.home && options.workspace) throw new Error('--workspace cannot be combined with --home.');
+    if (options.recover && options.rollback) throw new Error('--recover and --rollback cannot be combined.');
+    if (options.recover) {
+      const recovery = options.yes
+        ? options.home ? await recoverHomeNamespace() : await recoverProjectNamespace(workspaceOption(options.workspace))
+        : options.home ? await inspectHomeRecovery() : await inspectProjectRecovery(workspaceOption(options.workspace));
+      if (options.json) {
+        printObject(recovery, true);
+        return;
+      }
+      if (recovery.status === 'clean') {
+        process.stdout.write('No interrupted namespace operations found.\n');
+        return;
+      }
+      process.stdout.write(`${recovery.status === 'recovered' ? 'Recovered' : 'Recovery candidates'}: ${recovery.destination}\n`);
+      for (const candidate of recovery.candidates) {
+        process.stdout.write(`  ${basename(candidate.path)}  ${candidate.kind}  ${candidate.action}  ${candidate.detail}\n`);
+      }
+      if (!options.yes && recovery.status === 'ready') {
+        process.stdout.write(`Run \`skein migrate${options.home ? ' --home' : ''} --recover --yes\` to apply safe recovery actions.\n`);
+      }
+      return;
+    }
     if (options.rollback && !options.yes) {
       const inspection = options.home
         ? await inspectHomeRollback()

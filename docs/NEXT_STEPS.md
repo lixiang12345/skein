@@ -47,7 +47,7 @@ archive it describes.
 The final verification included a fresh install and real PTY interaction for
 all three executable aliases, `/about`, a permission prompt, denial, and clean
 Ctrl+C exit. PTY coverage included 20, 24 ASCII, 40, 80, 120 columns and a
-40x10 short-height case. The current suite contains 29 test files and 194 tests.
+40x10 short-height case. The current suite contains 29 test files and 200 tests.
 
 ## Recommended Order
 
@@ -116,8 +116,16 @@ Implementation progress:
   and non-directory state blocks rollback.
 - `skein migrate --home` applies the same preview, migration, and rollback
   contract to user-level state. `skein doctor` reports project and user
-  namespace status independently. The next increment should exercise recovery
-  from process interruption after quarantine rename and document the eventual
+  namespace status independently.
+- `skein migrate --recover` detects interrupted `.migrating-*` and
+  `.rollback-*` directories. It resumes or restores a single complete verified
+  snapshot, removes only partial data proven redundant with legacy state, and
+  blocks changed or ambiguous candidates. Recovery is preview-only until
+  `--yes`; `--home` covers user-level state and `doctor` surfaces pending
+  recovery. Mutation commands share a stale-aware cross-process lock so an
+  active namespace operation is never recovered concurrently. The next
+  increment should extend that lease to long-running session, team, index, and
+  memory writers before advertising live migration, then document the eventual
   compatibility window for removing `.mosaic` aliases.
 
 ### P1: ContextEngine-Plugin Production Adapter
