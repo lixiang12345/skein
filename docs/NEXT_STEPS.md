@@ -47,7 +47,7 @@ The last verified package was `skein-code-cli-0.2.0.tgz`. Its SHA-256 was:
 The final verification included a fresh install and real PTY interaction for
 all three executable aliases, `/about`, a permission prompt, denial, and clean
 Ctrl+C exit. PTY coverage included 20, 24 ASCII, 40, 80, 120 columns and a
-40x10 short-height case. The current suite contains 27 test files and 167 tests.
+40x10 short-height case. The current suite contains 27 test files and 172 tests.
 
 ## Recommended Order
 
@@ -160,6 +160,10 @@ Implementation progress:
 - Team Cockpit now renders safe observable telemetry—phase, active tool, token
   usage, tool count, timeout/budget state, and final report—without exposing
   hidden model chain-of-thought.
+- `Ctrl+T` and `/workbench` now open an interactive Team Workbench with Agents,
+  Tasks, and Messages views, keyboard navigation, selected-agent report
+  expansion, run summary, and persistent soft-budget alerts. The focused view
+  degrades to the full available width on narrow terminals.
 - Team budgets default to `observe`: telemetry is retained, but configured
   thresholds do not warn or terminate work. `guard` adds non-blocking threshold
   warnings, while `strict` is an explicit hard-stop policy for controlled jobs.

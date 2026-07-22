@@ -21,7 +21,7 @@ export type TimelineItem =
   | {id: string; kind: 'tool'; name: string; detail: string; state: 'running' | 'ok' | 'error'; startedAt?: number; durationMs?: number; errorDetail?: string; output?: string}
   | {id: string; kind: 'skill'; name: string; description: string}
   | {id: string; kind: 'memory'; count: number; scope: string}
-  | {id: string; kind: 'agent'; profile: string; task: string; provider?: string; model?: string; phase?: 'work' | 'review' | 'revision'; stage?: 'context' | 'thinking' | 'tool' | 'response' | 'review'; activityDetail?: string; activeTool?: string; toolCalls?: number; inputTokens?: number; outputTokens?: number; summary?: string; state: 'running' | 'ok' | 'error'; startedAt?: number; durationMs?: number}
+  | {id: string; kind: 'agent'; profile: string; task: string; provider?: string; model?: string; phase?: 'work' | 'review' | 'revision'; stage?: 'context' | 'thinking' | 'tool' | 'response' | 'review'; activityDetail?: string; activeTool?: string; toolCalls?: number; inputTokens?: number; outputTokens?: number; summary?: string; alerts?: string[]; state: 'running' | 'ok' | 'error'; startedAt?: number; durationMs?: number}
   | {id: string; kind: 'agent-message'; from: string; to: string; text: string}
   | {id: string; kind: 'workflow'; name: string; step: string; status: SessionTask['status']}
   | {id: string; kind: 'compaction'; messages: number; tokens: number}
@@ -427,6 +427,7 @@ export function TeamCockpit({items, width = 36, glyphMode = 'auto'}: {
             <Text color={theme.dim}>{truncateDisplay(route, inner)}</Text>
             <Text color={theme.muted}>{truncateDisplay(activity, inner)}</Text>
             {telemetry ? <Text color={theme.dim}>{truncateDisplay(telemetry, inner)}</Text> : null}
+            {agent.alerts?.at(-1) ? <Text color={theme.warning}>{truncateDisplay(`${glyphs.warning} ${agent.alerts.at(-1)}`, inner)}</Text> : null}
           </Box>
         );
       })}
@@ -434,6 +435,93 @@ export function TeamCockpit({items, width = 36, glyphMode = 'auto'}: {
       {messages.map((message) => (
         <Text key={message.id} color={theme.muted}>{truncateDisplay(`${message.from}${glyphs.arrow}${message.to}: ${message.text}`, inner)}</Text>
       ))}
+    </Box>
+  );
+}
+
+export type TeamWorkbenchView = 'agents' | 'tasks' | 'messages';
+
+export interface TeamRunSummary {
+  id?: string;
+  objective?: string;
+  startedAt?: number;
+  accepted?: boolean;
+  reviewRounds?: number;
+}
+
+export function TeamWorkbench({items, tasks, width = 80, glyphMode = 'auto', view = 'agents', selectedIndex = 0, expanded = false, run}: {
+  items: TimelineItem[];
+  tasks: SessionTask[];
+  width?: number;
+  glyphMode?: GlyphMode;
+  view?: TeamWorkbenchView;
+  selectedIndex?: number;
+  expanded?: boolean;
+  run?: TeamRunSummary;
+}) {
+  const theme = useTheme();
+  const glyphs = resolveGlyphs(glyphMode);
+  const rowWidth = safeWidth(width);
+  const inner = Math.max(8, rowWidth - 4);
+  const agents = items.filter((item): item is Extract<TimelineItem, {kind: 'agent'}> => item.kind === 'agent');
+  const messages = items.filter((item): item is Extract<TimelineItem, {kind: 'agent-message'}> => item.kind === 'agent-message');
+  const visibleMessages = messages.slice(-12);
+  const completed = agents.filter((agent) => agent.state === 'ok').length;
+  const running = agents.filter((agent) => agent.state === 'running').length;
+  const totalTokens = agents.reduce((sum, agent) => sum + (agent.inputTokens ?? 0) + (agent.outputTokens ?? 0), 0);
+  const totalTools = agents.reduce((sum, agent) => sum + (agent.toolCalls ?? 0), 0);
+  const status = run?.accepted === true ? 'accepted' : run?.accepted === false ? 'rejected' : running ? 'running' : agents.length ? 'complete' : 'idle';
+  const summary = [
+    `${status}${run?.reviewRounds !== undefined ? ` ${glyphs.separator} review ${run.reviewRounds}` : ''}`,
+    `${completed}/${agents.length} done`,
+    `${formatTokens(totalTokens)} tok`,
+    `${totalTools} tools`,
+    run?.startedAt ? formatDuration(Date.now() - run.startedAt) : '',
+  ].filter(Boolean).join(` ${glyphs.separator} `);
+  const viewLabel = view === 'agents' ? 'Agents' : view === 'tasks' ? 'Tasks' : 'Messages';
+  const tabs = ['agents', 'tasks', 'messages'].map((name) => name === view ? `[${name}]` : name).join(` ${glyphs.separator} `);
+
+  return (
+    <Box flexDirection="column" width={rowWidth} height="100%" borderStyle={glyphs.borderStyle} borderColor={theme.border} paddingX={1}>
+      <Text bold color={theme.accent}>{truncateDisplay(`${glyphs.agent} TEAM WORKBENCH`, inner)}</Text>
+      <Text color={theme.dim}>{truncateDisplay(summary, inner)}</Text>
+      {run?.objective ? <Text color={theme.muted}>{truncateDisplay(`goal ${run.objective}`, inner)}</Text> : null}
+      <Text color={theme.border}>{truncateDisplay(tabs, inner)}</Text>
+      {view === 'agents' ? (
+        agents.length ? agents.map((agent, index) => {
+          const marker = index === selectedIndex ? glyphs.arrow : ' ';
+          const stateGlyph = agent.state === 'running' ? glyphs.running : agent.state === 'ok' ? glyphs.success : glyphs.error;
+          const route = agent.provider && agent.model ? `${agent.provider}/${agent.model}` : 'inherited model';
+          const activity = agent.activeTool ? `${agent.stage ?? 'tool'} ${agent.activeTool}` : agent.activityDetail ?? agent.stage ?? 'queued';
+          const telemetry = `${formatTokens((agent.inputTokens ?? 0) + (agent.outputTokens ?? 0))} tok${glyphs.separator}${agent.toolCalls ?? 0} tools`;
+          return (
+            <Box key={agent.id} flexDirection="column">
+              <Text color={index === selectedIndex ? theme.textStrong : theme.text}>{truncateDisplay(`${marker}${stateGlyph} ${agent.profile}${agent.phase && agent.phase !== 'work' ? ` · ${agent.phase}` : ''}`, inner)}</Text>
+              <Text color={theme.dim}>{truncateDisplay(`  ${route}`, inner)}</Text>
+              <Text color={agent.alerts?.length ? theme.warning : theme.muted}>{truncateDisplay(`  ${activity}${glyphs.separator}${telemetry}`, inner)}</Text>
+              {expanded && index === selectedIndex ? (
+                <Box flexDirection="column" paddingLeft={2}>
+                  <Text color={theme.text}>{truncateDisplay(`task ${agent.task}`, inner - 2)}</Text>
+                  {agent.summary ? <Text color={theme.muted}>{truncateDisplay(`report ${agent.summary}`, inner - 2)}</Text> : null}
+                  {agent.alerts?.map((alert) => <Text key={alert} color={theme.warning}>{truncateDisplay(`${glyphs.warning} ${alert}`, inner - 2)}</Text>)}
+                </Box>
+              ) : null}
+            </Box>
+          );
+        }) : <Text color={theme.dim}>{truncateDisplay('No active specialist agents.', inner)}</Text>
+      ) : view === 'tasks' ? (
+        tasks.length ? tasks.map((task, index) => {
+          const marker = index === selectedIndex ? glyphs.arrow : ' ';
+          const stateGlyph = task.status === 'completed' ? glyphs.success : task.status === 'in_progress' ? glyphs.prompt : glyphs.pending;
+          return <Text key={task.id} color={task.status === 'completed' ? theme.success : index === selectedIndex ? theme.textStrong : theme.text}>{truncateDisplay(`${marker}${stateGlyph} ${task.title}`, inner)}</Text>;
+        }) : <Text color={theme.dim}>{truncateDisplay('No active plan.', inner)}</Text>
+      ) : (
+        visibleMessages.length ? visibleMessages.map((message, index) => <Text key={message.id} color={index === Math.min(selectedIndex, visibleMessages.length - 1) ? theme.textStrong : theme.muted}>{truncateDisplay(`${index === Math.min(selectedIndex, visibleMessages.length - 1) ? glyphs.arrow : ' '}${message.from}${glyphs.arrow}${message.to}: ${message.text}`, inner)}</Text>) : <Text color={theme.dim}>{truncateDisplay('No peer handoffs yet.', inner)}</Text>
+      )}
+      <Box flexGrow={1} />
+      <Text color={theme.dim}>{truncateDisplay(expanded ? 'enter collapse' : 'enter inspect', inner)}</Text>
+      <Text color={theme.dim}>{truncateDisplay('left/right view · up/down select · esc close', inner)}</Text>
+      <Text color={theme.dim}>{truncateDisplay(`view ${viewLabel}`, inner)}</Text>
     </Box>
   );
 }

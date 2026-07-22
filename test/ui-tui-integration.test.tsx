@@ -234,6 +234,40 @@ describe('SkeinApp completion flows', () => {
       await rm(root, {recursive: true, force: true});
     }
   });
+
+  it('opens and navigates the Team Workbench from the live input stream', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-workbench-ui-'));
+    const session = testSession(root);
+    session.tasks = [{id: 'task-1', title: 'Verify delivery', status: 'in_progress'}];
+    const {runner} = mockRunner(root, session, [], {
+      run: async (_input, options) => {
+        options?.onEvent?.({type: 'team_start', id: 'run-1', objective: 'Review the delivery'});
+        options?.onEvent?.({type: 'agent_start', id: 'agent-1', profile: 'architect', provider: 'anthropic', model: 'claude', task: 'Inspect boundaries', phase: 'work'});
+        options?.onEvent?.({type: 'agent_update', id: 'agent-1', profile: 'architect', stage: 'response', detail: 'final report ready', inputTokens: 120, outputTokens: 40});
+        options?.onEvent?.({type: 'agent_done', id: 'agent-1', profile: 'architect', ok: true, summary: 'Boundary report ready.', provider: 'anthropic', model: 'claude', phase: 'work', durationMs: 12, usage: {inputTokens: 120, outputTokens: 40}, toolCalls: 2});
+        options?.onEvent?.({type: 'team_done', id: 'run-1', accepted: true, reviewRounds: 1});
+        return session;
+      },
+    });
+    const harness = await mountApp(runner, root);
+
+    try {
+      harness.stdin.write('review the delivery\r');
+      await vi.waitFor(() => expect(harness.output()).toContain('Team run run-1 accepted'));
+      harness.stdin.write('\u0014');
+      await vi.waitFor(() => expect(harness.output()).toContain('TEAM WORKBENCH'));
+      harness.stdin.write('\u001B[C');
+      await vi.waitFor(() => expect(harness.output()).toContain('[tasks]'));
+      harness.stdin.write('\r');
+      await vi.waitFor(() => expect(harness.output()).toContain('Verify delivery'));
+      harness.stdin.write('\u001B');
+      await settleRender(harness.instance);
+      expect(harness.output()).toContain('Type a request');
+    } finally {
+      await harness.cleanup();
+      await rm(root, {recursive: true, force: true});
+    }
+  });
 });
 
 type MockInput = PassThrough & {

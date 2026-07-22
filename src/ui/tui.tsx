@@ -36,6 +36,9 @@ import {
   resolveGlyphs,
   TaskRail,
   TeamCockpit,
+  TeamWorkbench,
+  type TeamRunSummary,
+  type TeamWorkbenchView,
   Timeline,
   type ActivityState,
   type ContextInspectorStatus,
@@ -130,6 +133,11 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const [showToolOutput, setShowToolOutput] = useState(false);
   const [expandedToolId, setExpandedToolId] = useState<string>();
   const [showContextInspector, setShowContextInspector] = useState(false);
+  const [teamWorkbenchOpen, setTeamWorkbenchOpen] = useState(false);
+  const [teamWorkbenchView, setTeamWorkbenchView] = useState<TeamWorkbenchView>('agents');
+  const [teamWorkbenchIndex, setTeamWorkbenchIndex] = useState(0);
+  const [teamWorkbenchExpanded, setTeamWorkbenchExpanded] = useState(false);
+  const [teamRun, setTeamRun] = useState<TeamRunSummary>();
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [suggestionsDismissedFor, setSuggestionsDismissedFor] = useState<string>();
   const [frameIndex, setFrameIndex] = useState(0);
@@ -308,6 +316,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
           ...(event.model ? {model: event.model} : {}),
           ...(event.phase ? {phase: event.phase} : {}),
         });
+        setTeamWorkbenchIndex(0);
         break;
       case 'agent_message':
         append({id: event.id, kind: 'agent-message', from: event.from, to: event.to, text: event.content});
@@ -316,9 +325,11 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         setTimeline((items) => updateAgentTelemetry(items, event));
         break;
       case 'team_start':
+        setTeamRun({id: event.id, objective: event.objective, startedAt: Date.now()});
         append({id: nextId(), kind: 'notice', tone: 'info', text: `Team run ${event.id.slice(0, 8)} started${separator}${event.objective.slice(0, 180)}`});
         break;
       case 'team_done':
+        setTeamRun((current) => ({...current, id: current?.id ?? event.id, accepted: event.accepted, reviewRounds: event.reviewRounds}));
         append({id: nextId(), kind: 'notice', tone: event.accepted ? 'success' : 'error', text: `Team run ${event.id.slice(0, 8)} ${event.accepted ? 'accepted' : 'rejected'}${separator}${event.reviewRounds} revision round${event.reviewRounds === 1 ? '' : 's'}`});
         break;
       case 'agent_done':
@@ -397,6 +408,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         {label: 'Ctrl+J', detail: 'insert a newline'},
         {label: 'Ctrl+R', detail: 'search prompt history'},
         {label: 'Ctrl+O', detail: 'toggle the latest tool result'},
+        {label: 'Ctrl+T', detail: 'open the Team Workbench'},
         {label: 'Ctrl+L', detail: 'clear the visible transcript'},
         {label: 'Esc', detail: busy ? 'interrupt the active run' : 'clear the composer'},
         {label: 'Ctrl+C', detail: 'interrupt, clear, then exit'},
@@ -484,6 +496,10 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       } else {
         setShowContextInspector((visible) => !visible);
       }
+      return true;
+    }
+    if (command === 'workbench') {
+      setTeamWorkbenchOpen((visible) => !visible);
       return true;
     }
     if (command === 'compact') {
@@ -932,6 +948,54 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       }
       return;
     }
+    if (teamWorkbenchOpen) {
+      if (key.ctrl && inputKey.toLocaleLowerCase() === 'c') {
+        if (busy) {
+          stopRequested.current = true;
+          controller.current?.abort();
+        } else {
+          exit();
+        }
+        return;
+      }
+      if (key.escape || (key.ctrl && inputKey.toLocaleLowerCase() === 't')) {
+        setTeamWorkbenchOpen(false);
+        setTeamWorkbenchExpanded(false);
+        return;
+      }
+      if (key.leftArrow || key.rightArrow) {
+        const views: TeamWorkbenchView[] = ['agents', 'tasks', 'messages'];
+        const current = views.indexOf(teamWorkbenchView);
+        const delta = key.leftArrow ? -1 : 1;
+        setTeamWorkbenchView(views[(current + delta + views.length) % views.length] ?? 'agents');
+        setTeamWorkbenchIndex(0);
+        setTeamWorkbenchExpanded(false);
+        return;
+      }
+      const itemCount = teamWorkbenchView === 'agents'
+        ? timeline.filter((item) => item.kind === 'agent').length
+        : teamWorkbenchView === 'tasks'
+          ? tasks.length
+          : Math.min(12, timeline.filter((item) => item.kind === 'agent-message').length);
+      if (key.upArrow || key.downArrow) {
+        if (itemCount) {
+          setTeamWorkbenchIndex((index) => (index + (key.upArrow ? -1 : 1) + itemCount) % itemCount);
+        }
+        return;
+      }
+      if (key.return) {
+        setTeamWorkbenchExpanded((expanded) => !expanded);
+        return;
+      }
+      return;
+    }
+    if (key.ctrl && inputKey.toLocaleLowerCase() === 't') {
+      setTeamWorkbenchOpen(true);
+      setTeamWorkbenchView('agents');
+      setTeamWorkbenchIndex(0);
+      setTeamWorkbenchExpanded(false);
+      return;
+    }
     if (key.ctrl && inputKey.toLocaleLowerCase() === 'r') {
       if (!history.length) return;
       if (historySearch) {
@@ -1115,21 +1179,34 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         {showHeader ? <Header config={config} askMode={interactionMode !== 'build'} planMode={interactionMode === 'plan'} width={contentWidth} glyphMode={glyphMode} /> : null}
         {timelineRows > 0 ? (
           <Box flexDirection="row" height={timelineRows} overflowY="hidden">
-            <Box flexDirection="column" width={timelineWidth} overflowY="hidden">
-              <Timeline
-                items={visibleTimeline}
-                width={timelineWidth}
+            {teamWorkbenchOpen ? (
+              <TeamWorkbench
+                items={teamItems}
+                tasks={tasks}
+                width={contentWidth}
                 glyphMode={glyphMode}
-                showToolOutput={showToolOutput}
-                {...(expandedToolId ? {expandedToolId} : {})}
-                compact={compactUi}
+                view={teamWorkbenchView}
+                selectedIndex={teamWorkbenchIndex}
+                expanded={teamWorkbenchExpanded}
+                {...(teamRun ? {run: teamRun} : {})}
               />
-            </Box>
-            {showTeamCockpit ? (
-              <Box marginLeft={1}>
-                <TeamCockpit items={teamItems} width={cockpitWidth} glyphMode={glyphMode} />
+            ) : <>
+              <Box flexDirection="column" width={timelineWidth} overflowY="hidden">
+                <Timeline
+                  items={visibleTimeline}
+                  width={timelineWidth}
+                  glyphMode={glyphMode}
+                  showToolOutput={showToolOutput}
+                  {...(expandedToolId ? {expandedToolId} : {})}
+                  compact={compactUi}
+                />
               </Box>
-            ) : null}
+              {showTeamCockpit ? (
+                <Box marginLeft={1}>
+                  <TeamCockpit items={teamItems} width={cockpitWidth} glyphMode={glyphMode} />
+                </Box>
+              ) : null}
+            </>}
           </Box>
         ) : null}
         {showTaskRail ? <TaskRail tasks={tasks} width={contentWidth} glyphMode={glyphMode} maxItems={taskLimit} /> : null}
@@ -1334,6 +1411,12 @@ function updateAgentTelemetry(items: TimelineItem[], event: Extract<AgentEvent, 
   return items.map((item) => {
     if (item.kind !== 'agent' || item.id !== event.id) return item;
     const {activeTool: previousTool, ...withoutTool} = item;
+    const newAlert = event.detail && /(?:soft .*threshold|soft budget exceeded)/iu.test(event.detail)
+      ? event.detail
+      : undefined;
+    const alerts = newAlert
+      ? [...new Set([...(item.alerts ?? []), newAlert])].slice(-3)
+      : item.alerts;
     return {
       ...(event.stage === 'tool' && event.tool === undefined ? item : withoutTool),
       stage: event.stage,
@@ -1342,6 +1425,7 @@ function updateAgentTelemetry(items: TimelineItem[], event: Extract<AgentEvent, 
       ...(event.toolCalls !== undefined ? {toolCalls: event.toolCalls} : {}),
       ...(event.inputTokens !== undefined ? {inputTokens: event.inputTokens} : {}),
       ...(event.outputTokens !== undefined ? {outputTokens: event.outputTokens} : {}),
+      ...(alerts?.length ? {alerts} : {}),
     };
   });
 }

@@ -1,7 +1,7 @@
 import React from 'react';
 import {renderToString} from 'ink';
 import {describe, expect, it} from 'vitest';
-import {CommandPalette, ContextInspector, Footer, Header, PermissionCard, TaskRail, TeamCockpit, Timeline} from '../src/ui/components.js';
+import {CommandPalette, ContextInspector, Footer, Header, PermissionCard, TaskRail, TeamCockpit, TeamWorkbench, Timeline} from '../src/ui/components.js';
 import {displayWidth, sanitizeTerminalText} from '../src/ui/text.js';
 import {detectTerminalAppearance, resolveTheme, resolveThemeWithColor} from '../src/ui/theme.js';
 import type {MosaicConfig, ToolCall} from '../src/types.js';
@@ -162,6 +162,45 @@ describe('terminal presentation', () => {
     expect(output).toContain('anthropic/claude');
     expect(output).toContain('openai/gpt');
     expect(output).toContain('architect→reviewer');
+  });
+
+  it.each([20, 40, 80])('renders a bounded interactive team workbench at %i columns', (columns) => {
+    const items = [
+      {id: 'worker', kind: 'agent' as const, profile: 'architect', provider: 'anthropic', model: 'claude', phase: 'work' as const, task: 'Map 跨模块 boundaries and verify ownership', state: 'ok' as const, durationMs: 42_000, inputTokens: 12_000, outputTokens: 2_000, toolCalls: 7, summary: 'Architecture report ready.', alerts: ['soft token threshold exceeded (10000); continuing']},
+      {id: 'reviewer', kind: 'agent' as const, profile: 'reviewer', provider: 'openai', model: 'gpt', phase: 'review' as const, task: 'Review evidence', state: 'running' as const, startedAt: Date.now() - 2_000},
+      {id: 'message', kind: 'agent-message' as const, from: 'architect', to: 'reviewer', text: 'Boundary report ready.'},
+    ];
+    const output = renderToString(<TeamWorkbench
+      items={items}
+      tasks={[{id: 'task', title: 'Verify delivery', status: 'in_progress'}]}
+      width={columns}
+      selectedIndex={0}
+      expanded
+      run={{id: 'run', objective: 'Deliver the multi-agent workbench', startedAt: Date.now() - 10_000, reviewRounds: 1}}
+    />, {columns});
+
+    expect(output).toContain('TEAM WORKBENCH');
+    expect(output).toContain('[agents]');
+    expect(output).toContain('architect');
+    expect(output).toContain('soft token');
+    for (const line of output.split('\n')) {
+      expect(displayWidth(line), `${columns}-column workbench row overflowed: ${JSON.stringify(line)}`).toBeLessThanOrEqual(columns);
+    }
+  });
+
+  it('switches the workbench presentation between tasks and peer messages', () => {
+    const items = [
+      {id: 'agent', kind: 'agent' as const, profile: 'backend', task: 'Inspect API', state: 'ok' as const},
+      {id: 'message', kind: 'agent-message' as const, from: 'backend', to: 'reviewer', text: 'API evidence ready.'},
+    ];
+    const tasks = [{id: 'task', title: 'Run acceptance checks', status: 'in_progress' as const}];
+    const taskOutput = renderToString(<TeamWorkbench items={items} tasks={tasks} width={60} view="tasks" />);
+    const messageOutput = renderToString(<TeamWorkbench items={items} tasks={tasks} width={60} view="messages" />);
+
+    expect(taskOutput).toContain('[tasks]');
+    expect(taskOutput).toContain('Run acceptance checks');
+    expect(messageOutput).toContain('[messages]');
+    expect(messageOutput).toContain('backend→reviewer');
   });
 
   it.each([20, 50, 72])('renders each permission shortcut once at %i columns', (columns) => {

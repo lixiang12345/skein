@@ -15,6 +15,7 @@ export interface CommandSuggestion {
 
 export const commandDefinitions: CommandDefinition[] = [
   command('team', 'Launch a routed specialist council with peer review', '/team <delivery objective>'),
+  command('workbench', 'Focus the multi-agent Team Workbench', '/workbench'),
   command('workflow', 'Run a typed implementation, debug, review, or refactor flow', '/workflow <name> <task>'),
   command('context', 'Inspect active, working, compacted, and retrieved context', '/context [compact]'),
   command('compact', 'Compact older session context', '/compact [instructions]'),
