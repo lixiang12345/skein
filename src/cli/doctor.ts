@@ -98,6 +98,19 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
   const rg = await commandCheck('rg', ['--version'], root, config.workspaceRoots);
   checks.push({name: 'ripgrep', ...rg, required: false});
 
+  const externalRuntimes = [...new Set(Object.values(config.agents?.routes ?? {})
+    .map((route) => route.runtime)
+    .filter((runtime): runtime is 'codex' | 'claude' | 'grok' => Boolean(runtime && runtime !== 'api')))];
+  for (const runtime of externalRuntimes) {
+    const resolved = await resolveExecutableRuntime(runtime, root, config.workspaceRoots);
+    checks.push({
+      name: `Agent runtime: ${runtime}`,
+      ok: Boolean(resolved),
+      detail: resolved?.executable ?? 'not found on a trusted PATH entry',
+      required: false,
+    });
+  }
+
   const context = new ContextEngine(config);
   const external = await context.canUseExternal();
   checks.push({

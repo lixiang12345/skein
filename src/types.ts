@@ -54,6 +54,21 @@ export interface AgentTeamConfig {
   maxConcurrent: number;
   maxDelegations: number;
   defaultProfile: string;
+  /** Optional role-to-model routing. Credentials are referenced by env name, never stored here. */
+  routes?: Record<string, AgentModelRoute>;
+  reviewerProfile?: string;
+  maxReviewRounds?: number;
+  cockpit?: boolean;
+}
+
+export interface AgentModelRoute {
+  runtime?: 'api' | 'codex' | 'claude' | 'grok';
+  provider: ProviderName;
+  model: string;
+  baseUrl?: string;
+  apiKeyEnv?: string;
+  temperature?: number;
+  maxTokens?: number;
 }
 
 export type McpTransport = 'stdio' | 'http';
@@ -230,8 +245,9 @@ export type AgentEvent =
   | {type: 'tasks'; tasks: SessionTask[]}
   | {type: 'skill'; name: string; description: string}
   | {type: 'memory'; count: number; scope: string}
-  | {type: 'agent_start'; id: string; profile: string; task: string}
-  | {type: 'agent_done'; id: string; profile: string; ok: boolean; summary: string}
+  | {type: 'agent_start'; id: string; profile: string; task: string; provider?: string; model?: string; phase?: 'work' | 'review' | 'revision'}
+  | {type: 'agent_message'; id: string; from: string; to: string; content: string}
+  | {type: 'agent_done'; id: string; profile: string; ok: boolean; summary: string; provider?: string; model?: string; phase?: 'work' | 'review' | 'revision'}
   | {type: 'workflow'; name: string; step: string; status: TaskStatus}
   | {type: 'context_compacted'; omittedMessages: number; summaryTokens: number}
   | {type: 'usage'; inputTokens: number; outputTokens: number}

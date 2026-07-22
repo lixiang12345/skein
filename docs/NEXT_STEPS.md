@@ -144,6 +144,21 @@ Definition of done:
 - Mutating work is serialized or isolated and always remains reversible.
 - Interrupting the parent reliably stops child work and clears queued work.
 
+Implementation progress:
+
+- `team_run` now routes read-only profiles to independently configured models,
+  shares bounded reports with a reviewer, and supports a capped revision loop.
+- `/team <objective>` launches the flow from the TUI. Wide terminals render a
+  picture-in-picture Team Cockpit; narrow terminals use the normal timeline.
+- Project-owned model routes are stripped until config trust is explicit, and
+  credentials are referenced by environment-variable name rather than stored.
+- Routes may also select installed `codex`, `claude`, or `grok` runtimes. They
+  run without a shell in read-only/plan mode and feed normalized reports into
+  the same cockpit and reviewer loop.
+- See `docs/MULTI_MODEL_TEAMS.md`. Writer worktrees, persistent blackboard
+  artifacts, per-route budgets, Gemini CLI, and optional tmux/iTerm pane hosts
+  remain next.
+
 ### P2: MCP, Skills, And Workflow Trust UX
 
 Add a first-run catalog and inspection flow for bundled capabilities. Keep

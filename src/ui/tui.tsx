@@ -35,6 +35,7 @@ import {
   PromptBar,
   resolveGlyphs,
   TaskRail,
+  TeamCockpit,
   Timeline,
   type ActivityState,
   type ContextInspectorStatus,
@@ -296,7 +297,20 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         append({id: nextId(), kind: 'memory', count: event.count, scope: event.scope});
         break;
       case 'agent_start':
-        append({id: event.id, kind: 'agent', profile: event.profile, task: event.task, state: 'running', startedAt: Date.now()});
+        append({
+          id: event.id,
+          kind: 'agent',
+          profile: event.profile,
+          task: event.task,
+          state: 'running',
+          startedAt: Date.now(),
+          ...(event.provider ? {provider: event.provider} : {}),
+          ...(event.model ? {model: event.model} : {}),
+          ...(event.phase ? {phase: event.phase} : {}),
+        });
+        break;
+      case 'agent_message':
+        append({id: event.id, kind: 'agent-message', from: event.from, to: event.to, text: event.content});
         break;
       case 'agent_done':
         setTimeline((items) => updateAgent(items, event));
@@ -526,9 +540,30 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       const profiles = extensions?.listAgents() ?? [];
       appendList('Experts', profiles.map((profile) => ({
         label: `${profile.name}  ${profile.readOnly ? 'read-only' : 'writer'}`,
-        detail: `${profile.description}${separator}${profile.source}`,
+        detail: `${profile.description}${separator}${profile.source}${separator}${config.agents?.routes?.[profile.name]
+          ? `${config.agents.routes[profile.name]?.runtime ?? 'api'}:${config.agents.routes[profile.name]?.provider}/${config.agents.routes[profile.name]?.model}`
+          : `inherits ${config.model.provider}/${config.model.model}`}`,
       })));
       return true;
+    }
+    if (command === 'team') {
+      if (!argument) {
+        appendList('Team routing', (extensions?.listAgents() ?? []).map((profile) => {
+          const route = config.agents?.routes?.[profile.name];
+          return {
+            label: `${profile.name}  ${route ? `${route.runtime ?? 'api'}:${route.provider}/${route.model}` : 'inherited model'}`,
+            detail: profile.description,
+          };
+        }));
+        return true;
+      }
+      if (!config.agents?.enabled || !runner.tools.has('team_run')) {
+        append({id: nextId(), kind: 'notice', tone: 'error', text: 'Multi-model teams are disabled or unavailable.'});
+        return true;
+      }
+      const turnInstructions = `Team cockpit mode is active. Use the team_run tool for the user's objective. Decompose it into two to four independent read-only specialist assignments chosen from the available profiles. State measurable acceptance criteria in the team objective. Let configured profile routes choose models. Keep all workspace mutations in the main agent under the normal permission policy. If the objective requires implementation, run a planning council, implement as the single writer, run deterministic checks, then run a second acceptance council over the resulting diff with reviewer/tester participation. Do not claim delivery until checks pass and the acceptance council returns ACCEPT.`;
+      append({id: nextId(), kind: 'notice', tone: 'success', text: `Team cockpit queued${separator}specialists will share reports and review acceptance.`});
+      return {kind: 'agent', display: value, runInput: argument, turnInstructions};
     }
     if (command === 'workflow') {
       const [name = '', ...taskParts] = argument.split(/\s+/);
@@ -1039,8 +1074,13 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const headerRows = showHeader ? 2 : 0;
   const chromeRows = headerRows + composerRows + footerRows + taskRows + paletteRows + inspectorRows + activityRows;
   const timelineRows = Math.max(0, terminalHeight - chromeRows);
+  const teamItems = timeline.filter((item) => item.kind === 'agent' || item.kind === 'agent-message');
+  const showTeamCockpit = config.agents?.cockpit !== false && contentWidth >= 100 &&
+    timelineRows >= 7 && teamItems.some((item) => item.kind === 'agent');
+  const cockpitWidth = showTeamCockpit ? Math.min(38, Math.max(30, Math.floor(contentWidth * 0.32))) : 0;
+  const timelineWidth = Math.max(1, contentWidth - cockpitWidth - (showTeamCockpit ? 1 : 0));
   const visibleTimeline = fitTimelineToRows(timeline, {
-    width: contentWidth,
+    width: timelineWidth,
     rows: timelineRows,
     compact: compactUi,
     showToolOutput,
@@ -1065,15 +1105,22 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       <Box flexDirection="column" paddingX={horizontalPadding} height={terminalHeight} overflowY="hidden">
         {showHeader ? <Header config={config} askMode={interactionMode !== 'build'} planMode={interactionMode === 'plan'} width={contentWidth} glyphMode={glyphMode} /> : null}
         {timelineRows > 0 ? (
-          <Box flexDirection="column" height={timelineRows} overflowY="hidden">
-            <Timeline
-              items={visibleTimeline}
-              width={contentWidth}
-              glyphMode={glyphMode}
-              showToolOutput={showToolOutput}
-              {...(expandedToolId ? {expandedToolId} : {})}
-              compact={compactUi}
-            />
+          <Box flexDirection="row" height={timelineRows} overflowY="hidden">
+            <Box flexDirection="column" width={timelineWidth} overflowY="hidden">
+              <Timeline
+                items={visibleTimeline}
+                width={timelineWidth}
+                glyphMode={glyphMode}
+                showToolOutput={showToolOutput}
+                {...(expandedToolId ? {expandedToolId} : {})}
+                compact={compactUi}
+              />
+            </Box>
+            {showTeamCockpit ? (
+              <Box marginLeft={1}>
+                <TeamCockpit items={teamItems} width={cockpitWidth} glyphMode={glyphMode} />
+              </Box>
+            ) : null}
           </Box>
         ) : null}
         {showTaskRail ? <TaskRail tasks={tasks} width={contentWidth} glyphMode={glyphMode} maxItems={taskLimit} /> : null}
@@ -1245,7 +1292,17 @@ function endStreamingAssistants(items: TimelineItem[]): TimelineItem[] {
 function updateAgent(items: TimelineItem[], event: Extract<AgentEvent, {type: 'agent_done'}>): TimelineItem[] {
   const found = items.some((item) => item.kind === 'agent' && item.id === event.id);
   if (!found) {
-    return [...items, {id: event.id, kind: 'agent' as const, profile: event.profile, task: 'delegated task', summary: event.summary, state: event.ok ? 'ok' as const : 'error' as const}].slice(-100);
+    return [...items, {
+      id: event.id,
+      kind: 'agent' as const,
+      profile: event.profile,
+      task: 'delegated task',
+      summary: event.summary,
+      state: event.ok ? 'ok' as const : 'error' as const,
+      ...(event.provider ? {provider: event.provider} : {}),
+      ...(event.model ? {model: event.model} : {}),
+      ...(event.phase ? {phase: event.phase} : {}),
+    }].slice(-100);
   }
   return items.map((item) => item.kind === 'agent' && item.id === event.id
     ? {...item, state: event.ok ? 'ok' as const : 'error' as const, summary: event.summary, ...(item.startedAt ? {durationMs: Date.now() - item.startedAt} : {})}

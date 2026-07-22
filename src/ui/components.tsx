@@ -21,7 +21,8 @@ export type TimelineItem =
   | {id: string; kind: 'tool'; name: string; detail: string; state: 'running' | 'ok' | 'error'; startedAt?: number; durationMs?: number; errorDetail?: string; output?: string}
   | {id: string; kind: 'skill'; name: string; description: string}
   | {id: string; kind: 'memory'; count: number; scope: string}
-  | {id: string; kind: 'agent'; profile: string; task: string; summary?: string; state: 'running' | 'ok' | 'error'; startedAt?: number; durationMs?: number}
+  | {id: string; kind: 'agent'; profile: string; task: string; provider?: string; model?: string; phase?: 'work' | 'review' | 'revision'; summary?: string; state: 'running' | 'ok' | 'error'; startedAt?: number; durationMs?: number}
+  | {id: string; kind: 'agent-message'; from: string; to: string; text: string}
   | {id: string; kind: 'workflow'; name: string; step: string; status: SessionTask['status']}
   | {id: string; kind: 'compaction'; messages: number; tokens: number}
   | {id: string; kind: 'list'; title: string; entries: ListEntry[]}
@@ -320,12 +321,15 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
           const duration = item.durationMs !== undefined ? formatDuration(item.durationMs) : '';
           const branch = items[index + 1]?.kind === 'agent' ? glyphs.branch : glyphs.branchLast;
           const profileLimit = Math.max(1, Math.min(rowWidth - displayWidth(branch) - 3, rowWidth < 64 ? rowWidth - displayWidth(branch) - 3 : 24));
-          const profile = truncateDisplay(`agent/${sanitizeInlineTerminalText(item.profile)}`, profileLimit);
+          const route = item.provider && item.model ? ` ${glyphs.separator} ${item.provider}/${item.model}` : '';
+          const phase = item.phase && item.phase !== 'work' ? ` ${glyphs.separator} ${item.phase}` : '';
+          const profile = truncateDisplay(`agent/${sanitizeInlineTerminalText(item.profile)}${phase}`, profileLimit);
+          const routedTask = `${route}${route ? '  ' : ''}${task}`;
           if (rowWidth < 64) {
             return (
               <Box key={item.id} flexDirection="column">
                 <Box><Text color={theme.dim}>{branch} </Text><ToolGlyph state={item.state} glyphs={glyphs} /><Text color={theme.text}> {profile}</Text></Box>
-                <Text color={theme.dim}>{`    ${truncateDisplay([task, duration].filter(Boolean).join('  '), Math.max(1, rowWidth - 4))}`}</Text>
+                <Text color={theme.dim}>{`    ${truncateDisplay([route.trim(), task, duration].filter(Boolean).join('  '), Math.max(1, rowWidth - 4))}`}</Text>
               </Box>
             );
           }
@@ -333,10 +337,16 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
             <Box key={item.id}>
               <Text color={theme.dim}>{branch} </Text><ToolGlyph state={item.state} glyphs={glyphs} />
               <Text color={theme.text}> {profile}</Text>
-              <Text color={theme.dim}>  {truncateDisplay(task, Math.max(1, rowWidth - displayWidth(profile) - displayWidth(branch) - 5 - (duration ? displayWidth(duration) + 2 : 0)))}</Text>
+              <Text color={theme.dim}>  {truncateDisplay(routedTask, Math.max(1, rowWidth - displayWidth(profile) - displayWidth(branch) - 5 - (duration ? displayWidth(duration) + 2 : 0)))}</Text>
               {duration ? <Text color={theme.dim}>  {duration}</Text> : null}
             </Box>
           );
+        }
+        if (item.kind === 'agent-message') {
+          const from = sanitizeInlineTerminalText(item.from);
+          const to = sanitizeInlineTerminalText(item.to);
+          const text = sanitizeInlineTerminalText(item.text);
+          return <MetaRow key={item.id} width={width} glyph={glyphs.agent} label={`${from} ${glyphs.arrow} ${to}`} detail={text} labelColor={theme.accent} />;
         }
         if (item.kind === 'workflow') {
           const color = item.status === 'completed' ? theme.success : item.status === 'in_progress' ? theme.accent : theme.muted;
@@ -375,6 +385,39 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
           </Box>
         );
       })}
+    </Box>
+  );
+}
+
+export function TeamCockpit({items, width = 36, glyphMode = 'auto'}: {
+  items: TimelineItem[];
+  width?: number;
+  glyphMode?: GlyphMode;
+}) {
+  const theme = useTheme();
+  const glyphs = resolveGlyphs(glyphMode);
+  const agents = items.filter((item): item is Extract<TimelineItem, {kind: 'agent'}> => item.kind === 'agent').slice(-5);
+  const messages = items.filter((item): item is Extract<TimelineItem, {kind: 'agent-message'}> => item.kind === 'agent-message').slice(-2);
+  const inner = Math.max(8, safeWidth(width) - 4);
+  return (
+    <Box flexDirection="column" width={width} borderStyle={glyphs.borderStyle} borderColor={theme.border} paddingX={1}>
+      <Text bold color={theme.accent}>{truncateDisplay(`${glyphs.agent} TEAM COCKPIT`, inner)}</Text>
+      {agents.map((agent) => {
+        const status = agent.state === 'running' ? glyphs.running : agent.state === 'ok' ? glyphs.success : glyphs.error;
+        const route = agent.provider && agent.model ? `${agent.provider}/${agent.model}` : 'inherited model';
+        return (
+          <Box key={agent.id} flexDirection="column">
+            <Text color={agent.state === 'error' ? theme.error : agent.state === 'running' ? theme.accent : theme.text}>
+              {truncateDisplay(`${status} ${agent.profile}${agent.phase && agent.phase !== 'work' ? ` · ${agent.phase}` : ''}`, inner)}
+            </Text>
+            <Text color={theme.dim}>{truncateDisplay(route, inner)}</Text>
+          </Box>
+        );
+      })}
+      {messages.length ? <Text color={theme.border}>{truncateDisplay('peer messages', inner)}</Text> : null}
+      {messages.map((message) => (
+        <Text key={message.id} color={theme.muted}>{truncateDisplay(`${message.from}${glyphs.arrow}${message.to}: ${message.text}`, inner)}</Text>
+      ))}
     </Box>
   );
 }

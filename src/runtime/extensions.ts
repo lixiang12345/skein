@@ -88,14 +88,16 @@ export class ExtensionRuntime implements PromptContextProvider {
     await this.profiles?.discover();
     if (this.config.agents?.enabled && this.profiles &&
       this.options.provider && this.options.contextEngine) {
-      registry.register(new DelegationManager({
+      const delegation = new DelegationManager({
         config: this.config,
         provider: this.options.provider,
         contextEngine: this.options.contextEngine,
         parentTools: registry,
         profiles: this.profiles,
         promptContextProvider: this,
-      }).tool());
+      });
+      registry.register(delegation.tool());
+      registry.register(delegation.teamTool());
     }
     registry.register(createWorkflowTool(this.workflows));
     this.initialized = true;

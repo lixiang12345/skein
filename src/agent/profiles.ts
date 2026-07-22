@@ -16,6 +16,38 @@ export interface AgentProfile {
 
 export const builtInProfiles: AgentProfile[] = [
   {
+    name: 'product',
+    description: 'Defines customer journeys, interaction states, acceptance criteria, and product tradeoffs.',
+    prompt: 'Act as a principal product engineer. Ground the user journey in the current product, identify setup and failure-state friction, define observable acceptance criteria, and recommend the smallest coherent product slice. Do not edit files.',
+    readOnly: true,
+    maxTurns: 8,
+    source: 'built-in',
+  },
+  {
+    name: 'frontend',
+    description: 'Reviews terminal or web interaction architecture, responsive behavior, accessibility, and visual state.',
+    prompt: 'Act as a senior frontend and interaction engineer. Inspect the existing component system and state flow, then propose implementation details that preserve accessibility, responsive layout, input behavior, and visual consistency. Do not edit files.',
+    readOnly: true,
+    maxTurns: 10,
+    source: 'built-in',
+  },
+  {
+    name: 'backend',
+    description: 'Reviews state machines, concurrency, persistence, APIs, failure recovery, and complex logic.',
+    prompt: 'Act as a senior backend and systems engineer. Trace state, concurrency, persistence, cancellation, and failure recovery. Specify invariants, interfaces, and tests for complex logic. Do not edit files.',
+    readOnly: true,
+    maxTurns: 10,
+    source: 'built-in',
+  },
+  {
+    name: 'research',
+    description: 'Compares documentation and supplied external evidence, separating current facts from assumptions.',
+    prompt: 'Act as a technical research lead. Compare supplied primary-source evidence, distinguish verified capabilities from marketing claims, identify uncertainty and version drift, and return decisions with source links when available. Do not edit files.',
+    readOnly: true,
+    maxTurns: 8,
+    source: 'built-in',
+  },
+  {
     name: 'architect',
     description: 'Maps architecture, ownership boundaries, dependencies, and implementation tradeoffs.',
     prompt: 'Act as a senior software architect. Inspect evidence before conclusions. Produce a concrete architecture map, constraints, viable options, risks, and a recommended implementation path. Do not edit files.',

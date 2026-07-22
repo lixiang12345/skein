@@ -18,6 +18,7 @@ import {compactDisplayPath, displayWidth, truncateDisplay} from '../src/ui/text.
 describe('terminal command and width helpers', () => {
   it('uses one registry for command discovery and aliases', () => {
     expect(commandSuggestions('/m')[0]).toMatchObject({value: '/memory ', label: '/memory'});
+    expect(commandSuggestions('/tea')[0]).toMatchObject({value: '/team ', label: '/team'});
     expect(findCommand('?')?.name).toBe('help');
   });
 

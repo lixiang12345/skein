@@ -9,6 +9,7 @@ import {
   configSummary,
   defaultModelForProvider,
   loadConfig,
+  redactEndpoint,
   resolveRuntimeModel,
   saveProjectConfig,
   trustProjectModelConfig,
@@ -374,13 +375,35 @@ agentsCommand
   .command('list')
   .description('List built-in and discovered expert profiles')
   .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
   .option('--json', 'print JSON')
-  .action(async (options: {workspace?: string; json?: boolean}) => {
-    const catalog = new AgentProfileCatalog(workspaceOption(options.workspace));
+  .action(async (options: ConfigOptions) => {
+    const workspace = workspaceOption(options.workspace);
+    const config = await runtimeConfig(workspace, runtimeOptions(options));
+    const catalog = new AgentProfileCatalog(workspace);
     const profiles = await catalog.discover();
-    if (options.json) printObject(profiles, true);
-    else for (const profile of profiles) {
-      process.stdout.write(`${profile.name.padEnd(14)} ${profile.readOnly ? 'read-only' : 'writer   '} ${profile.description}\n`);
+    const roster = profiles.map((profile) => {
+      const route = config.agents?.routes?.[profile.name];
+      return {
+        ...profile,
+        route: route ? {
+          runtime: route.runtime ?? 'api',
+          provider: route.provider,
+          model: route.model,
+          endpoint: redactEndpoint(route.baseUrl),
+          credentials: route.apiKeyEnv ? `env:${route.apiKeyEnv}` : 'inherited when compatible',
+        } : {
+          runtime: 'api',
+          provider: config.model.provider,
+          model: config.model.model,
+          endpoint: redactEndpoint(config.model.baseUrl),
+          credentials: 'inherited',
+        },
+      };
+    });
+    if (options.json) printObject(roster, true);
+    else for (const profile of roster) {
+      process.stdout.write(`${profile.name.padEnd(14)} ${profile.readOnly ? 'read-only' : 'writer   '} ${profile.route.runtime}:${profile.route.provider}/${profile.route.model}  ${profile.description}\n`);
     }
   });
 

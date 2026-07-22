@@ -137,7 +137,7 @@ export function estimateTimelineItemRows(
   if (item.kind === 'skill' || item.kind === 'memory' || item.kind === 'compaction') {
     return rowWidth < 64 ? 2 : 1;
   }
-  if (item.kind === 'agent') return rowWidth < 64 ? 2 : 1;
+  if (item.kind === 'agent' || item.kind === 'agent-message') return rowWidth < 64 ? 2 : 1;
   if (item.kind === 'workflow') return rowWidth < 64 ? 2 : 1;
   return 1;
 }

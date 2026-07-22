@@ -50,6 +50,118 @@ describe('bounded orchestration', () => {
     expect(events.filter((event) => event.type === 'agent_done')).toHaveLength(2);
   });
 
+  it('routes specialists to different models and closes with an acceptance review', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-team-'));
+    roots.push(root);
+    const cfg = config(root);
+    cfg.agents = {
+      ...cfg.agents!,
+      reviewerProfile: 'reviewer',
+      maxReviewRounds: 1,
+      routes: {
+        architect: {provider: 'compatible', model: 'planner-model', baseUrl: 'https://models.example/v1', apiKeyEnv: 'TEAM_TEST_KEY'},
+        reviewer: {provider: 'compatible', model: 'judge-model', baseUrl: 'https://models.example/v1', apiKeyEnv: 'TEAM_TEST_KEY'},
+      },
+    };
+    const profiles = new AgentProfileCatalog(root);
+    await profiles.discover();
+    const created: string[] = [];
+    let reviews = 0;
+    const provider: ModelProvider = {
+      name: 'parent',
+      async complete() { return {content: 'parent', toolCalls: []}; },
+    };
+    const context: ContextProvider = {
+      async pack() { return {text: '', hits: [], estimatedTokens: 0, engine: 'test', truncated: false}; },
+      async search() { return []; },
+    };
+    const manager = new DelegationManager({
+      config: cfg,
+      provider,
+      contextEngine: context,
+      parentTools: createDefaultToolRegistry(),
+      profiles,
+      environment: {TEAM_TEST_KEY: 'not-persisted'},
+      providerFactory(model) {
+        created.push(`${model.provider}/${model.model}/${model.apiKey ? 'key' : 'no-key'}`);
+        return {
+          name: model.model,
+          async complete(messages) {
+            const text = messages.map((message) => message.content).join('\n');
+            if (text.includes('Start the response with exactly VERDICT')) reviews += 1;
+            return {
+              content: text.includes('Start the response with exactly VERDICT')
+                ? reviews === 1
+                  ? 'VERDICT: REVISE\nAdd concrete file evidence.'
+                  : 'VERDICT: ACCEPT\nEvidence and acceptance criteria agree.'
+                : 'Architecture evidence with file boundaries.',
+              toolCalls: [],
+            };
+          },
+        };
+      },
+    });
+    const events: AgentEvent[] = [];
+    const result = await manager.teamTool().execute({
+      objective: 'Produce an evidence-backed implementation decision.',
+      tasks: [{profile: 'architect', task: 'Map the implementation boundaries.'}],
+    }, {
+      config: cfg,
+      workspace: new WorkspaceAccess([root]),
+      session: createSession({workspace: root, provider: 'compatible', model: 'test'}),
+      contextEngine: context,
+      emit: (event) => { events.push(event); },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.content).toContain('VERDICT: ACCEPT');
+    expect(created).toEqual([
+      'compatible/planner-model/key',
+      'compatible/judge-model/key',
+      'compatible/planner-model/key',
+      'compatible/judge-model/key',
+    ]);
+    expect(events.some((event) => event.type === 'agent_message' && event.from === 'architect' && event.to === 'reviewer')).toBe(true);
+    expect(events.some((event) => event.type === 'agent_start' && event.model === 'judge-model' && event.phase === 'review')).toBe(true);
+    expect(events.some((event) => event.type === 'agent_start' && event.model === 'planner-model' && event.phase === 'revision')).toBe(true);
+  });
+
+  it('can run an installed CLI adapter behind the same delegation protocol', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-external-team-'));
+    roots.push(root);
+    const cfg = config(root);
+    cfg.agents = {
+      ...cfg.agents!,
+      routes: {backend: {runtime: 'codex', provider: 'openai', model: 'gpt-external'}},
+    };
+    const profiles = new AgentProfileCatalog(root);
+    await profiles.discover();
+    const context: ContextProvider = {
+      async pack() { return {text: '', hits: [], estimatedTokens: 0, engine: 'test', truncated: false}; },
+      async search() { return []; },
+    };
+    const requests: string[] = [];
+    const manager = new DelegationManager({
+      config: cfg,
+      provider: {name: 'parent', async complete() { return {content: 'parent', toolCalls: []}; }},
+      contextEngine: context,
+      parentTools: createDefaultToolRegistry(),
+      profiles,
+      async externalRunner(request) {
+        requests.push(`${request.runtime}/${request.model}/${request.workspace}`);
+        return {content: 'External CLI evidence.', runtime: request.runtime, model: request.model, durationMs: 1};
+      },
+    });
+    const result = await manager.tool().execute({tasks: [{profile: 'backend', task: 'Inspect scheduler state.'}]}, {
+      config: cfg,
+      workspace: new WorkspaceAccess([root]),
+      session: createSession({workspace: root, provider: 'compatible', model: 'test'}),
+      contextEngine: context,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.content).toContain('External CLI evidence.');
+    expect(requests).toEqual([`codex/gpt-external/${root}`]);
+  });
+
   it('defines single-writer workflows with parallel read-only review branches', () => {
     const catalog = new WorkflowCatalog();
     const review = catalog.get('review');

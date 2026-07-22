@@ -1,7 +1,7 @@
 import React from 'react';
 import {renderToString} from 'ink';
 import {describe, expect, it} from 'vitest';
-import {CommandPalette, ContextInspector, Footer, Header, PermissionCard, TaskRail, Timeline} from '../src/ui/components.js';
+import {CommandPalette, ContextInspector, Footer, Header, PermissionCard, TaskRail, TeamCockpit, Timeline} from '../src/ui/components.js';
 import {displayWidth, sanitizeTerminalText} from '../src/ui/text.js';
 import {detectTerminalAppearance, resolveTheme, resolveThemeWithColor} from '../src/ui/theme.js';
 import type {MosaicConfig, ToolCall} from '../src/types.js';
@@ -150,6 +150,18 @@ describe('terminal presentation', () => {
     );
     expect(output).toContain('approval required');
     expect(output).toContain('@2');
+  });
+
+  it('renders routed agents and peer handoffs in the team cockpit', () => {
+    const output = renderToString(<TeamCockpit width={40} items={[
+      {id: 'worker', kind: 'agent', profile: 'architect', provider: 'anthropic', model: 'claude', phase: 'work', task: 'Map boundaries', state: 'ok'},
+      {id: 'message', kind: 'agent-message', from: 'architect', to: 'reviewer', text: 'Boundary report ready.'},
+      {id: 'reviewer', kind: 'agent', profile: 'reviewer', provider: 'openai', model: 'gpt', phase: 'review', task: 'Review evidence', state: 'running'},
+    ]} />, {columns: 40});
+    expect(output).toContain('TEAM COCKPIT');
+    expect(output).toContain('anthropic/claude');
+    expect(output).toContain('openai/gpt');
+    expect(output).toContain('architect→reviewer');
   });
 
   it.each([20, 50, 72])('renders each permission shortcut once at %i columns', (columns) => {

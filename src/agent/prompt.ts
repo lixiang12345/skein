@@ -100,7 +100,7 @@ export function buildTurnDirective(input: string): {intent: TurnIntent; text: st
     intent,
     text: `<turn-directive intent="${intent}">
 ${guidance[intent]}
-Use retrieved evidence just in time. Delegate only bounded independent read-only investigations, and keep workspace mutation in the main agent.
+Use retrieved evidence just in time. Delegate only bounded independent read-only investigations, and keep workspace mutation in the main agent. For complex cross-discipline work where independent specialists should challenge each other, use team_run with explicit acceptance criteria; choose profiles by capability and let configured model routes select providers. When team mode is used for implementation, ask a second council to inspect the resulting diff and verification evidence before claiming delivery.
 </turn-directive>`,
   };
 }

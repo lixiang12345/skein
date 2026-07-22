@@ -51,6 +51,20 @@ const agentTeamConfigSchema = z.object({
   maxConcurrent: z.number().int().positive().max(16).optional(),
   maxDelegations: z.number().int().positive().max(32).optional(),
   defaultProfile: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/).optional(),
+  reviewerProfile: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/).optional(),
+  maxReviewRounds: z.number().int().min(0).max(3).optional(),
+  cockpit: z.boolean().optional(),
+  routes: z.record(z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/), z.object({
+    runtime: z.enum(['api', 'codex', 'claude', 'grok']).optional(),
+    provider: z.enum(['openai', 'anthropic', 'gemini', 'compatible']),
+    model: z.string().min(1).max(256),
+    baseUrl: z.string().url().refine((value) => /^https?:$/i.test(new URL(value).protocol), {
+      message: 'agent route baseUrl must use http or https',
+    }).optional(),
+    apiKeyEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/).optional(),
+    temperature: z.number().min(0).max(2).optional(),
+    maxTokens: z.number().int().positive().max(200_000).optional(),
+  }).strict()).optional(),
 }).partial();
 
 const mcpServerSchema = z.object({
@@ -220,6 +234,10 @@ export function defaultConfig(workspace = process.cwd()): MosaicConfig {
       maxConcurrent: 3,
       maxDelegations: 6,
       defaultProfile: 'reviewer',
+      reviewerProfile: 'reviewer',
+      maxReviewRounds: 1,
+      cockpit: true,
+      routes: {},
     },
     mcp: {
       enabled: false,
@@ -508,6 +526,12 @@ function sanitizeProjectConfig(
     // user explicitly trusts the project configuration.
     delete skills.directories;
   }
+  const agents = update.agents ? {...update.agents} : undefined;
+  if (agents) {
+    // Model routes can redirect credentials and source context to arbitrary
+    // endpoints. Repository-owned config cannot activate them without trust.
+    delete agents.routes;
+  }
   return {
     ...safeUpdate,
     ...(model ? {model} : {}),
@@ -515,6 +539,7 @@ function sanitizeProjectConfig(
     ...(memory ? {memory} : {}),
     ...(agent ? {agent} : {}),
     ...(skills ? {skills} : {}),
+    ...(agents ? {agents} : {}),
   };
 }
 
@@ -562,7 +587,22 @@ export function configSummary(config: MosaicConfig): Record<string, unknown> {
       retrievalLimit: config.memory.retrievalLimit,
       databasePath: config.memory.databasePath ?? defaultMemoryPath(),
     } : undefined,
-    agents: config.agents,
+    agents: config.agents ? {
+      enabled: config.agents.enabled,
+      maxConcurrent: config.agents.maxConcurrent,
+      maxDelegations: config.agents.maxDelegations,
+      defaultProfile: config.agents.defaultProfile,
+      reviewerProfile: config.agents.reviewerProfile,
+      maxReviewRounds: config.agents.maxReviewRounds,
+      cockpit: config.agents.cockpit,
+      routes: Object.fromEntries(Object.entries(config.agents.routes ?? {}).map(([profile, route]) => [profile, {
+        runtime: route.runtime ?? 'api',
+        provider: route.provider,
+        model: route.model,
+        endpoint: redactEndpoint(route.baseUrl),
+        credentials: route.apiKeyEnv ? `env:${route.apiKeyEnv}` : 'inherited when compatible',
+      }])),
+    } : undefined,
     mcp: config.mcp ? {
       enabled: config.mcp.enabled,
       servers: Object.keys(config.mcp.servers),
