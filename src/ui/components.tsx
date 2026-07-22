@@ -967,8 +967,9 @@ export function CommandPalette({
         const descriptionLimit = Math.max(0, innerWidth - displayWidth(marker) - displayWidth(label) - 3);
         return (
           <Box key={`${suggestion.value}-${absoluteIndex}`} backgroundColor={active ? theme.selection : undefined}>
+            <Text bold color={active ? theme.accent : theme.selection}>{marker}</Text>
             <Text bold={active} color={active ? theme.selectionText : theme.muted}>
-              {marker} {label}
+              {' '}{label}
             </Text>
             {rowWidth >= 64 && descriptionLimit >= 4
               ? <Text color={theme.muted}>  {truncateDisplay(description, descriptionLimit)}</Text>
