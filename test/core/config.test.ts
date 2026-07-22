@@ -8,6 +8,7 @@ import {
   loadConfig,
   resolveRuntimeModel,
   saveProjectConfig,
+  saveUserConfig,
   trustProjectModelConfig,
 } from '../../src/config.js';
 
@@ -162,6 +163,31 @@ describe('configuration defaults', () => {
     const summary = JSON.stringify(configSummary(config));
     expect(summary).toContain('env:RELAY_API_KEY');
     expect(summary).toContain('https://relay.example/v1');
+  });
+
+  it('loads and merges user-level JSON connection setup', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-user-config-workspace-'));
+    const home = await mkdtemp(join(tmpdir(), 'skein-user-config-home-'));
+    roots.push(root, home);
+    const previousHome = process.env.SKEIN_HOME;
+    process.env.SKEIN_HOME = home;
+    try {
+      await saveUserConfig({agents: {
+        defaultConnection: 'relay',
+        defaultModel: 'openai/coder',
+        connections: {relay: {provider: 'compatible', baseUrl: 'https://relay.example/v1', apiKeyEnv: 'RELAY_KEY'}},
+      }});
+      await saveUserConfig({agents: {routes: {frontend: {model: 'anthropic/frontend'}}}});
+      expect((await stat(join(home, 'config.json'))).mode & 0o777).toBe(0o600);
+      const config = await loadConfig(root);
+      expect(config.agents?.defaultConnection).toBe('relay');
+      expect(config.agents?.defaultModel).toBe('openai/coder');
+      expect(config.agents?.connections?.relay?.apiKeyEnv).toBe('RELAY_KEY');
+      expect(config.agents?.routes?.frontend?.model).toBe('anthropic/frontend');
+    } finally {
+      if (previousHome === undefined) delete process.env.SKEIN_HOME;
+      else process.env.SKEIN_HOME = previousHome;
+    }
   });
 
   it('rejects an agent route that references an unknown connection', async () => {

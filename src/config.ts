@@ -431,6 +431,7 @@ export async function loadConfig(
     ? [resolve(explicitPath)]
     : [
         join(mosaicHome(), 'config.yaml'),
+        join(mosaicHome(), 'config.json'),
         join(resolveProjectNamespaceSync(resolve(workspace)).canonical, 'config.yaml'),
         join(resolveProjectNamespaceSync(resolve(workspace)).canonical, 'config.json'),
         join(resolve(workspace), '.mosaic', 'config.yaml'),
@@ -603,6 +604,27 @@ export async function saveProjectConfig(
   const parsed = partialConfigSchema.parse(config);
   await ensureWorkspaceStorageDirectory(resolve(workspace), dirname(path));
   await atomicWrite(path, `${JSON.stringify(parsed, null, 2)}\n`, 0o600);
+  return path;
+}
+
+/** Merge trusted user-owned settings without discarding unrelated preferences. */
+export async function saveUserConfig(config: PartialConfig): Promise<string> {
+  const home = mosaicHome();
+  const path = join(home, 'config.json');
+  const existing = await readConfigFile(path);
+  const agents = existing.agents || config.agents ? {
+    ...existing.agents,
+    ...config.agents,
+    connections: {...existing.agents?.connections, ...config.agents?.connections},
+    routes: {...existing.agents?.routes, ...config.agents?.routes},
+  } : undefined;
+  const merged = partialConfigSchema.parse({
+    ...existing,
+    ...config,
+    ...(agents ? {agents} : {}),
+  });
+  await mkdir(home, {recursive: true, mode: 0o700});
+  await atomicWrite(path, `${JSON.stringify(merged, null, 2)}\n`, 0o600);
   return path;
 }
 

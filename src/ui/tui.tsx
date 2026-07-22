@@ -585,12 +585,16 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       return true;
     }
     if (command === 'connections') {
+      if (argument === 'setup') {
+        append({id: nextId(), kind: 'notice', tone: 'info', text: `Run ${PRODUCT_COMMAND} agents setup in a shell to configure a shared connection without exposing credentials to the session.`});
+        return true;
+      }
       const routes = Object.values(config.agents?.routes ?? {});
       const connections = Object.entries(config.agents?.connections ?? {});
       appendList('Model connections', connections.length ? connections.map(([name, connection]) => ({
         label: `${name}  ${connection.provider}`,
         detail: `${redactEndpoint(connection.baseUrl)}${separator}${connection.apiKeyEnv ? `env:${connection.apiKeyEnv}` : 'provider default environment'}${separator}${routes.filter((route) => route.connection === name).length} explicit routes${config.agents?.defaultConnection === name ? `${separator}team default` : ''}`,
-      })) : [{label: 'No named model connections configured.'}]);
+      })) : [{label: 'No named model connections configured.', detail: `Run ${PRODUCT_COMMAND} agents setup before starting another session.`}]);
       return true;
     }
     if (command === 'team') {

@@ -23,7 +23,7 @@ export const commandDefinitions: CommandDefinition[] = [
   command('remember', 'Save a non-secret workspace memory', '/remember <fact or preference>'),
   command('skills', 'List discovered task playbooks'),
   command('agents', 'List built-in and installed expert profiles'),
-  command('connections', 'Inspect shared model endpoints and credential references'),
+  command('connections', 'Inspect shared model endpoints and setup status', '/connections [setup]'),
   command('mcp', 'Show external MCP server health and tools'),
   command('tools', 'List built-in and MCP tools with permission categories'),
   command('permissions', 'Inspect the active permission policy'),
@@ -87,6 +87,14 @@ export function commandSuggestions(
       label: item.name,
       description: item.description,
     }));
+  }
+
+  if (firstSpace >= 0 && commandName === 'connections') {
+    return [{
+      value: '/connections setup',
+      label: 'setup',
+      description: 'Show the secure shared-connection setup command',
+    }].filter((item) => item.label.includes(argument.trim().toLocaleLowerCase()));
   }
 
   if (firstSpace >= 0 && commandName === 'memory') {

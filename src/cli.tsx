@@ -12,12 +12,14 @@ import {
   redactEndpoint,
   resolveRuntimeModel,
   saveProjectConfig,
+  saveUserConfig,
   trustProjectModelConfig,
 } from './config.js';
 import {ContextEngine, formatContextHits} from './context/context-engine.js';
 import {AgentRunner} from './agent/index.js';
 import {AgentProfileCatalog, listConnectionModels, TeamRunStore} from './agent/index.js';
 import {resolveAgentModelRoute} from './agent/model-route.js';
+import {createAgentConnectionSetup, mergeAgentSetup} from './agent/model-setup.js';
 import {discoverWorkspaceRules} from './agent/rules.js';
 import {createProvider} from './providers/index.js';
 import {SessionStore, type SessionSummary} from './session/index.js';
@@ -418,6 +420,20 @@ agentsCommand
     }
   });
 agentsCommand
+  .command('setup')
+  .description('Configure one shared model connection and team defaults')
+  .option('-w, --workspace <path>', 'workspace used to resolve current defaults')
+  .option('--name <name>', 'connection name')
+  .option('--provider <provider>', 'openai, anthropic, gemini, or compatible')
+  .option('--base-url <url>', 'provider or relay base URL')
+  .option('--api-key-env <name>', 'environment variable containing the credential')
+  .option('--model <model>', 'default model identifier')
+  .option('--yes', 'use supplied or existing defaults without prompting')
+  .option('--json', 'print JSON')
+  .action(async (options: AgentSetupOptions) => {
+    await runAgentSetup(options);
+  });
+agentsCommand
   .command('connections')
   .description('List named model endpoints and credential references')
   .option('-w, --workspace <path>', 'workspace root')
@@ -778,6 +794,16 @@ interface InitOptions {
 }
 
 interface ConfigOptions {workspace?: string; config?: string; json?: boolean}
+interface AgentSetupOptions {
+  workspace?: string;
+  name?: string;
+  provider?: string;
+  baseUrl?: string;
+  apiKeyEnv?: string;
+  model?: string;
+  yes?: boolean;
+  json?: boolean;
+}
 interface IndexOptions extends ConfigOptions {addWorkspace: string[]}
 interface SearchOptions extends ConfigOptions {topK: string}
 interface ContextOptions extends ConfigOptions {maxTokens?: string}
@@ -965,6 +991,63 @@ async function runInit(options: InitOptions): Promise<void> {
     const result = await engine.index();
     printObject(result, false);
   }
+}
+
+async function runAgentSetup(options: AgentSetupOptions): Promise<void> {
+  const workspace = workspaceOption(options.workspace);
+  const current = await loadConfig(workspace);
+  const currentName = current.agents?.defaultConnection ?? 'team-relay';
+  const currentConnection = current.agents?.connections?.[currentName];
+  let name = options.name ?? currentName;
+  let provider = validateProvider(options.provider ?? currentConnection?.provider ?? 'compatible');
+  let baseUrl = options.baseUrl ?? currentConnection?.baseUrl ?? '';
+  let apiKeyEnv = options.apiKeyEnv ?? currentConnection?.apiKeyEnv ?? providerEnvironment(provider);
+  let model = options.model ?? current.agents?.defaultModel ?? current.model.model;
+
+  if (!options.yes && process.stdin.isTTY && process.stdout.isTTY) {
+    const readline = createInterface({input, output});
+    try {
+      name = await question(readline, 'Connection name', name);
+      const previousProvider = provider;
+      provider = validateProvider(await question(readline, 'Provider', provider));
+      if (!options.apiKeyEnv && !currentConnection?.apiKeyEnv && apiKeyEnv === providerEnvironment(previousProvider)) {
+        apiKeyEnv = providerEnvironment(provider);
+      }
+      baseUrl = await question(readline, 'Base URL', baseUrl);
+      apiKeyEnv = await question(readline, 'Credential environment variable', apiKeyEnv || providerEnvironment(provider));
+      model = await question(readline, 'Default model', model);
+    } finally {
+      readline.close();
+    }
+  }
+
+  const setup = createAgentConnectionSetup({
+    name,
+    provider,
+    ...(baseUrl ? {baseUrl} : {}),
+    ...(apiKeyEnv ? {apiKeyEnv} : {}),
+    defaultModel: model,
+  });
+  const path = await saveUserConfig({agents: mergeAgentSetup(undefined, setup)});
+  const credentialConfigured = apiKeyEnv ? Boolean(process.env[apiKeyEnv]) : false;
+  const result = {
+    path,
+    connection: setup.defaultConnection,
+    provider,
+    endpoint: redactEndpoint(baseUrl),
+    apiKeyEnv: apiKeyEnv || null,
+    credentialConfigured,
+    defaultModel: setup.defaultModel,
+  };
+  if (options.json) {
+    printObject(result, true);
+    return;
+  }
+  process.stdout.write(`${chalk.green(cliGlyphs.success)} Saved shared connection ${setup.defaultConnection} to ${path}\n`);
+  process.stdout.write(`  Default: ${provider}/${setup.defaultModel} via ${redactEndpoint(baseUrl)}\n`);
+  process.stdout.write(`  Credential: ${apiKeyEnv ? `env:${apiKeyEnv} (${credentialConfigured ? 'configured' : 'not set'})` : 'provider default environment'}\n`);
+  process.stdout.write(`  Models: ${provider === 'compatible' || provider === 'openai' ? `${PRODUCT_COMMAND} agents models ${setup.defaultConnection}` : 'managed by the provider or official CLI'}\n`);
+  process.stdout.write(`  Routes: ${PRODUCT_COMMAND} agents list\n`);
 }
 
 async function runtimeConfig(

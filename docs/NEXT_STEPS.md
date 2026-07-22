@@ -184,6 +184,10 @@ Implementation progress:
   routes only contain model or provider overrides when needed. CLI and TUI
   surfaces label inherited versus overridden routes, and unknown defaults fail
   validation before any agent starts.
+- `skein agents setup` now provides a guided user-level setup for a shared
+  connection and default model, with a non-interactive provisioning form. The
+  wizard stores only credential environment-variable names and preserves other
+  user configuration.
 - Team budgets default to `observe`: telemetry is retained, but configured
   thresholds do not warn or terminate work. `guard` adds non-blocking threshold
   warnings, while `strict` is an explicit hard-stop policy for controlled jobs.

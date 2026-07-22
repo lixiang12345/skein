@@ -99,6 +99,32 @@ the blackboard to a hosted service.
 Credentials are referenced by environment-variable name. They are never stored
 inside the project config.
 
+### Guided setup
+
+The shortest setup path is the interactive user-level wizard:
+
+```bash
+skein agents setup
+```
+
+It asks for a connection name, provider, endpoint, credential environment
+variable, and default model. The wizard writes only the environment-variable
+name and saves shared settings under the user Skein namespace, so the same
+connection is available in every workspace. The non-interactive equivalent is
+useful for provisioning:
+
+```bash
+skein agents setup --yes \
+  --name team-relay \
+  --provider compatible \
+  --base-url https://relay.example/v1 \
+  --api-key-env TEAM_RELAY_API_KEY \
+  --model openai/coding-model
+```
+
+Run this command outside an active TUI session; `/connections setup` displays
+the same next action without placing a secret in the session transcript.
+
 ### Authentication paths
 
 Skein keeps subscription login and API routing separate because they have
