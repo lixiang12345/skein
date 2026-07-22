@@ -304,9 +304,13 @@ root.
 
 ## ContextEngine integration
 
-Skein's `auto` mode checks for the `contextengine` executable. If it is healthy
-or merely unindexed, `skein index/search/context` uses it. If it is missing or a
-query fails, Skein falls back to its local index.
+Skein's `auto` mode negotiates a ContextEngine-compatible CLI by version,
+required command flags, exit behavior, and response schemas. `skein index` can
+bootstrap a compatible but unindexed workspace; `search` and `context` use the
+external engine only after an index is ready. Missing, incompatible, unhealthy,
+stale, malformed, or over-budget results fall back to the local index and emit
+structured degradation metadata. `contextengine` makes those conditions hard
+errors, while `local` never starts an external process.
 
 ```bash
 git clone https://github.com/lixiang12345/ContextEngine-plugin.git
@@ -314,15 +318,36 @@ cd ContextEngine-plugin
 npm install && npm run build && npm link
 npm run db:up
 export CONTEXTENGINE_DATABASE_URL=postgresql://contextengine:contextengine@127.0.0.1:54329/contextengine
+# Optional semantic channel, using an embedding-specific credential:
+# export CONTEXTENGINE_EMBEDDING_API_KEY=...
+# export CONTEXTENGINE_EMBEDDING_BASE_URL=https://embedding.example/v1
+# export CONTEXTENGINE_EMBEDDING_MODEL=your-embedding-model
 
 cd /path/to/project
 skein index
 skein status
 ```
 
-ContextEngine is an optional adapter, not a hidden hard dependency. The local
-fallback keeps Skein useful offline and makes degraded mode obvious in context
-telemetry and `skein doctor`.
+External commands run from a private temporary directory. Skein forwards only
+`CONTEXTENGINE_*` variables and required proxy, certificate, locale, and
+temporary-directory settings; it does not load a repository `.env` or forward
+chat-model credentials. A shared gateway key should therefore be referenced by
+an embedding-specific `CONTEXTENGINE_*` variable rather than reused implicitly.
+
+ContextEngine status cannot prove that every indexed line still matches the
+filesystem. Skein realpath-checks each result, verifies its hash and current line
+content, and reruns the entire query locally if any hit is stale or invalid.
+Empty external results in `auto` mode are cross-checked against the current
+local index so newly added files are not silently missed. ContextEngine's
+synthetic commit-lineage hits are reconstructed from the current repository
+with a constrained read-only Git invocation before use. The external
+`packedText` is never passed directly to a model; Skein repacks only verified
+current-file or commit-summary spans under its own token cap.
+
+ContextEngine remains an optional adapter, not a hidden hard dependency. The
+local fallback keeps Skein useful offline, and fallback reason/remediation is
+visible in TUI context telemetry, headless output, direct JSON commands, and
+`skein doctor`.
 
 ## Safety model
 

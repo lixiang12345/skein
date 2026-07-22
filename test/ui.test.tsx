@@ -26,7 +26,17 @@ describe('terminal presentation', () => {
         <Header config={config} askMode={false} />
         <Timeline items={[
           {id: '1', kind: 'user', text: 'Fix the queue'},
-          {id: '2', kind: 'context', engine: 'local', hits: 3, tokens: 420},
+          {
+            id: '2',
+            kind: 'context',
+            engine: 'local',
+            hits: 3,
+            tokens: 420,
+            degradation: {
+              code: 'contextengine-not-installed',
+              summary: 'ContextEngine unavailable',
+            },
+          },
           {id: '3', kind: 'tool', name: 'read_file', detail: 'src/queue.ts', state: 'ok'},
           {id: '4', kind: 'assistant', text: 'Done.'},
         ]} />
@@ -35,9 +45,40 @@ describe('terminal presentation', () => {
     );
     expect(output).toContain('SKEIN');
     expect(output).toContain('◇ context');
+    expect(output).toContain('ContextEngine unavailable');
     expect(output).toContain('✓ read_file');
     expect(output).toContain('Fix the queue');
     expect(output).toContain('Run tests');
+  });
+
+  it('keeps context fallback reason and remediation visible at narrow widths', () => {
+    for (const width of [20, 40, 80]) {
+      const output = renderToString(
+        <Timeline
+          width={width}
+          items={[{
+            id: `context-${width}`,
+            kind: 'context',
+            engine: 'local',
+            hits: 4,
+            tokens: 640,
+            degradation: {
+              code: 'contextengine-not-indexed',
+              summary: 'ContextEngine has no index for this workspace; used the local index.',
+              detail: 'Run `skein index` to build the external index.',
+            },
+          }]}
+        />,
+        {columns: width},
+      );
+
+      expect(output).toContain('fallback/');
+      expect(output).toContain('Run');
+      for (const line of output.split('\n')) {
+        expect(displayWidth(line), `${width}-column context row overflowed: ${JSON.stringify(line)}`)
+          .toBeLessThanOrEqual(width);
+      }
+    }
   });
 
   it('labels the explicit planning mode in the header', () => {

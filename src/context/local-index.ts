@@ -71,7 +71,7 @@ const localIndexSchema = z.object({
 }).strict();
 
 export interface IndexProgress {
-  phase: 'scan' | 'index' | 'write';
+  phase: 'scan' | 'index' | 'embed' | 'write' | 'done';
   completed: number;
   total: number;
   path?: string;
@@ -270,6 +270,26 @@ export class LocalContextIndex {
 
   async pack(query: string, topK: number, maxTokens: number): Promise<PackedContext> {
     const hits = await this.search(query, topK);
+    return packContextHits(hits, this.roots, maxTokens, 'local');
+  }
+
+  status(): {available: boolean; path: string; files: number; chunks: number; createdAt?: string} {
+    return {
+      available: Boolean(this.index),
+      path: this.indexPath,
+      files: this.index?.files.length ?? 0,
+      chunks: this.index?.files.reduce((total, file) => total + file.chunks.length, 0) ?? 0,
+      ...(this.index?.createdAt ? {createdAt: this.index.createdAt} : {}),
+    };
+  }
+}
+
+export function packContextHits(
+  hits: ContextHit[],
+  roots: string[],
+  maxTokens: number,
+  engine: string,
+): PackedContext {
     let estimatedTokens = 0;
     let truncated = false;
     const selected: ContextHit[] = [];
@@ -288,21 +308,10 @@ export class LocalContextIndex {
       estimatedTokens += tokens;
     }
     const text = selected.map((hit) => {
-      const shownPath = workspaceAliasPath(hit.path, this.roots);
+      const shownPath = workspaceAliasPath(hit.path, roots);
       return `<code path="${escapeAttribute(shownPath)}" lines="${hit.startLine}-${hit.endLine}" score="${hit.score.toFixed(3)}">\n${hit.content}\n</code>`;
     }).join('\n\n');
-    return {text, hits: selected, estimatedTokens, engine: 'local', truncated};
-  }
-
-  status(): {available: boolean; path: string; files: number; chunks: number; createdAt?: string} {
-    return {
-      available: Boolean(this.index),
-      path: this.indexPath,
-      files: this.index?.files.length ?? 0,
-      chunks: this.index?.files.reduce((total, file) => total + file.chunks.length, 0) ?? 0,
-      ...(this.index?.createdAt ? {createdAt: this.index.createdAt} : {}),
-    };
-  }
+    return {text, hits: selected, estimatedTokens, engine, truncated};
 }
 
 function escapeAttribute(value: string): string {

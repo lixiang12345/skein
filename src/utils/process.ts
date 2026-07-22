@@ -2,6 +2,7 @@ import {spawn} from 'node:child_process';
 import {constants} from 'node:fs';
 import {access, lstat, realpath} from 'node:fs/promises';
 import {delimiter, isAbsolute, join, resolve} from 'node:path';
+import {StringDecoder} from 'node:string_decoder';
 import {isInside} from './path.js';
 
 export interface ProcessResult {
@@ -98,11 +99,14 @@ export function runProcess(
     stdin?: string;
     maxOutputBytes?: number;
     signal?: AbortSignal;
+    inheritEnv?: boolean;
+    onStdout?: (chunk: string) => void;
+    onStderr?: (chunk: string) => void;
   },
 ): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
     const started = Date.now();
-    const environment = {...process.env};
+    const environment = options.inheritEnv === false ? {} : {...process.env};
     for (const name of options.unsetEnv ?? []) delete environment[name];
     for (const name of Object.keys(environment)) {
       if (options.unsetEnvPrefixes?.some((prefix) => name.startsWith(prefix))) {
@@ -119,14 +123,49 @@ export function runProcess(
     const maxBytes = options.maxOutputBytes ?? 1_000_000;
     let stdout = '';
     let stderr = '';
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
     let timedOut = false;
-    const append = (current: string, chunk: Buffer): string => {
-      if (Buffer.byteLength(current) >= maxBytes) return current;
-      const remaining = maxBytes - Buffer.byteLength(current);
-      return current + chunk.subarray(0, remaining).toString('utf8');
+    let callbackError: unknown;
+    const stdoutDecoder = new StringDecoder('utf8');
+    const stderrDecoder = new StringDecoder('utf8');
+    const stdoutCallbackDecoder = new StringDecoder('utf8');
+    const stderrCallbackDecoder = new StringDecoder('utf8');
+    const append = (
+      decoder: StringDecoder,
+      chunk: Buffer,
+      usedBytes: number,
+    ): {text: string; usedBytes: number} => {
+      if (usedBytes >= maxBytes) return {text: '', usedBytes};
+      const selected = chunk.subarray(0, maxBytes - usedBytes);
+      return {text: decoder.write(selected), usedBytes: usedBytes + selected.length};
     };
-    child.stdout.on('data', (chunk: Buffer) => { stdout = append(stdout, chunk); });
-    child.stderr.on('data', (chunk: Buffer) => { stderr = append(stderr, chunk); });
+    const notify = (
+      callback: ((chunk: string) => void) | undefined,
+      decoder: StringDecoder,
+      chunk: Buffer,
+    ): void => {
+      if (!callback || callbackError) return;
+      try {
+        const decoded = decoder.write(chunk);
+        if (decoded) callback(decoded);
+      } catch (error) {
+        callbackError = error;
+        child.kill('SIGTERM');
+      }
+    };
+    child.stdout.on('data', (chunk: Buffer) => {
+      const appended = append(stdoutDecoder, chunk, stdoutBytes);
+      stdout += appended.text;
+      stdoutBytes = appended.usedBytes;
+      notify(options.onStdout, stdoutCallbackDecoder, chunk);
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      const appended = append(stderrDecoder, chunk, stderrBytes);
+      stderr += appended.text;
+      stderrBytes = appended.usedBytes;
+      notify(options.onStderr, stderrCallbackDecoder, chunk);
+    });
     child.on('error', reject);
     const timeoutMs = options.timeoutMs ?? 120_000;
     const timeout = timeoutMs > 0 ? setTimeout(() => {
@@ -136,6 +175,22 @@ export function runProcess(
     }, timeoutMs) : undefined;
     child.on('close', (code) => {
       if (timeout) clearTimeout(timeout);
+      const stdoutTail = stdoutDecoder.end();
+      const stderrTail = stderrDecoder.end();
+      if (Buffer.byteLength(stdout) + Buffer.byteLength(stdoutTail) <= maxBytes) stdout += stdoutTail;
+      if (Buffer.byteLength(stderr) + Buffer.byteLength(stderrTail) <= maxBytes) stderr += stderrTail;
+      try {
+        const stdoutCallbackTail = stdoutCallbackDecoder.end();
+        const stderrCallbackTail = stderrCallbackDecoder.end();
+        if (stdoutCallbackTail && options.onStdout && !callbackError) options.onStdout(stdoutCallbackTail);
+        if (stderrCallbackTail && options.onStderr && !callbackError) options.onStderr(stderrCallbackTail);
+      } catch (error) {
+        callbackError = error;
+      }
+      if (callbackError) {
+        reject(callbackError);
+        return;
+      }
       resolve({
         command: [command, ...args].join(' '),
         exitCode: code ?? (timedOut ? 124 : 1),

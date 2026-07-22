@@ -625,6 +625,11 @@ export class AgentRunner {
         estimatedTokens: 0,
         engine: 'unavailable',
         truncated: false,
+        degradation: {
+          code: 'context-unavailable',
+          summary: 'Context retrieval failed; continuing without retrieved code.',
+          detail: error instanceof Error ? error.message : String(error),
+        },
       };
     }
   }

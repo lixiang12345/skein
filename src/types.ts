@@ -201,6 +201,13 @@ export interface PackedContext {
   estimatedTokens: number;
   engine: string;
   truncated: boolean;
+  degradation?: ContextDegradation;
+}
+
+export interface ContextDegradation {
+  code: string;
+  summary: string;
+  detail?: string;
 }
 
 export type TaskStatus = 'pending' | 'in_progress' | 'completed';

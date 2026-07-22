@@ -180,27 +180,46 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
   }
 
   const context = new ContextEngine(config);
-  const external = await context.canUseExternal();
+  const capability = await context.inspectExternal({refresh: true});
+  const external = capability.available && capability.indexed;
   checks.push({
     name: 'ContextEngine',
-    ok: external,
-    detail: external
-      ? `${config.context.contextEngineCommand} available`
-      : 'not installed; local BM25 fallback will be used',
-    required: false,
+    ok: config.context.engine === 'local' || capability.available,
+    detail: capability.detail,
+    required: config.context.engine === 'contextengine',
   });
+  if (capability.available && capability.indexed) {
+    const status = capability.status as {
+      hasEmbeddings?: boolean;
+      embeddingModel?: string | null;
+    } | undefined;
+    checks.push({
+      name: 'Context channels',
+      ok: status?.hasEmbeddings === true,
+      detail: status?.hasEmbeddings === false
+        ? 'lexical available; semantic unavailable; configure CONTEXTENGINE_EMBEDDING_*'
+        : status?.embeddingModel
+          ? `lexical + semantic (${status.embeddingModel})`
+          : 'lexical available; semantic status not reported',
+      required: false,
+    });
+  }
   try {
-    const status = await context.status();
+    const status = await context.status({refresh: false});
     const local = status.local as {available?: boolean; files?: number} | undefined;
     checks.push({
       name: 'Code index',
       ok: Boolean(external || local?.available),
       detail: external
-        ? 'external engine selected'
+        ? `external index selected; freshness ${capability.freshness}`
+        : capability.available && !capability.indexed
+          ? `external workspace is not indexed; run ${PRODUCT_COMMAND} index`
         : local?.available
           ? `local index ${glyphs.separator} ${local.files ?? 0} files`
-          : `not built; run ${PRODUCT_COMMAND} index`,
-      required: false,
+          : capability.reason && capability.reason !== 'not-installed'
+            ? `${capability.detail}; local index not built`
+            : `not built; run ${PRODUCT_COMMAND} index`,
+      required: config.context.engine === 'contextengine',
     });
   } catch (error) {
     checks.push({

@@ -2,6 +2,7 @@ import {createInterface} from 'node:readline/promises';
 import chalk, {Chalk} from 'chalk';
 import type {
   AgentEvent,
+  PackedContext,
   Session,
   ToolCall,
   ToolCategory,
@@ -23,6 +24,7 @@ export class HeadlessReporter {
   private finalResponse = '';
   private readonly tools: ToolResult[] = [];
   private eventError?: string;
+  private context: Omit<PackedContext, 'text' | 'hits'> & {hits: number} | undefined;
   private streamedAssistant = false;
   private readonly paint: typeof chalk;
   private readonly glyphs: CliGlyphs;
@@ -36,6 +38,10 @@ export class HeadlessReporter {
     if (event.type === 'assistant') this.finalResponse = event.content;
     if (event.type === 'tool_result') this.tools.push(event.result);
     if (event.type === 'error') this.eventError = event.error.message;
+    if (event.type === 'context') {
+      const {text: _text, hits, ...context} = event.packed;
+      this.context = {...context, hits: hits.length};
+    }
     if (this.options.format === 'json') return;
     if (this.options.format === 'stream-json') {
       process.stdout.write(`${JSON.stringify(eventToJson(event))}\n`);
@@ -57,6 +63,7 @@ export class HeadlessReporter {
         ok: true,
         response: this.finalResponse,
         session: sessionSummary(session),
+        ...(this.context ? {context: this.context} : {}),
         tools: this.tools,
       }, null, 2)}\n`);
       return;
@@ -91,7 +98,7 @@ export class HeadlessReporter {
         break;
       case 'context':
         process.stderr.write(this.paint.cyan(
-          `${this.glyphs.meta} context ${this.glyphs.separator} ${event.packed.engine} ${this.glyphs.separator} ${event.packed.hits.length} spans ${this.glyphs.separator} ~${event.packed.estimatedTokens} tokens\n`,
+          `${this.glyphs.meta} context ${this.glyphs.separator} ${event.packed.engine} ${this.glyphs.separator} ${event.packed.hits.length} spans ${this.glyphs.separator} ~${event.packed.estimatedTokens} tokens${event.packed.degradation ? ` ${this.glyphs.separator} ${event.packed.degradation.summary}` : ''}\n`,
         ));
         break;
       case 'prompt':

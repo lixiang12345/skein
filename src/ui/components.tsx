@@ -1,7 +1,7 @@
 import React from 'react';
 import {Box, Text} from 'ink';
 import {basename} from 'node:path';
-import type {MosaicConfig, SessionTask, ToolCall, ToolCategory, WorkingMemory} from '../types.js';
+import type {ContextDegradation, MosaicConfig, SessionTask, ToolCall, ToolCategory, WorkingMemory} from '../types.js';
 import {PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
 import {commandSuggestions, type CommandSuggestion} from './commands.js';
 import {
@@ -16,7 +16,7 @@ import {formatPercent, formatTokens, useTheme} from './theme.js';
 export type TimelineItem =
   | {id: string; kind: 'user'; text: string; clipped?: boolean}
   | {id: string; kind: 'assistant'; text: string; streaming?: boolean; clipped?: boolean}
-  | {id: string; kind: 'context'; engine: string; hits: number; tokens: number}
+  | {id: string; kind: 'context'; engine: string; hits: number; tokens: number; degradation?: ContextDegradation}
   | {id: string; kind: 'prompt'; intent: string; sections: string[]; tokens: number}
   | {id: string; kind: 'tool'; name: string; detail: string; state: 'running' | 'ok' | 'error'; startedAt?: number; durationMs?: number; errorDetail?: string; output?: string}
   | {id: string; kind: 'skill'; name: string; description: string}
@@ -235,14 +235,24 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
         }
         if (item.kind === 'context') {
           return (
-            <MetaRow
-              key={item.id}
-              width={width}
-              glyph={glyphs.context}
-              label="context"
-              detail={`${sanitizeInlineTerminalText(item.engine)} ${glyphs.separator} ${item.hits} spans ${glyphs.separator} ~${formatTokens(item.tokens)}`}
-              labelColor={theme.accent}
-            />
+            <Box key={item.id} flexDirection="column">
+              <MetaRow
+                width={width}
+                glyph={glyphs.context}
+                label="context"
+                detail={`${sanitizeInlineTerminalText(item.engine)} ${glyphs.separator} ${item.hits} spans ${glyphs.separator} ~${formatTokens(item.tokens)}`}
+                labelColor={theme.accent}
+              />
+              {item.degradation ? (
+                <MetaRow
+                  width={width}
+                  glyph={glyphs.warning}
+                  label={contextDegradationLabel(item.degradation.code)}
+                  detail={contextDegradationDetail(item.degradation)}
+                  labelColor={theme.warning}
+                />
+              ) : null}
+            </Box>
           );
         }
         if (item.kind === 'prompt') {
@@ -555,6 +565,21 @@ function MetaRow({glyph, label, detail, labelColor, width = 80}: {
       {detailText ? <Text color={detailColor}>  {truncateDisplay(detailText, detailLimit)}</Text> : null}
     </Box>
   );
+}
+
+function contextDegradationLabel(code: string): string {
+  if (code === 'contextengine-channels-degraded') return 'context/partial';
+  if (code === 'context-unavailable') return 'context/unavailable';
+  const reason = code.replace(/^contextengine-/u, '') || 'degraded';
+  return `fallback/${reason}`;
+}
+
+function contextDegradationDetail(degradation: ContextDegradation): string {
+  const detail = degradation.detail?.trim();
+  if (!detail) return degradation.summary;
+  return /^Run\s/iu.test(detail)
+    ? `${detail} ${degradation.summary}`
+    : `${degradation.summary} ${detail}`;
 }
 
 export function TaskRail({tasks, width = 80, glyphMode = 'auto', maxItems}: {

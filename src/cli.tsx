@@ -186,11 +186,15 @@ program
     const config = await runtimeConfig(workspaceOption(options.workspace), runtimeOptions(options));
     const engine = new ContextEngine(config);
     const hits = await engine.search(query, positiveInt(options.topK, 12));
+    const degradation = engine.lastDegradation();
     if (options.json) {
-      printObject(hits, true);
+      printObject({hits, ...(degradation ? {degradation} : {})}, true);
       return;
     }
     process.stdout.write(`${formatContextHits(hits, config.workspaceRoots)}\n`);
+    if (degradation) {
+      process.stderr.write(chalk.yellow(`! ${degradation.summary}\n`));
+    }
     for (const hit of hits) {
       process.stdout.write(`\n${workspaceAliasPath(hit.path, config.workspaceRoots)}:${hit.startLine}-${hit.endLine}\n`);
       process.stdout.write(`${hit.content.slice(0, 1_200)}\n`);
@@ -220,7 +224,7 @@ program
     }
     process.stdout.write(`${packed.text}\n\n`);
     process.stderr.write(chalk.dim(
-      `${cliGlyphs.meta} ${packed.engine} ${cliGlyphs.separator} ${packed.hits.length} spans ${cliGlyphs.separator} ~${packed.estimatedTokens} tokens${packed.truncated ? ` ${cliGlyphs.separator} capped` : ''}\n`,
+      `${cliGlyphs.meta} ${packed.engine} ${cliGlyphs.separator} ${packed.hits.length} spans ${cliGlyphs.separator} ~${packed.estimatedTokens} tokens${packed.truncated ? ` ${cliGlyphs.separator} capped` : ''}${packed.degradation ? ` ${cliGlyphs.separator} ${packed.degradation.summary}` : ''}\n`,
     ));
   });
 

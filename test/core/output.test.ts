@@ -60,6 +60,37 @@ describe('HeadlessReporter', () => {
     expect(stdout.mock.calls.map(([chunk]) => String(chunk)).join('')).toBe('Hello world.\n');
   });
 
+  it('retains structured context degradation in final JSON output', () => {
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const reporter = new HeadlessReporter({format: 'json'});
+    reporter.onEvent({
+      type: 'context',
+      packed: {
+        text: 'omitted from summary',
+        hits: [],
+        estimatedTokens: 0,
+        engine: 'local',
+        truncated: false,
+        degradation: {
+          code: 'contextengine-not-indexed',
+          summary: 'ContextEngine has no index; used the local index.',
+        },
+      },
+    });
+    reporter.onEvent({type: 'assistant', content: 'Completed.'});
+    reporter.finish(session);
+
+    const output = JSON.parse(stdout.mock.calls.map(([chunk]) => String(chunk)).join('')) as {
+      context?: {engine?: string; hits?: number; degradation?: {code?: string}};
+    };
+    expect(output.context).toMatchObject({
+      engine: 'local',
+      hits: 0,
+      degradation: {code: 'contextengine-not-indexed'},
+    });
+    expect(JSON.stringify(output.context)).not.toContain('omitted from summary');
+  });
+
   it('uses only ASCII chrome when the fallback glyph mode is enabled', () => {
     const previous = process.env.SKEIN_GLYPHS;
     process.env.SKEIN_GLYPHS = 'ascii';

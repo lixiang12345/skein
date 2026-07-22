@@ -47,7 +47,7 @@ archive it describes.
 The final verification included a fresh install and real PTY interaction for
 all three executable aliases, `/about`, a permission prompt, denial, and clean
 Ctrl+C exit. PTY coverage included 20, 24 ASCII, 40, 80, 120 columns and a
-40x10 short-height case. The current suite contains 30 test files and 212 tests.
+40x10 short-height case. The current suite contains 30 test files and 234 tests.
 
 ## Recommended Order
 
@@ -145,6 +145,40 @@ Definition of done:
 - A failed external query falls back without losing the user request.
 - Results preserve source paths, symbols, line ranges, scores, and token caps.
 - An integration fixture runs in CI without requiring a developer database.
+
+Implementation progress:
+
+- `auto` now negotiates the real 0.4 CLI boundary using `--version`, required
+  help flags, exit behavior, and strict required response fields. Capability
+  probes are coalesced, cached for ten seconds after completion, refreshable,
+  and recover when an executable is installed while Skein is running.
+- Compatible but unindexed workspaces use ContextEngine only for `index`;
+  `search` and `context` fall back locally. Explicit `contextengine` mode makes
+  missing, incompatible, unhealthy, and unindexed states hard failures, and
+  `doctor` treats that explicit requirement as required.
+- External index progress is parsed from the current CR/ANSI human stream and
+  finalized only after the JSON result validates. Multi-root aliases use
+  `main`, `workspace2`, and later numbered roots; single-root directories with
+  those literal names remain ordinary paths.
+- Search/context hits are schema-checked, realpath-bound, hash-checked, and
+  compared with current file lines. A stale or invalid hit rejects the entire
+  external response; empty auto-mode results are cross-checked locally so new
+  files are not missed. Synthetic commit-lineage hits are reconstructed with a
+  constrained read-only Git command. Skein ignores external `packedText` and
+  repacks verified current-file or commit-summary bytes under its own top-K and
+  token limits.
+- External processes use a private temporary working directory and a minimal
+  `CONTEXTENGINE_*`/proxy/certificate environment. Repository `.env` files and
+  generic chat-model credentials are not inherited. External failures and
+  unknown index fields are redacted or stripped before reaching output.
+- Structured degradation now reaches the TUI, headless text/final JSON,
+  `skein search/context`, and `doctor`; narrow TUI layouts show a separate
+  fallback reason and remediation row.
+- `test/fixtures/contextengine-cli.mjs` is a faithful CLI-boundary fixture, not
+  an embedded fake database. It covers unavailable PostgreSQL/pgvector,
+  unindexed and malformed contracts, stale/current/empty hits, commit-lineage
+  verification, multi-root mapping, oversized progress, credential redaction,
+  cache recovery, and degraded channels without requiring PostgreSQL in CI.
 
 ### P1: Multi-Agent Scheduler And Team UX
 
@@ -276,7 +310,9 @@ deprecation window is complete.
 
 ## Suggested Next Conversation Opening
 
-Start with: “Implement P0 CI and release reproducibility from
-`docs/NEXT_STEPS.md`; preserve the current 0.2.0 behavior and add tests before
-changing runtime behavior.” Then inspect the clean repository state and remote
-workflow permissions before creating any release automation.
+Start with: “Implement the first worktree-isolated writer lane from the P1
+multi-agent scheduler milestone. Preserve the current read-only council and
+review gate, serialize integration into the main workspace, and prove cancel,
+conflict, checkpoint, and rollback behavior before enabling parallel
+mutation.” Then inspect the scheduler, team-run persistence, permissions, and
+namespace lease boundaries before changing runtime behavior.

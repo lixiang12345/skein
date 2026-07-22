@@ -264,7 +264,14 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         break;
       case 'context':
         refreshSession();
-        append({id: nextId(), kind: 'context', engine: event.packed.engine, hits: event.packed.hits.length, tokens: event.packed.estimatedTokens});
+        append({
+          id: nextId(),
+          kind: 'context',
+          engine: event.packed.engine,
+          hits: event.packed.hits.length,
+          tokens: event.packed.estimatedTokens,
+          ...(event.packed.degradation ? {degradation: event.packed.degradation} : {}),
+        });
         setActivity({label: 'Assembling relevant context', startedAt: Date.now()});
         break;
       case 'prompt':
@@ -917,9 +924,10 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
 
   const submitFromComposer = useCallback((raw: string, mode: 'steer' | 'follow-up' | 'normal' = 'normal') => {
     if (historySearch) {
-      setInput(resolveHistorySearch(historySearch, 'select'));
+      const selected = resolveHistorySearch(historySearch, 'select');
       setHistorySearch(undefined);
       setHistoryIndex(-1);
+      void submit(selected, mode === 'normal' && processing.current ? 'steer' : mode);
       return;
     }
     if (suggestionMode === 'mention' && selectedSuggestion) {
