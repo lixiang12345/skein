@@ -166,6 +166,9 @@ export function Header({config, askMode, planMode = false, width = 80, glyphMode
   const root = config.workspaceRoots[0] ?? process.cwd();
   const terminalWidth = safeWidth(width);
   const mode = planMode ? 'PLAN' : askMode ? 'ASK' : 'BUILD';
+  // Each mode gets a semantic hue: BUILD is "go" (mutations live), PLAN is the
+  // amber "thinking" state, ASK is a calm read-only muted tone.
+  const modeColor = planMode ? theme.warning : askMode ? theme.muted : theme.accent;
   const brand = `${glyphs.brand} ${PRODUCT_NAME.toUpperCase()}`;
   const modeLabel = `${glyphs.activity} ${mode}`;
   const separator = ` ${glyphs.separator} `;
@@ -186,7 +189,7 @@ export function Header({config, askMode, planMode = false, width = 80, glyphMode
         <Text color={theme.muted}>{repository}</Text>
         <Text color={theme.border}>{separator}</Text>
       </> : <Text> </Text>}
-      <Text bold color={theme.accent}>{modeLabel}</Text>
+      <Text bold color={modeColor}>{modeLabel}</Text>
       {showModel ? <><Box flexGrow={1} /><Text color={theme.dim}>{truncateDisplay(model, modelSpace)}</Text></> : null}
     </Box>
   );
