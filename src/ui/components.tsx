@@ -1194,7 +1194,7 @@ function RichText({value, glyphs}: {value: string; glyphs: UiGlyphs}) {
       return <Text key={index} color={theme.dim}>{inCode ? `${glyphs.context} code` : glyphs.compaction}</Text>;
     }
     if (inCode) {
-      const color = line.startsWith('+') ? theme.success : line.startsWith('-') ? theme.error : theme.accent;
+      const color = line.startsWith('+') ? theme.diffAdded : line.startsWith('-') ? theme.diffRemoved : theme.accent;
       return <Text key={index} color={color}>{glyphs.separator} {line || ' '}</Text>;
     }
     const heading = line.match(/^#{1,4}\s+(.+)$/);
