@@ -15,7 +15,7 @@ interface Check {
   required: boolean;
 }
 
-export const MINIMUM_NODE_VERSION = '22.13.0';
+export const MINIMUM_NODE_VERSION = '22.16.0';
 
 export interface DoctorOptions {
   json?: boolean;
@@ -36,6 +36,7 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
       : `${process.version}; requires >=${MINIMUM_NODE_VERSION}`,
     required: true,
   });
+  checks.push({name: 'SQLite FTS5', ...await checkSqliteFts5(), required: true});
   if (config.model.provider === 'compatible') {
     checks.push({
       name: 'Model endpoint',
@@ -133,6 +134,22 @@ export function supportsNodeVersion(version: string): boolean {
     if ((current[index] ?? 0) < (minimum[index] ?? 0)) return false;
   }
   return true;
+}
+
+export async function checkSqliteFts5(): Promise<{ok: boolean; detail: string}> {
+  try {
+    const {DatabaseSync} = await import('node:sqlite');
+    const database = new DatabaseSync(':memory:');
+    try {
+      database.exec('CREATE VIRTUAL TABLE skein_doctor_fts USING fts5(content)');
+      return {ok: true, detail: 'available'};
+    } finally {
+      database.close();
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {ok: false, detail: `unavailable; ${message}`};
+  }
 }
 
 function visualChecks(glyphs: CliGlyphs): Check[] {

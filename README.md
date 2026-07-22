@@ -54,7 +54,7 @@ The product rationale and competitor research are in
 
 ## Requirements
 
-- Node.js 22.13 or newer
+- Node.js 22.16 or newer
 - A model API key, or an OpenAI-compatible local endpoint
 - Optional: Git and ripgrep
 - Optional: ContextEngine-plugin plus PostgreSQL/pgvector
