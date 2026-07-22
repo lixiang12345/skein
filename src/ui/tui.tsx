@@ -312,6 +312,9 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       case 'agent_message':
         append({id: event.id, kind: 'agent-message', from: event.from, to: event.to, text: event.content});
         break;
+      case 'agent_update':
+        setTimeline((items) => updateAgentTelemetry(items, event));
+        break;
       case 'team_start':
         append({id: nextId(), kind: 'notice', tone: 'info', text: `Team run ${event.id.slice(0, 8)} started${separator}${event.objective.slice(0, 180)}`});
         break;
@@ -1308,11 +1311,39 @@ function updateAgent(items: TimelineItem[], event: Extract<AgentEvent, {type: 'a
       ...(event.provider ? {provider: event.provider} : {}),
       ...(event.model ? {model: event.model} : {}),
       ...(event.phase ? {phase: event.phase} : {}),
+      ...(event.durationMs !== undefined ? {durationMs: event.durationMs} : {}),
+      ...(event.toolCalls !== undefined ? {toolCalls: event.toolCalls} : {}),
+      ...(event.usage ? {inputTokens: event.usage.inputTokens, outputTokens: event.usage.outputTokens} : {}),
     }].slice(-100);
   }
   return items.map((item) => item.kind === 'agent' && item.id === event.id
-    ? {...item, state: event.ok ? 'ok' as const : 'error' as const, summary: event.summary, ...(item.startedAt ? {durationMs: Date.now() - item.startedAt} : {})}
+    ? {
+      ...item,
+      state: event.ok ? 'ok' as const : 'error' as const,
+      summary: event.summary,
+      stage: 'response' as const,
+      activityDetail: event.ok ? 'final report ready' : 'worker failed',
+      ...(event.durationMs !== undefined ? {durationMs: event.durationMs} : item.startedAt ? {durationMs: Date.now() - item.startedAt} : {}),
+      ...(event.toolCalls !== undefined ? {toolCalls: event.toolCalls} : {}),
+      ...(event.usage ? {inputTokens: event.usage.inputTokens, outputTokens: event.usage.outputTokens} : {}),
+    }
     : item);
+}
+
+function updateAgentTelemetry(items: TimelineItem[], event: Extract<AgentEvent, {type: 'agent_update'}>): TimelineItem[] {
+  return items.map((item) => {
+    if (item.kind !== 'agent' || item.id !== event.id) return item;
+    const {activeTool: previousTool, ...withoutTool} = item;
+    return {
+      ...(event.stage === 'tool' && event.tool === undefined ? item : withoutTool),
+      stage: event.stage,
+      ...(event.detail !== undefined ? {activityDetail: event.detail} : {}),
+      ...(event.tool !== undefined ? {activeTool: event.tool} : event.stage === 'tool' && previousTool ? {activeTool: previousTool} : {}),
+      ...(event.toolCalls !== undefined ? {toolCalls: event.toolCalls} : {}),
+      ...(event.inputTokens !== undefined ? {inputTokens: event.inputTokens} : {}),
+      ...(event.outputTokens !== undefined ? {outputTokens: event.outputTokens} : {}),
+    };
+  });
 }
 
 function snapshotSession(source: Session): Session {

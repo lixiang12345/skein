@@ -97,6 +97,7 @@ describe('bounded orchestration', () => {
                   : 'VERDICT: ACCEPT\nEvidence and acceptance criteria agree.'
                 : 'Architecture evidence with file boundaries.',
               toolCalls: [],
+              usage: {inputTokens: 100, outputTokens: 20},
             };
           },
         };
@@ -121,6 +122,7 @@ describe('bounded orchestration', () => {
     expect(persisted.status).toBe('accepted');
     expect(persisted.agents.length).toBeGreaterThanOrEqual(4);
     expect(persisted.messages.length).toBeGreaterThanOrEqual(2);
+    expect(persisted.agents.every((agent) => (agent.usage?.inputTokens ?? 0) >= 100)).toBe(true);
     expect(created).toEqual([
       'compatible/planner-model/key',
       'compatible/judge-model/key',
@@ -130,6 +132,7 @@ describe('bounded orchestration', () => {
     expect(events.some((event) => event.type === 'agent_message' && event.from === 'architect' && event.to === 'reviewer')).toBe(true);
     expect(events.some((event) => event.type === 'agent_start' && event.model === 'judge-model' && event.phase === 'review')).toBe(true);
     expect(events.some((event) => event.type === 'agent_start' && event.model === 'planner-model' && event.phase === 'revision')).toBe(true);
+    expect(events.some((event) => event.type === 'agent_update' && event.inputTokens === 100 && event.outputTokens === 20)).toBe(true);
   });
 
   it('can run an installed CLI adapter behind the same delegation protocol', async () => {
@@ -167,6 +170,40 @@ describe('bounded orchestration', () => {
     expect(result.ok).toBe(true);
     expect(result.content).toContain('External CLI evidence.');
     expect(requests).toEqual([`codex/gpt-external/${root}`]);
+  });
+
+  it('rejects an external worker that exceeds its route budget', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-budget-team-'));
+    roots.push(root);
+    const cfg = config(root);
+    cfg.agents = {
+      ...cfg.agents!,
+      routes: {backend: {runtime: 'codex', provider: 'openai', model: 'gpt-external', tokenBudget: 10}},
+    };
+    const profiles = new AgentProfileCatalog(root);
+    await profiles.discover();
+    const context: ContextProvider = {
+      async pack() { return {text: '', hits: [], estimatedTokens: 0, engine: 'test', truncated: false}; },
+      async search() { return []; },
+    };
+    const manager = new DelegationManager({
+      config: cfg,
+      provider: {name: 'parent', async complete() { return {content: 'parent', toolCalls: []}; }},
+      contextEngine: context,
+      parentTools: createDefaultToolRegistry(),
+      profiles,
+      async externalRunner(request) {
+        return {content: 'too much', runtime: request.runtime, model: request.model, durationMs: 1, usage: {inputTokens: 9, outputTokens: 9}, toolCalls: 0};
+      },
+    });
+    const result = await manager.tool().execute({tasks: [{profile: 'backend', task: 'Inspect state.'}]}, {
+      config: cfg,
+      workspace: new WorkspaceAccess([root]),
+      session: createSession({workspace: root, provider: 'compatible', model: 'test'}),
+      contextEngine: context,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.content).toContain('token budget exceeded');
   });
 
   it('defines single-writer workflows with parallel read-only review branches', () => {

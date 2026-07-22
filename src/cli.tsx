@@ -392,6 +392,9 @@ agentsCommand
           model: route.model,
           endpoint: redactEndpoint(route.baseUrl),
           credentials: route.apiKeyEnv ? `env:${route.apiKeyEnv}` : 'inherited when compatible',
+          tokenBudget: route.tokenBudget,
+          maxToolCalls: route.maxToolCalls,
+          timeoutMs: route.timeoutMs,
         } : {
           runtime: 'api',
           provider: config.model.provider,
@@ -417,7 +420,7 @@ agentsCommand
     if (options.json) printObject(runs, true);
     else if (!runs.length) process.stdout.write('No team runs found.\n');
     else for (const run of runs) {
-      process.stdout.write(`${run.id.slice(0, 8)}  ${run.status.padEnd(8)} ${run.createdAt}  ${run.agentCount} agents  ${run.objective.replace(/\s+/gu, ' ').slice(0, 180)}\n`);
+      process.stdout.write(`${run.id.slice(0, 8)}  ${run.status.padEnd(8)} ${run.createdAt}  ${run.agentCount} agents  ${run.totalTokens} tok  ${run.toolCalls} tools  ${run.objective.replace(/\s+/gu, ' ').slice(0, 180)}\n`);
     }
   });
 agentsCommand
@@ -439,7 +442,10 @@ agentsCommand
     if (options.json) printObject({...run, agents, messages}, true);
     else {
       process.stdout.write(`Team run ${run.id}\n${run.status}  ${run.createdAt}\n\n${run.objective}\n\n`);
-      for (const agent of agents) process.stdout.write(`## ${agent.profile} ${agent.phase} ${agent.provider}/${agent.model} ${agent.ok ? 'ok' : 'failed'}\n${agent.reportText}\n\n`);
+      for (const agent of agents) {
+        const tokens = (agent.usage?.inputTokens ?? 0) + (agent.usage?.outputTokens ?? 0);
+        process.stdout.write(`## ${agent.profile} ${agent.phase} ${agent.provider}/${agent.model} ${agent.ok ? 'ok' : 'failed'}  ${tokens} tok  ${agent.toolCalls ?? 0} tools  ${agent.durationMs ?? 0}ms\n${agent.reportText}\n\n`);
+      }
       if (messages.length) {
         process.stdout.write('Peer handoffs\n');
         for (const message of messages) process.stdout.write(`- ${message.from} -> ${message.to}: ${message.contentText.replace(/\s+/gu, ' ').slice(0, 400)}\n`);

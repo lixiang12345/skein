@@ -21,7 +21,7 @@ export type TimelineItem =
   | {id: string; kind: 'tool'; name: string; detail: string; state: 'running' | 'ok' | 'error'; startedAt?: number; durationMs?: number; errorDetail?: string; output?: string}
   | {id: string; kind: 'skill'; name: string; description: string}
   | {id: string; kind: 'memory'; count: number; scope: string}
-  | {id: string; kind: 'agent'; profile: string; task: string; provider?: string; model?: string; phase?: 'work' | 'review' | 'revision'; summary?: string; state: 'running' | 'ok' | 'error'; startedAt?: number; durationMs?: number}
+  | {id: string; kind: 'agent'; profile: string; task: string; provider?: string; model?: string; phase?: 'work' | 'review' | 'revision'; stage?: 'context' | 'thinking' | 'tool' | 'response' | 'review'; activityDetail?: string; activeTool?: string; toolCalls?: number; inputTokens?: number; outputTokens?: number; summary?: string; state: 'running' | 'ok' | 'error'; startedAt?: number; durationMs?: number}
   | {id: string; kind: 'agent-message'; from: string; to: string; text: string}
   | {id: string; kind: 'workflow'; name: string; step: string; status: SessionTask['status']}
   | {id: string; kind: 'compaction'; messages: number; tokens: number}
@@ -396,7 +396,7 @@ export function TeamCockpit({items, width = 36, glyphMode = 'auto'}: {
 }) {
   const theme = useTheme();
   const glyphs = resolveGlyphs(glyphMode);
-  const agents = items.filter((item): item is Extract<TimelineItem, {kind: 'agent'}> => item.kind === 'agent').slice(-5);
+  const agents = items.filter((item): item is Extract<TimelineItem, {kind: 'agent'}> => item.kind === 'agent').slice(-3);
   const messages = items.filter((item): item is Extract<TimelineItem, {kind: 'agent-message'}> => item.kind === 'agent-message').slice(-2);
   const inner = Math.max(8, safeWidth(width) - 4);
   return (
@@ -405,12 +405,28 @@ export function TeamCockpit({items, width = 36, glyphMode = 'auto'}: {
       {agents.map((agent) => {
         const status = agent.state === 'running' ? glyphs.running : agent.state === 'ok' ? glyphs.success : glyphs.error;
         const route = agent.provider && agent.model ? `${agent.provider}/${agent.model}` : 'inherited model';
+        const activity = agent.activeTool
+          ? `${agent.stage ?? 'tool'}: ${agent.activeTool}`
+          : agent.activityDetail
+            ? `${agent.stage ?? 'working'}: ${agent.activityDetail}`
+            : agent.stage ?? 'queued';
+        const telemetry = [
+          agent.startedAt !== undefined || agent.durationMs !== undefined
+            ? formatDuration(agent.durationMs ?? Math.max(0, Date.now() - (agent.startedAt ?? Date.now())))
+            : '',
+          agent.inputTokens !== undefined || agent.outputTokens !== undefined
+            ? `${formatTokens((agent.inputTokens ?? 0) + (agent.outputTokens ?? 0))} tok`
+            : '',
+          agent.toolCalls !== undefined ? `${agent.toolCalls} tools` : '',
+        ].filter(Boolean).join(` ${glyphs.separator} `);
         return (
           <Box key={agent.id} flexDirection="column">
             <Text color={agent.state === 'error' ? theme.error : agent.state === 'running' ? theme.accent : theme.text}>
               {truncateDisplay(`${status} ${agent.profile}${agent.phase && agent.phase !== 'work' ? ` · ${agent.phase}` : ''}`, inner)}
             </Text>
             <Text color={theme.dim}>{truncateDisplay(route, inner)}</Text>
+            <Text color={theme.muted}>{truncateDisplay(activity, inner)}</Text>
+            {telemetry ? <Text color={theme.dim}>{truncateDisplay(telemetry, inner)}</Text> : null}
           </Box>
         );
       })}

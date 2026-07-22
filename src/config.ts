@@ -55,6 +55,9 @@ const agentTeamConfigSchema = z.object({
   maxReviewRounds: z.number().int().min(0).max(3).optional(),
   cockpit: z.boolean().optional(),
   persistBoard: z.boolean().optional(),
+  maxAgentTokens: z.number().int().positive().max(1_000_000).optional(),
+  maxAgentToolCalls: z.number().int().positive().max(1_000).optional(),
+  agentTimeoutMs: z.number().int().positive().max(1_800_000).optional(),
   routes: z.record(z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/), z.object({
     runtime: z.enum(['api', 'codex', 'claude', 'grok']).optional(),
     provider: z.enum(['openai', 'anthropic', 'gemini', 'compatible']),
@@ -65,6 +68,9 @@ const agentTeamConfigSchema = z.object({
     apiKeyEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/).optional(),
     temperature: z.number().min(0).max(2).optional(),
     maxTokens: z.number().int().positive().max(200_000).optional(),
+    tokenBudget: z.number().int().positive().max(1_000_000).optional(),
+    maxToolCalls: z.number().int().positive().max(1_000).optional(),
+    timeoutMs: z.number().int().positive().max(1_800_000).optional(),
   }).strict()).optional(),
 }).partial();
 
@@ -239,6 +245,9 @@ export function defaultConfig(workspace = process.cwd()): MosaicConfig {
       maxReviewRounds: 1,
       cockpit: true,
       persistBoard: true,
+      maxAgentTokens: 80_000,
+      maxAgentToolCalls: 80,
+      agentTimeoutMs: 180_000,
       routes: {},
     },
     mcp: {
@@ -598,12 +607,18 @@ export function configSummary(config: MosaicConfig): Record<string, unknown> {
       maxReviewRounds: config.agents.maxReviewRounds,
       cockpit: config.agents.cockpit,
       persistBoard: config.agents.persistBoard,
+      maxAgentTokens: config.agents.maxAgentTokens,
+      maxAgentToolCalls: config.agents.maxAgentToolCalls,
+      agentTimeoutMs: config.agents.agentTimeoutMs,
       routes: Object.fromEntries(Object.entries(config.agents.routes ?? {}).map(([profile, route]) => [profile, {
         runtime: route.runtime ?? 'api',
         provider: route.provider,
         model: route.model,
         endpoint: redactEndpoint(route.baseUrl),
         credentials: route.apiKeyEnv ? `env:${route.apiKeyEnv}` : 'inherited when compatible',
+        tokenBudget: route.tokenBudget,
+        maxToolCalls: route.maxToolCalls,
+        timeoutMs: route.timeoutMs,
       }])),
     } : undefined,
     mcp: config.mcp ? {

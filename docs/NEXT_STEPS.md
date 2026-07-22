@@ -158,6 +158,9 @@ Implementation progress:
 - Team runs now persist a local manifest plus content-addressed reports and
   peer handoffs. `skein agents runs/show/delete` provides recovery and audit
   access; `agents.persistBoard=false` disables this for privacy-sensitive runs.
+- Team Cockpit now renders safe observable telemetry—phase, active tool, token
+  usage, tool count, timeout/budget state, and final report—without exposing
+  hidden model chain-of-thought.
 - See `docs/MULTI_MODEL_TEAMS.md`. Writer worktrees, persistent blackboard
   artifacts, per-route budgets, Gemini CLI, and optional tmux/iTerm pane hosts
   remain next.

@@ -22,6 +22,14 @@ const agentRecordSchema = z.object({
   phase: z.enum(['work', 'review', 'revision']),
   ok: z.boolean(),
   createdAt: z.string(),
+  startedAt: z.string().optional(),
+  endedAt: z.string().optional(),
+  durationMs: z.number().int().nonnegative().optional(),
+  toolCalls: z.number().int().nonnegative().optional(),
+  usage: z.object({
+    inputTokens: z.number().int().nonnegative(),
+    outputTokens: z.number().int().nonnegative(),
+  }).strict().optional(),
   report: artifactSchema,
 }).strict();
 
@@ -62,6 +70,8 @@ export interface TeamRunSummary {
   agentCount: number;
   messageCount: number;
   reviewRounds: number;
+  totalTokens: number;
+  toolCalls: number;
 }
 
 export class TeamRunStore {
@@ -281,5 +291,7 @@ function toSummary(manifest: TeamRunManifest): TeamRunSummary {
     agentCount: manifest.agents.length,
     messageCount: manifest.messages.length,
     reviewRounds: manifest.reviewRounds,
+    totalTokens: manifest.agents.reduce((total, agent) => total + (agent.usage?.inputTokens ?? 0) + (agent.usage?.outputTokens ?? 0), 0),
+    toolCalls: manifest.agents.reduce((total, agent) => total + (agent.toolCalls ?? 0), 0),
   };
 }

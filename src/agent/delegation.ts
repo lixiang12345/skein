@@ -37,6 +37,9 @@ interface DelegatedResult {
   summary: string;
   provider: string;
   model: string;
+  usage: {inputTokens: number; outputTokens: number};
+  toolCalls: number;
+  durationMs: number;
 }
 
 type AgentPhase = 'work' | 'review' | 'revision';
@@ -235,6 +238,9 @@ export class DelegationManager {
       model: result.model,
       phase,
       ok: result.ok,
+      durationMs: result.durationMs,
+      toolCalls: result.toolCalls,
+      usage: result.usage,
       report: result.summary,
     });
     return result;
@@ -267,27 +273,60 @@ export class DelegationManager {
     const route = this.modelRoute(task.profile);
     const providerName = externalRuntime ?? route.provider;
     const model = route.model;
+    const startedAt = Date.now();
+    const emptyUsage = {inputTokens: 0, outputTokens: 0};
+    let observedUsage = emptyUsage;
+    let observedToolCalls = 0;
+    let observedStopReason: string | undefined;
     if (!profile) {
-      return {id, profile: task.profile, ok: false, summary: `Unknown expert profile: ${task.profile}`, provider: providerName, model};
+      return {id, profile: task.profile, ok: false, summary: `Unknown expert profile: ${task.profile}`, provider: providerName, model, usage: emptyUsage, toolCalls: 0, durationMs: 0};
     }
     await emit?.({type: 'agent_start', id, profile: profile.name, task: task.task, provider: providerName, model, phase});
     try {
       if (externalRuntime) {
+        await emit?.({type: 'agent_update', id, profile: profile.name, stage: phase === 'review' ? 'review' : 'thinking', detail: `running ${externalRuntime} in read-only mode`});
         const external = await (this.options.externalRunner ?? runExternalAgent)({
           runtime: externalRuntime,
           model,
           workspace: this.options.config.workspaceRoots[0] ?? process.cwd(),
           prompt: `${formatProfilePrompt(profile)}\n\nYou are a read-only teammate in a Skein team run. Do not modify files or delegate. Return a concise evidence-backed report for peer review.\n\nAssignment:\n${task.task}`,
           ...(signal ? {signal} : {}),
+          ...(configuredRoute?.timeoutMs ?? this.team.agentTimeoutMs
+            ? {timeoutMs: configuredRoute?.timeoutMs ?? this.team.agentTimeoutMs}
+            : {}),
         });
-        const result = {id, profile: profile.name, ok: true, summary: external.content.slice(0, 20_000), provider: providerName, model};
+        observedUsage = external.usage ?? emptyUsage;
+        observedToolCalls = external.toolCalls ?? 0;
+        const externalTokenBudget = configuredRoute?.tokenBudget ?? this.team.maxAgentTokens ?? 80_000;
+        const externalToolBudget = configuredRoute?.maxToolCalls ?? this.team.maxAgentToolCalls ?? 80;
+        if (observedUsage.inputTokens + observedUsage.outputTokens > externalTokenBudget) {
+          throw new Error(`External agent token budget exceeded (${externalTokenBudget}).`);
+        }
+        if (observedToolCalls > externalToolBudget) {
+          throw new Error(`External agent tool budget exceeded (${externalToolBudget}).`);
+        }
+        const result = {id, profile: profile.name, ok: true, summary: external.content.slice(0, 20_000), provider: providerName, model, usage: observedUsage, toolCalls: observedToolCalls, durationMs: external.durationMs};
+        await emit?.({type: 'agent_update', id, profile: profile.name, stage: 'response', detail: 'final report received', toolCalls: observedToolCalls, inputTokens: observedUsage.inputTokens, outputTokens: observedUsage.outputTokens});
         await emit?.({type: 'agent_done', ...result, phase});
         return result;
       }
+      const toolBudget = configuredRoute?.maxToolCalls ?? this.team.maxAgentToolCalls ?? 80;
+      const tokenBudget = configuredRoute?.tokenBudget ?? this.team.maxAgentTokens ?? this.options.config.agent.maxSessionTokens;
+      const timeoutMs = configuredRoute?.timeoutMs ?? this.team.agentTimeoutMs ?? 180_000;
+      const budgetController = new AbortController();
+      const onParentAbort = () => budgetController.abort(signal?.reason);
+      if (signal?.aborted) onParentAbort();
+      else signal?.addEventListener('abort', onParentAbort, {once: true});
+      const timeout = setTimeout(() => budgetController.abort(new Error(`Agent budget timeout after ${timeoutMs}ms`)), timeoutMs);
+      const childSignal = budgetController.signal;
       const registry = readOnlyRegistry(this.options.parentTools, profile);
       const childConfig: MosaicConfig = {
         ...this.options.config,
         model: route,
+        agent: {
+          ...this.options.config.agent,
+          maxSessionTokens: Math.min(this.options.config.agent.maxSessionTokens, tokenBudget),
+        },
         permissions: {
           ...this.options.config.permissions,
           write: 'deny',
@@ -308,20 +347,58 @@ export class DelegationManager {
           ? {promptContextProvider: this.options.promptContextProvider}
           : {}),
       });
-      const session = await runner.run(task.task, {
-        askMode: true,
-        maxTurns: profile.maxTurns,
-        ...(signal ? {signal} : {}),
-      });
+      let session;
+      try {
+        session = await runner.run(task.task, {
+          askMode: true,
+          maxTurns: profile.maxTurns,
+          signal: childSignal,
+          onEvent: async (event) => {
+            if (event.type === 'tool_start') {
+              observedToolCalls += 1;
+              await emit?.({type: 'agent_update', id, profile: profile.name, stage: 'tool', tool: event.call.name, toolCalls: observedToolCalls});
+              if (observedToolCalls > toolBudget) budgetController.abort(new Error(`Agent tool budget exhausted (${toolBudget})`));
+            } else if (event.type === 'thinking') {
+              await emit?.({type: 'agent_update', id, profile: profile.name, stage: phase === 'review' ? 'review' : 'thinking', detail: `turn ${event.turn}`});
+            } else if (event.type === 'context') {
+              await emit?.({type: 'agent_update', id, profile: profile.name, stage: 'context', detail: `${event.packed.hits.length} context spans`});
+            } else if (event.type === 'assistant') {
+              await emit?.({type: 'agent_update', id, profile: profile.name, stage: 'response', detail: 'response updated'});
+            } else if (event.type === 'usage') {
+              observedUsage = {
+                inputTokens: event.inputTokens,
+                outputTokens: event.outputTokens,
+              };
+              await emit?.({type: 'agent_update', id, profile: profile.name, stage: 'response', inputTokens: observedUsage.inputTokens, outputTokens: observedUsage.outputTokens});
+            } else if (event.type === 'done') {
+              observedStopReason = event.reason;
+            }
+          },
+        });
+      } finally {
+        clearTimeout(timeout);
+        signal?.removeEventListener('abort', onParentAbort);
+      }
+      if (budgetController.signal.aborted) {
+        const reason = budgetController.signal.reason;
+        throw new Error(reason instanceof Error ? reason.message : 'Agent budget or parent cancellation stopped the worker.');
+      }
+      if (observedStopReason === 'token_budget') {
+        throw new Error(`Agent token budget exhausted (${tokenBudget}).`);
+      }
+      observedUsage = {
+        inputTokens: Math.max(observedUsage.inputTokens, session.usage.inputTokens),
+        outputTokens: Math.max(observedUsage.outputTokens, session.usage.outputTokens),
+      };
       const summary = [...session.messages].reverse()
         .find((message) => message.role === 'assistant' && message.content.trim())?.content.trim() ||
         'The delegated agent returned no summary.';
-      const result = {id, profile: profile.name, ok: true, summary: summary.slice(0, 20_000), provider: providerName, model};
+      const result = {id, profile: profile.name, ok: true, summary: summary.slice(0, 20_000), provider: providerName, model, usage: observedUsage, toolCalls: observedToolCalls, durationMs: Date.now() - startedAt};
       await emit?.({type: 'agent_done', ...result, phase});
       return result;
     } catch (error) {
       const summary = error instanceof Error ? error.message : String(error);
-      const result = {id, profile: profile.name, ok: false, summary, provider: providerName, model};
+      const result = {id, profile: profile.name, ok: false, summary, provider: providerName, model, usage: observedUsage, toolCalls: observedToolCalls, durationMs: Date.now() - startedAt};
       await emit?.({type: 'agent_done', ...result, phase});
       return result;
     }
@@ -394,6 +471,9 @@ function resultMetadata(results: DelegatedResult[]) {
     provider: result.provider,
     model: result.model,
     ok: result.ok,
+    durationMs: result.durationMs,
+    toolCalls: result.toolCalls,
+    usage: result.usage,
   }));
 }
 

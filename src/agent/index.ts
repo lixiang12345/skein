@@ -4,7 +4,7 @@ export {AgentProfileCatalog, builtInProfiles} from './profiles.js';
 export type {AgentProfile} from './profiles.js';
 export {DelegationManager} from './delegation.js';
 export type {DelegationManagerOptions} from './delegation.js';
-export {runExternalAgent, externalAgentCommand, parseExternalAgentOutput} from './external-runtime.js';
+export {runExternalAgent, externalAgentCommand, parseExternalAgentOutput, parseExternalAgentTelemetry} from './external-runtime.js';
 export type {ExternalAgentRequest, ExternalAgentResult, ExternalAgentRuntime} from './external-runtime.js';
 export {TeamRunStore} from './team-store.js';
 export type {TeamRunManifest, TeamRunSummary, TeamRunAgentRecord, TeamRunMessageRecord} from './team-store.js';

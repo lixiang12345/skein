@@ -98,6 +98,9 @@ inside the project config.
     "reviewerProfile": "reviewer",
     "maxReviewRounds": 1,
     "cockpit": true,
+    "maxAgentTokens": 80000,
+    "maxAgentToolCalls": 80,
+    "agentTimeoutMs": 180000,
     "routes": {
       "research": {
         "runtime": "grok",
@@ -134,6 +137,11 @@ participate in one council.
 Routes loaded from repository-owned config are ignored until the project is
 trusted because a malicious endpoint could exfiltrate environment credentials
 or source context.
+
+Each route may override `tokenBudget`, `maxToolCalls`, and `timeoutMs`. The Team
+Cockpit shows observable phase, current tool, elapsed time, token usage, and
+tool count. It deliberately does not show hidden chain-of-thought; model
+reports and reviewer decisions are the explainable artifacts.
 
 ## Current Safety Boundary
 

@@ -17,6 +17,8 @@ export interface ExternalAgentResult {
   runtime: ExternalAgentRuntime;
   model: string;
   durationMs: number;
+  usage?: {inputTokens: number; outputTokens: number};
+  toolCalls?: number;
 }
 
 export async function runExternalAgent(request: ExternalAgentRequest): Promise<ExternalAgentResult> {
@@ -35,7 +37,15 @@ export async function runExternalAgent(request: ExternalAgentRequest): Promise<E
   }
   const content = parseExternalAgentOutput(request.runtime, result.stdout);
   if (!content) throw new Error(`${request.runtime} agent returned no final report.`);
-  return {content: content.slice(0, 20_000), runtime: request.runtime, model: request.model, durationMs: result.durationMs};
+  const telemetry = parseExternalAgentTelemetry(result.stdout);
+  return {
+    content: content.slice(0, 20_000),
+    runtime: request.runtime,
+    model: request.model,
+    durationMs: result.durationMs,
+    usage: telemetry.usage,
+    toolCalls: telemetry.toolCalls,
+  };
 }
 
 export function externalAgentCommand(request: ExternalAgentRequest): {binary: string; args: string[]} {
@@ -76,6 +86,29 @@ export function parseExternalAgentOutput(runtime: ExternalAgentRuntime, stdout: 
   return deepText(last, ['result', 'content', 'text', 'message', 'response']) || trimmed;
 }
 
+export function parseExternalAgentTelemetry(stdout: string): {
+  usage: {inputTokens: number; outputTokens: number};
+  toolCalls: number;
+} {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  const toolIds = new Set<string>();
+  for (const [index, line] of stdout.trim().split(/\r?\n/u).entries()) {
+    let value: unknown;
+    try { value = JSON.parse(line) as unknown; } catch { continue; }
+    walk(value, (record) => {
+      inputTokens = Math.max(inputTokens, numeric(record.input_tokens, record.inputTokens, record.prompt_tokens));
+      outputTokens = Math.max(outputTokens, numeric(record.output_tokens, record.outputTokens, record.completion_tokens));
+      const type = typeof record.type === 'string' ? record.type : '';
+      if (/tool|command_execution|mcp/iu.test(type)) {
+        const id = typeof record.id === 'string' ? record.id : `${index}:${type}`;
+        toolIds.add(id);
+      }
+    });
+  }
+  return {usage: {inputTokens, outputTokens}, toolCalls: toolIds.size};
+}
+
 function deepText(value: unknown, keys: string[]): string {
   if (typeof value === 'string') return value.trim();
   if (!value || typeof value !== 'object') return '';
@@ -97,4 +130,20 @@ function cleanFailure(result: ProcessResult): string {
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/gu, '')
     .trim();
   return detail.slice(0, 2_000) || `exit ${result.exitCode}`;
+}
+
+function walk(value: unknown, visit: (record: Record<string, unknown>) => void): void {
+  if (!value || typeof value !== 'object') return;
+  if (Array.isArray(value)) {
+    for (const item of value) walk(item, visit);
+    return;
+  }
+  const record = value as Record<string, unknown>;
+  visit(record);
+  for (const nested of Object.values(record)) walk(nested, visit);
+}
+
+function numeric(...values: unknown[]): number {
+  for (const value of values) if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return Math.floor(value);
+  return 0;
 }

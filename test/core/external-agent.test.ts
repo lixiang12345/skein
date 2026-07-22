@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest';
-import {externalAgentCommand, parseExternalAgentOutput} from '../../src/agent/external-runtime.js';
+import {externalAgentCommand, parseExternalAgentOutput, parseExternalAgentTelemetry} from '../../src/agent/external-runtime.js';
 
 describe('external agent runtimes', () => {
   it('builds explicit read-only commands without a shell', () => {
@@ -27,5 +27,13 @@ describe('external agent runtimes', () => {
       JSON.stringify({type: 'thread.started', thread_id: 'one'}),
       JSON.stringify({type: 'item.completed', item: {type: 'agent_message', text: 'Codex report'}}),
     ].join('\n'))).toBe('Codex report');
+  });
+
+  it('extracts observable usage and tool counts without exposing reasoning text', () => {
+    const telemetry = parseExternalAgentTelemetry([
+      JSON.stringify({type: 'item.completed', item: {id: 'tool-1', type: 'command_execution', command: 'rg files'}}),
+      JSON.stringify({type: 'turn.completed', usage: {input_tokens: 1200, output_tokens: 300}}),
+    ].join('\n'));
+    expect(telemetry).toEqual({usage: {inputTokens: 1200, outputTokens: 300}, toolCalls: 1});
   });
 });
