@@ -20,6 +20,7 @@ import {atomicWrite} from './tools/write.js';
 import {assertNoSymlinkPath, ensureWorkspaceStorageDirectory} from './utils/storage.js';
 import {isInside} from './utils/path.js';
 import {preferredEnv} from './brand.js';
+import {resolveHomeNamespace, resolveProjectNamespaceSync} from './utils/namespace.js';
 
 const permissionSchema = z.enum(['allow', 'ask', 'deny']);
 
@@ -309,8 +310,7 @@ async function readConfigFile(path: string): Promise<PartialConfig> {
 }
 
 function mosaicHome(): string {
-  const configured = preferredEnv('SKEIN_HOME', 'MOSAIC_HOME')?.trim();
-  return resolve(configured || join(homedir(), '.mosaic'));
+  return resolveHomeNamespace();
 }
 
 function modelTrustPath(): string {
@@ -354,7 +354,7 @@ async function isProjectModelConfigTrusted(
 /** Persist trust only for the model routing fields created by `skein init`. */
 export async function trustProjectModelConfig(
   workspace: string,
-  configPath = join(resolve(workspace), '.mosaic', 'config.json'),
+  configPath = join(resolveProjectNamespaceSync(resolve(workspace)).active, 'config.json'),
 ): Promise<void> {
   const resolvedWorkspace = await realpath(resolve(workspace)).catch(() => resolve(workspace));
   const resolvedConfigPath = await realpath(resolve(configPath)).catch(() => resolve(configPath));
@@ -388,12 +388,15 @@ export async function loadConfig(
     ? [resolve(explicitPath)]
     : [
         join(mosaicHome(), 'config.yaml'),
+        join(resolveProjectNamespaceSync(resolve(workspace)).canonical, 'config.yaml'),
+        join(resolveProjectNamespaceSync(resolve(workspace)).canonical, 'config.json'),
         join(resolve(workspace), '.mosaic', 'config.yaml'),
         join(resolve(workspace), '.mosaic', 'config.json'),
   ];
   for (const path of candidates) {
     const projectConfig = explicitPath === undefined &&
-      path.startsWith(join(resolve(workspace), '.mosaic'));
+      (path.startsWith(join(resolve(workspace), '.mosaic')) ||
+        path.startsWith(join(resolve(workspace), '.skein')));
     if (projectConfig) {
       try {
         await assertNoSymlinkPath(resolve(workspace), dirname(path));
@@ -530,7 +533,8 @@ export async function saveProjectConfig(
   workspace: string,
   config: PartialConfig,
 ): Promise<string> {
-  const path = join(resolve(workspace), '.mosaic', 'config.json');
+  const namespace = resolveProjectNamespaceSync(resolve(workspace));
+  const path = join(namespace.active, 'config.json');
   const parsed = partialConfigSchema.parse(config);
   await ensureWorkspaceStorageDirectory(resolve(workspace), dirname(path));
   await atomicWrite(path, `${JSON.stringify(parsed, null, 2)}\n`, 0o600);

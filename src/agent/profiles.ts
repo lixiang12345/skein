@@ -2,6 +2,7 @@ import {lstat, readFile, readdir} from 'node:fs/promises';
 import {homedir} from 'node:os';
 import {basename, join} from 'node:path';
 import {parse as parseYaml} from 'yaml';
+import {resolveHomeNamespace, resolveProjectNamespaceSync} from '../utils/namespace.js';
 
 export interface AgentProfile {
   name: string;
@@ -63,9 +64,9 @@ export class AgentProfileCatalog {
 
   async discover(): Promise<AgentProfile[]> {
     const locations = [
-      {path: join(homedir(), '.mosaic', 'agents'), source: 'user' as const},
+      {path: join(resolveHomeNamespace(), 'agents'), source: 'user' as const},
       {path: join(homedir(), '.claude', 'agents'), source: 'user' as const},
-      {path: join(this.workspace, '.mosaic', 'agents'), source: 'workspace' as const},
+      {path: join(resolveProjectNamespaceSync(this.workspace).active, 'agents'), source: 'workspace' as const},
       {path: join(this.workspace, '.claude', 'agents'), source: 'workspace' as const},
     ];
     for (const location of locations) {

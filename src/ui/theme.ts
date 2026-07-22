@@ -1,8 +1,8 @@
 import {lstat, readdir, readFile} from 'node:fs/promises';
-import {homedir} from 'node:os';
 import {basename, join, resolve} from 'node:path';
 import React, {createContext, useContext} from 'react';
 import {compactDisplayPath} from './text.js';
+import {resolveHomeNamespace} from '../utils/namespace.js';
 
 /** The small semantic palette components should use directly. */
 export interface SemanticThemeTokens {
@@ -218,7 +218,7 @@ export async function reloadUserThemes(directory = userThemeDirectory()): Promis
 }
 
 export function userThemeDirectory(environment: NodeJS.ProcessEnv = process.env): string {
-  return environment.SKEIN_THEME_DIR ?? environment.MOSAIC_THEME_DIR ?? join(homedir(), '.mosaic', 'themes');
+  return environment.SKEIN_THEME_DIR ?? environment.MOSAIC_THEME_DIR ?? join(resolveHomeNamespace(environment), 'themes');
 }
 
 const defaultTheme = themes.graphite as TerminalTheme;

@@ -1,8 +1,8 @@
 import {existsSync} from 'node:fs';
-import {homedir} from 'node:os';
 import {join} from 'node:path';
 import {lstat, readFile} from 'node:fs/promises';
 import {WorkspaceAccess} from '../tools/workspace.js';
+import {resolveHomeNamespace} from '../utils/namespace.js';
 
 export interface WorkspaceRule {
   path: string;
@@ -15,6 +15,7 @@ const workspaceRulePaths = [
   'AGENTS.md',
   'CLAUDE.md',
   'GEMINI.md',
+  '.skein/rules.md',
   '.mosaic/rules.md',
   '.github/copilot-instructions.md',
 ];
@@ -25,7 +26,7 @@ export async function discoverWorkspaceRules(
 ): Promise<WorkspaceRule[]> {
   const workspaceAccess = new WorkspaceAccess([workspace]);
   const candidates = [
-    {path: join(homedir(), '.mosaic', 'rules.md'), scope: 'user' as const},
+    {path: join(resolveHomeNamespace(), 'rules.md'), scope: 'user' as const},
     ...workspaceRulePaths.map((path) => ({
       path: join(workspace, path),
       scope: 'workspace' as const,

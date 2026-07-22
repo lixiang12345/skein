@@ -7,6 +7,7 @@ import {WorkspaceAccess} from '../tools/workspace.js';
 import {atomicWrite} from '../tools/write.js';
 import {assertNoSymlinkPath, ensureWorkspaceStorageDirectory} from '../utils/storage.js';
 import {workspaceAliasPath} from '../utils/path.js';
+import {resolveProjectNamespaceSync} from '../utils/namespace.js';
 
 interface IndexedChunk {
   id: string;
@@ -77,7 +78,7 @@ const include = [
 ];
 
 const ignorePatterns = [
-  '**/.git/**', '**/.mosaic/**', '**/node_modules/**', '**/dist/**',
+  '**/.git/**', '**/.mosaic/**', '**/.skein/**', '**/node_modules/**', '**/dist/**',
   '**/build/**', '**/coverage/**', '**/.next/**', '**/.cache/**',
   '**/vendor/**', '**/target/**', '**/*.min.js', '**/*.map',
   '**/package-lock.json', '**/pnpm-lock.yaml', '**/yarn.lock',
@@ -91,7 +92,7 @@ export class LocalContextIndex {
   constructor(private readonly roots: string[]) {
     this.roots = roots.map((root) => resolve(root));
     this.workspace = new WorkspaceAccess(this.roots);
-    this.indexPath = join(this.roots[0] ?? process.cwd(), '.mosaic', 'index.json');
+    this.indexPath = join(resolveProjectNamespaceSync(this.roots[0] ?? process.cwd()).active, 'index.json');
   }
 
   async load(): Promise<boolean> {

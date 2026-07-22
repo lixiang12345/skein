@@ -16,7 +16,7 @@ const inputSchema = z.object({
 }).strict();
 
 const ignored = [
-  '**/.git/**', '**/.mosaic/**', '**/node_modules/**', '**/dist/**',
+  '**/.git/**', '**/.mosaic/**', '**/.skein/**', '**/node_modules/**', '**/dist/**',
   '**/build/**', '**/coverage/**', '**/.next/**', '**/target/**',
 ];
 

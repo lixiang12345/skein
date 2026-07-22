@@ -1,9 +1,9 @@
 import {createHash, randomUUID} from 'node:crypto';
 import {chmod, lstat, mkdir} from 'node:fs/promises';
-import {homedir} from 'node:os';
 import {dirname, join, resolve} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import type {MemoryScope} from '../types.js';
+import {resolveHomeNamespace} from '../utils/namespace.js';
 
 export interface MemoryRecord {
   id: string;
@@ -574,8 +574,9 @@ export class MemoryStore {
 }
 
 export function defaultMemoryPath(environment: NodeJS.ProcessEnv = process.env): string {
-  const home = environment.SKEIN_HOME || environment.MOSAIC_HOME || join(homedir(), '.mosaic');
-  return join(resolve(home), 'memory.sqlite');
+  // Resolve the canonical home when explicitly configured, while retaining
+  // ~/.mosaic for existing installations until they opt into migration.
+  return join(resolveHomeNamespace(environment), 'memory.sqlite');
 }
 
 function normalizeContent(value: string): string {

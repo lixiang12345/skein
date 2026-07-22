@@ -98,6 +98,20 @@ Definition of done:
 - No session, checkpoint, or memory record is lost.
 - `skein doctor` reports the active namespace and migration status.
 
+Implementation progress:
+
+- `src/utils/namespace.ts` now resolves canonical `.skein` and legacy `.mosaic`
+  project namespaces, with `SKEIN_HOME`/`MOSAIC_HOME` compatibility.
+- `skein doctor --json` includes a hash-bearing read-only migration manifest;
+  `skein migrate` previews it and `skein migrate --yes` performs an atomic
+  temporary-directory copy while retaining `.mosaic` as the rollback source.
+- Sessions, checkpoints, local indexes, memory, themes, Skills, rules, and
+  agent profiles follow the active namespace. Both namespace names are ignored
+  by retrieval and file tools.
+- Conflict and symlink entries block migration; repeated migration is
+  idempotent. The next increment should add an explicit verified rollback
+  command and home-directory migration coverage.
+
 ### P1: ContextEngine-Plugin Production Adapter
 
 Exercise the adapter against a real ContextEngine-plugin fixture, not only the

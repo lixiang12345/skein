@@ -7,6 +7,7 @@ import {ContextEngine} from '../context/context-engine.js';
 import {resolveExecutableRuntime, runProcess} from '../utils/process.js';
 import {PRODUCT_COMMAND, PRODUCT_NAME} from '../brand.js';
 import {resolveCliGlyphs, type CliGlyphs} from './glyphs.js';
+import {inspectProjectNamespace} from '../utils/namespace.js';
 
 interface Check {
   name: string;
@@ -27,6 +28,27 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
   const glyphs = resolveCliGlyphs();
   const root = config.workspaceRoots[0] ?? process.cwd();
   const checks: Check[] = [];
+  let namespace: Awaited<ReturnType<typeof inspectProjectNamespace>> | undefined;
+  try {
+    namespace = await inspectProjectNamespace(root);
+    checks.push({
+      name: 'Storage namespace',
+      ok: namespace.status !== 'conflict',
+      detail: namespace.status === 'ready'
+        ? `legacy .mosaic detected; migrate to ${namespace.destination}`
+        : namespace.status === 'conflict'
+          ? `conflict in ${namespace.conflicts.length} path(s); migration paused`
+          : `active ${namespace.destination.includes('.skein') ? '.skein' : '.mosaic'}; migration ${namespace.status}`,
+      required: false,
+    });
+  } catch (error) {
+    checks.push({
+      name: 'Storage namespace',
+      ok: false,
+      detail: error instanceof Error ? error.message : String(error),
+      required: false,
+    });
+  }
   const nodeOk = supportsNodeVersion(process.versions.node);
   checks.push({
     name: 'Node.js',
@@ -112,6 +134,7 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
     process.stdout.write(`${JSON.stringify({
       ok: checks.every((check) => !check.required || check.ok),
       checks,
+      ...(namespace ? {namespace} : {}),
     }, null, 2)}\n`);
   } else {
     process.stdout.write(`${chalk.hex('#A78BFA').bold(`${glyphs.brand} ${PRODUCT_NAME.toUpperCase()} DOCTOR`)}\n\n`);

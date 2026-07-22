@@ -5,6 +5,7 @@ import {z} from 'zod';
 import {WorkspaceAccess} from '../tools/workspace.js';
 import {atomicWrite} from '../tools/write.js';
 import {assertNoSymlinkPath, ensureWorkspaceStorageDirectory} from '../utils/storage.js';
+import {resolveProjectNamespaceSync} from '../utils/namespace.js';
 
 const entrySchema = z.object({
   path: z.string(),
@@ -38,7 +39,7 @@ export class CheckpointStore {
     this.managedDirectory = directory === undefined;
     this.directory = directory
       ? resolve(directory)
-      : join(this.workspace.primaryRoot, '.mosaic', 'checkpoints');
+      : join(resolveProjectNamespaceSync(this.workspace.primaryRoot).active, 'checkpoints');
   }
 
   async capture(

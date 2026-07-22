@@ -38,6 +38,7 @@ import {WorkflowCatalog} from './workflows/index.js';
 import type {MosaicConfig, ProviderName, Session} from './types.js';
 import type {IndexProgress} from './context/local-index.js';
 import {workspaceAliasPath} from './utils/path.js';
+import {inspectProjectNamespace, migrateProjectNamespace, resolveProjectNamespaceSync} from './utils/namespace.js';
 import {PRODUCT_COMMAND} from './brand.js';
 import {PLAN_MODE_INSTRUCTIONS} from './agent/prompt.js';
 import packageJson from '../package.json' with {type: 'json'};
@@ -78,7 +79,7 @@ program
   .option('--compact', 'reduce progress output in print mode')
   .option('--yes', 'approve all non-denied tool requests for this run')
   .option('--auto-edit', 'approve read/write requests and ask before shell/Git/network')
-  .option('--trust-project-config', 'allow executable and security-sensitive settings from .mosaic config')
+  .option('--trust-project-config', 'allow executable and security-sensitive settings from project config')
   .option('--queue <prompt>', 'run an additional prompt after the first one', collect, [])
   .option('-w, --workspace <path>', 'primary workspace root', process.cwd())
   .option('--add-workspace <path>', 'additional workspace root', collect, [])
@@ -99,7 +100,7 @@ program
 
 program
   .command('init')
-  .description('Create a project-local .mosaic/config.json')
+  .description('Create a project-local config (preserving an existing .mosaic namespace)')
   .option('-w, --workspace <path>', 'workspace root')
   .option('--provider <provider>', 'openai, anthropic, gemini, or compatible', 'openai')
   .option('--model <model>', 'model identifier')
@@ -128,7 +129,8 @@ configCommand
   .description('Show the project config path')
   .option('-w, --workspace <path>', 'workspace root')
   .action((options: {workspace?: string}) => {
-    process.stdout.write(`${workspaceOption(options.workspace)}/.mosaic/config.json\n`);
+    const workspace = workspaceOption(options.workspace);
+    process.stdout.write(`${resolveProjectNamespaceSync(workspace).active}/config.json\n`);
   });
 
 program
@@ -227,6 +229,35 @@ program
     const config = await runtimeConfig(workspaceOption(options.workspace), runtimeOptions(options));
     const ok = await runDoctor(config, {json: options.json === true, visual: options.visual === true});
     if (!ok) process.exitCode = 1;
+  });
+
+program
+  .command('migrate')
+  .description('Inspect or migrate legacy .mosaic state into .skein')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--json', 'print a migration manifest as JSON')
+  .option('--yes', 'perform the migration after conflict checks')
+  .action(async (options: {workspace?: string; json?: boolean; yes?: boolean}) => {
+    const workspace = workspaceOption(options.workspace);
+    const manifest = options.yes
+      ? await migrateProjectNamespace(workspace)
+      : await inspectProjectNamespace(workspace);
+    if (options.json) {
+      printObject(manifest, true);
+      return;
+    }
+    if (manifest.status === 'complete') {
+      process.stdout.write(`Storage is already migrated to ${manifest.destination}.\n`);
+      return;
+    }
+    process.stdout.write(
+      `${manifest.status === 'conflict' ? 'Migration blocked' : options.yes ? 'Migrated' : 'Migration available'}: ` +
+      `${manifest.source} -> ${manifest.destination}\n`,
+    );
+    process.stdout.write(`${manifest.entries.length} entries, ${manifest.conflicts.length} conflicts.\n`);
+    if (!options.yes && manifest.status === 'ready') {
+      process.stdout.write('Run `skein migrate --yes` to copy atomically; legacy state is retained for rollback.\n');
+    }
   });
 
 const sessionCommand = program.command('session').description('Manage local, resumable sessions');

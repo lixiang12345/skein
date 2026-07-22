@@ -16,6 +16,7 @@ import {basename, dirname, join, resolve} from 'node:path';
 import {z} from 'zod';
 import type {ProviderName, Session} from '../types.js';
 import {assertNoSymlinkPath, ensureWorkspaceStorageDirectory} from '../utils/storage.js';
+import {resolveProjectNamespaceSync} from '../utils/namespace.js';
 
 const sessionIdSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/);
 
@@ -115,7 +116,7 @@ export class SessionStore {
     this.managedDirectory = directory === undefined;
     this.directory = directory
       ? resolve(directory)
-      : join(this.workspace, '.mosaic', 'sessions');
+      : join(resolveProjectNamespaceSync(this.workspace).active, 'sessions');
   }
 
   async create(options: CreateSessionOptions): Promise<Session> {

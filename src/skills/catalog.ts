@@ -4,6 +4,7 @@ import {basename, join, resolve} from 'node:path';
 import {parse as parseYaml} from 'yaml';
 import type {SkillConfig} from '../types.js';
 import {isInside} from '../utils/path.js';
+import {resolveHomeNamespace, resolveProjectNamespaceSync} from '../utils/namespace.js';
 
 export type SkillScope = 'user' | 'workspace' | 'configured';
 
@@ -110,7 +111,7 @@ function discoveryLocations(workspace: string, configured: string[]) {
     {path: join(home, '.agents', 'skills'), scope: 'user' as const, trusted: true},
     {path: join(home, '.claude', 'skills'), scope: 'user' as const, trusted: true},
     {path: join(home, '.augment', 'skills'), scope: 'user' as const, trusted: true},
-    {path: join(home, '.mosaic', 'skills'), scope: 'user' as const, trusted: true},
+    {path: join(resolveHomeNamespace(), 'skills'), scope: 'user' as const, trusted: true},
     ...configured.map((path) => {
       const resolved = resolve(workspaceRoot, path);
       return {
@@ -122,7 +123,7 @@ function discoveryLocations(workspace: string, configured: string[]) {
     {path: join(workspace, '.agents', 'skills'), scope: 'workspace' as const, trusted: false},
     {path: join(workspace, '.claude', 'skills'), scope: 'workspace' as const, trusted: false},
     {path: join(workspace, '.augment', 'skills'), scope: 'workspace' as const, trusted: false},
-    {path: join(workspace, '.mosaic', 'skills'), scope: 'workspace' as const, trusted: false},
+    {path: join(resolveProjectNamespaceSync(workspaceRoot).active, 'skills'), scope: 'workspace' as const, trusted: false},
   ];
 }
 

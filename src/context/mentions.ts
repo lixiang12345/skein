@@ -32,7 +32,7 @@ const defaultMentionIgnores = [
   '**/.git/**',
   '**/node_modules/**',
   '**/dist/**',
-  '**/.mosaic/**',
+  '**/.mosaic/**', '**/.skein/**',
 ];
 
 const mentionIndexCache = new Map<string, Promise<MentionPathIndex>>();
@@ -112,7 +112,7 @@ export async function resolveMentions(
             onlyFiles: true,
             dot: true,
             followSymbolicLinks: false,
-            ignore: ['**/.git/**', '**/node_modules/**', '**/dist/**', '**/.mosaic/**'],
+            ignore: ['**/.git/**', '**/node_modules/**', '**/dist/**', '**/.mosaic/**', '**/.skein/**'],
           });
           matched.push(...await safeMentionPaths(
             children.slice(0, 25).map((path) => resolve(aliased, path)),
@@ -135,7 +135,7 @@ export async function resolveMentions(
             onlyFiles: true,
             dot: true,
             followSymbolicLinks: false,
-            ignore: ['**/.git/**', '**/node_modules/**', '**/dist/**', '**/.mosaic/**'],
+            ignore: ['**/.git/**', '**/node_modules/**', '**/dist/**', '**/.mosaic/**', '**/.skein/**'],
           });
           matched.push(...await safeMentionPaths(
             children.slice(0, 25).map((path) => resolve(safeDirect, path)),
@@ -152,7 +152,7 @@ export async function resolveMentions(
           onlyFiles: true,
           dot: true,
           followSymbolicLinks: false,
-          ignore: ['**/.git/**', '**/node_modules/**', '**/dist/**', '**/.mosaic/**'],
+            ignore: ['**/.git/**', '**/node_modules/**', '**/dist/**', '**/.mosaic/**', '**/.skein/**'],
         });
         matched.push(...await safeMentionPaths(
           globbed.slice(0, 25).map((path) => resolve(root, path)),
