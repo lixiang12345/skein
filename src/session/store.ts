@@ -59,6 +59,13 @@ const auditSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 }).strict();
 
+const contextSourceSchema = z.object({
+  path: z.string().min(1).max(4_096),
+  state: z.enum(['pinned', 'muted']),
+  tokens: z.number().int().nonnegative(),
+  addedAt: z.string(),
+}).strict();
+
 const workingMemorySchema = z.object({
   goal: z.string(),
   focus: z.string(),
@@ -85,6 +92,7 @@ const sessionSchema = z.object({
   contextCompactions: z.number().int().nonnegative().optional(),
   compactedThroughMessageId: z.string().optional(),
   workingMemory: workingMemorySchema.optional(),
+  contextSources: z.array(contextSourceSchema).max(64).optional(),
   usage: z.object({
     inputTokens: z.number().nonnegative(),
     outputTokens: z.number().nonnegative(),

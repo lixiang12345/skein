@@ -21,6 +21,7 @@ import type {
 import type {
   AgentEvent,
   ChatMessage,
+  ContextSource,
   MosaicConfig,
   ModelResponse,
   PackedContext,
@@ -39,6 +40,13 @@ import {
 } from './prompt.js';
 import type {PromptContextProvider} from './prompt-context.js';
 import {discoverWorkspaceRules, formatWorkspaceRules} from './rules.js';
+import {
+  formatPinnedContext,
+  pinContextSource,
+  resolvePinnedContent,
+  toggleMuteContextSource,
+  unpinContextSource,
+} from '../context/context-sources.js';
 
 export interface AgentRunnerOptions {
   config: MosaicConfig;
@@ -141,6 +149,9 @@ export class AgentRunner {
         this.workspace.primaryRoot,
         this.workspace.roots,
       );
+      const pinnedContext = formatPinnedContext(
+        await resolvePinnedContent(this.session, this.workspace),
+      );
       const workspaceRules = formatWorkspaceRules(
         await discoverWorkspaceRules(this.workspace.primaryRoot),
       );
@@ -182,6 +193,7 @@ export class AgentRunner {
           options.turnInstructions ?? '',
           augmentation.text,
           retrievedContext,
+          pinnedContext,
           workspaceRules,
         ].join('\n').length / 4),
       });
@@ -211,6 +223,7 @@ export class AgentRunner {
             buildSessionStatePrompt(this.session),
             turnDirective.text,
             this.contextManager.buildShortTermPrompt(this.session),
+            pinnedContext,
             options.turnInstructions ?? '',
             augmentation.text,
           ]
@@ -655,6 +668,32 @@ export class AgentRunner {
 
   getContextStatus() {
     return this.contextManager.status(this.session);
+  }
+
+  /** List the user-controlled context sources on the live session. */
+  listContextSources(): ContextSource[] {
+    return this.session.contextSources ?? [];
+  }
+
+  /** Pin a workspace file so it is read fresh and re-injected on every turn. */
+  async pinContextSource(path: string): Promise<ContextSource> {
+    const source = await pinContextSource(this.session, this.workspace, path);
+    await this.persist();
+    return source;
+  }
+
+  /** Remove a source entirely. Returns the removed alias, or undefined if absent. */
+  async unpinContextSource(path: string): Promise<string | undefined> {
+    const removed = unpinContextSource(this.session, path);
+    if (removed) await this.persist();
+    return removed;
+  }
+
+  /** Toggle a source between pinned and muted. Returns the source, or undefined. */
+  async toggleMuteContextSource(path: string): Promise<ContextSource | undefined> {
+    const source = toggleMuteContextSource(this.session, path);
+    if (source) await this.persist();
+    return source;
   }
 
   private persist(): Promise<void> {

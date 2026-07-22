@@ -501,14 +501,53 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       return true;
     }
     if (command === 'context') {
-      if (argument.toLocaleLowerCase() === 'compact') {
+      const [sub = '', ...subRest] = argument.split(/\s+/);
+      const subcommand = sub.toLocaleLowerCase();
+      const target = subRest.join(' ').trim();
+      if (subcommand === 'compact') {
         const result = await runner.compactContext();
         refreshSession();
         append({id: nextId(), kind: 'compaction', messages: result.omittedMessages, tokens: result.summaryTokens});
         setShowContextInspector(true);
-      } else {
-        setShowContextInspector((visible) => !visible);
+        return true;
       }
+      if (subcommand === 'pin') {
+        if (!target) throw new Error('Usage: /context pin <path>');
+        const source = await runner.pinContextSource(target);
+        refreshSession();
+        append({id: nextId(), kind: 'notice', tone: 'success', text: `Pinned ${source.path}${separator}~${source.tokens} tokens${separator}re-read every turn, survives compaction.`});
+        setShowContextInspector(true);
+        return true;
+      }
+      if (subcommand === 'unpin') {
+        if (!target) throw new Error('Usage: /context unpin <path>');
+        const removed = await runner.unpinContextSource(target);
+        refreshSession();
+        append({id: nextId(), kind: 'notice', tone: removed ? 'success' : 'error', text: removed ? `Unpinned ${removed}.` : `No pinned source matched: ${target}`});
+        return true;
+      }
+      if (subcommand === 'mute') {
+        if (!target) throw new Error('Usage: /context mute <path>');
+        const source = await runner.toggleMuteContextSource(target);
+        refreshSession();
+        append({id: nextId(), kind: 'notice', tone: source ? 'success' : 'error', text: source ? `${source.state === 'muted' ? 'Muted' : 'Unmuted'} ${source.path}.` : `No source matched: ${target}`});
+        return true;
+      }
+      if (subcommand === 'list') {
+        const list = runner.listContextSources();
+        appendList('Pinned context', list.length
+          ? list.map((source) => ({
+            label: `${source.state === 'muted' ? 'muted ' : 'pinned'}  ${source.path}`,
+            detail: `~${source.tokens} tokens${separator}added ${source.addedAt.slice(0, 10)}`,
+            tone: source.state === 'muted' ? 'warning' as const : 'success' as const,
+          }))
+          : [{label: 'No pinned sources.', detail: 'Pin one with /context pin <path>'}]);
+        return true;
+      }
+      if (subcommand && subcommand !== 'toggle') {
+        throw new Error('Usage: /context [pin|unpin|mute|list|compact] [path]');
+      }
+      setShowContextInspector((visible) => !visible);
       return true;
     }
     if (command === 'workbench') {

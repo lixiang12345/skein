@@ -17,7 +17,7 @@ export const commandDefinitions: CommandDefinition[] = [
   command('team', 'Launch a routed specialist council with peer review', '/team <delivery objective>'),
   command('workbench', 'Focus the multi-agent Team Workbench', '/workbench'),
   command('workflow', 'Run a typed implementation, debug, review, or refactor flow', '/workflow <name> <task>'),
-  command('context', 'Inspect active, working, compacted, and retrieved context', '/context [compact]'),
+  command('context', 'Inspect context; pin/unpin/mute files that survive compaction', '/context [pin|unpin|mute|list|compact] [path]'),
   command('compact', 'Compact older session context', '/compact [instructions]'),
   command('memory', 'Search durable memory or review proposed facts', '/memory [query|list|candidates|approve|reject|archive|forget]'),
   command('remember', 'Save a non-secret workspace memory', '/remember <fact or preference>'),

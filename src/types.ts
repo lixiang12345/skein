@@ -240,6 +240,22 @@ export interface WorkingMemory {
   lastUpdatedAt: string;
 }
 
+/**
+ * A user-controlled context source. Unlike retrieved code (which is compacted
+ * away as the conversation grows), a pinned source is read fresh from disk and
+ * re-injected on every turn until the user unpins it. Muted sources stay in the
+ * list for one-key re-activation but cost zero tokens.
+ */
+export interface ContextSource {
+  /** Workspace-relative path, used as the stable identity for pin/unpin/mute. */
+  path: string;
+  /** Pinned survives compaction; muted is listed but not injected. */
+  state: 'pinned' | 'muted';
+  /** Token cost of the last successful read, for the budget meter. */
+  tokens: number;
+  addedAt: string;
+}
+
 export interface Session {
   id: string;
   title: string;
@@ -256,6 +272,7 @@ export interface Session {
   contextCompactions?: number;
   compactedThroughMessageId?: string;
   workingMemory?: WorkingMemory;
+  contextSources?: ContextSource[];
   usage: {
     inputTokens: number;
     outputTokens: number;
