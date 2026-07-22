@@ -491,6 +491,40 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         : [{label: 'No checkpoints for this session.'}]);
       return true;
     }
+    if (command === 'audit') {
+      const events = runner.getSession().audit ?? [];
+      appendList('Audit timeline', events.length
+        ? events.slice(-24).reverse().map((event) => ({
+          label: `${event.outcome === 'success' || event.outcome === 'allow' ? glyphs.success : event.outcome === 'failure' || event.outcome === 'deny' ? glyphs.error : glyphs.pending}  ${event.tool}${event.category ? `${separator}${event.category}` : ''}`,
+          detail: `${event.type}${separator}${event.outcome}${event.reason ? `${separator}${event.reason.slice(0, 80)}` : ''}${separator}${event.createdAt.slice(11, 19)}`,
+          tone: event.outcome === 'failure' || event.outcome === 'deny' ? 'error' as const
+            : event.outcome === 'success' || event.outcome === 'allow' ? 'success' as const : 'normal' as const,
+        }))
+        : [{label: 'No audited actions yet.', detail: 'Tool calls and permission decisions are recorded here.'}]);
+      return true;
+    }
+    if (command === 'rollback') {
+      const checkpoints = await runner.checkpointStore.list(runner.getSession().id);
+      if (!checkpoints.length) {
+        append({id: nextId(), kind: 'notice', tone: 'error', text: 'No checkpoints to roll back to.'});
+        return true;
+      }
+      if (!argument) {
+        appendList('Rollback — choose a checkpoint', checkpoints.slice(0, 20).map((checkpoint) => ({
+          label: checkpoint.id.slice(0, 12),
+          detail: `${checkpoint.reason}${separator}${checkpoint.entries.length} files${separator}${checkpoint.createdAt.slice(0, 19)}`,
+        })).concat([{label: 'Run /rollback <id> to restore', detail: 'the workspace files captured before that change.'}]));
+        return true;
+      }
+      const match = checkpoints.find((checkpoint) => checkpoint.id === argument || checkpoint.id.startsWith(argument));
+      if (!match) {
+        append({id: nextId(), kind: 'notice', tone: 'error', text: `No checkpoint matched: ${argument}`});
+        return true;
+      }
+      const restored = await runner.checkpointStore.restore(runner.getSession().id, match.id);
+      append({id: nextId(), kind: 'notice', tone: 'success', text: `Rolled back ${restored.length} file${restored.length === 1 ? '' : 's'} to checkpoint ${match.id.slice(0, 12)}${separator}${match.reason}.`});
+      return true;
+    }
     if (command === 'tasks') {
       appendList('Plan', tasks.length
         ? tasks.map((task) => ({

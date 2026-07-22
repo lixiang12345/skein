@@ -408,6 +408,11 @@ function mockRunner(root: string, session: Session, hits: ContextHit[] = [], opt
     run,
     compactContext,
     steer: vi.fn(() => false),
+    listContextSources: vi.fn(() => session.contextSources ?? []),
+    pinContextSource: vi.fn(async (path: string) => ({path, state: 'pinned' as const, tokens: 0, addedAt: new Date().toISOString()})),
+    unpinContextSource: vi.fn(async (path: string) => path),
+    toggleMuteContextSource: vi.fn(async (path: string) => ({path, state: 'muted' as const, tokens: 0, addedAt: new Date().toISOString()})),
+    checkpointStore: {list: vi.fn(async () => []), restore: vi.fn(async () => [])},
   } as unknown as AgentRunner;
   return {runner, run, search, compactContext};
 }
