@@ -89,12 +89,12 @@ export function classifyTurnIntent(input: string): TurnIntent {
 export function buildTurnDirective(input: string): {intent: TurnIntent; text: string} {
   const intent = classifyTurnIntent(input);
   const guidance: Record<TurnIntent, string> = {
-    explain: 'Prioritize evidence and a clear causal explanation. Do not edit unless the user explicitly requested a change.',
-    review: 'Lead with concrete findings ordered by severity. Do not mutate the workspace unless the user explicitly requested fixes.',
-    debug: 'Reproduce or ground the symptom, find the first incorrect state, then make the smallest verified correction.',
-    refactor: 'Map callers and contracts first, preserve behavior, and stage changes so each step is verifiable.',
-    test: 'Identify the behavioral contract and highest-risk boundaries, then prefer focused tests that fail before the fix.',
-    implement: 'Inspect the change surface, keep one writer, implement the smallest coherent solution, then verify it.',
+    explain: 'Read the actual code before explaining it; never describe behavior you have not confirmed from the source. Trace the real control and data flow, cite specific files and line ranges as evidence, and separate what the code does from what it is intended to do. Answer with prose and references, not edits. Do not modify files unless the user explicitly asks for a change.',
+    review: 'Read the full change surface before judging it. Lead with concrete findings ordered by severity (correctness and security first, then maintainability, then style), each tied to a specific file and line with a clear failure scenario. Distinguish confirmed defects from suspicions. Do not mutate the workspace unless the user explicitly requested fixes; propose the fix in prose instead.',
+    debug: 'Ground the symptom in real evidence first — reproduce it, read the failing code path, or inspect the actual error — before proposing any cause. Find the first point where state diverges from what is expected, fix that root cause rather than masking the symptom, and make the smallest change that resolves it. Verify with the project\'s own tests or a targeted repro before claiming the bug is fixed.',
+    refactor: 'Map the callers, contracts, and tests that depend on the code before changing its shape. Preserve observable behavior exactly; a refactor that changes outputs is a bug. Stage the work so each step compiles and passes tests independently, and run the project\'s verification after each meaningful step rather than only at the end.',
+    test: 'Identify the behavioral contract and the highest-risk boundaries — error paths, edge inputs, concurrency, and regressions — before writing anything. Match the project\'s existing test framework and conventions. Prefer tests that fail before the fix and pass after, assert on real behavior rather than implementation detail, and actually run them to confirm both states.',
+    implement: 'Read the surrounding code first and match its existing patterns, libraries, and conventions rather than introducing new ones. Keep a single writer for workspace mutations. Implement the smallest coherent change that fully solves the request — no speculative abstraction or unrequested features — then verify it with the project\'s build and tests before reporting done.',
   };
   return {
     intent,
