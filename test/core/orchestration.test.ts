@@ -172,6 +172,49 @@ describe('bounded orchestration', () => {
     expect(requests).toEqual([`codex/gpt-external/${root}`]);
   });
 
+  it('resolves one named connection across agent model routes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-shared-connection-'));
+    roots.push(root);
+    const cfg = config(root);
+    cfg.agents = {
+      ...cfg.agents!,
+      connections: {relay: {provider: 'compatible', baseUrl: 'https://relay.example/v1', apiKeyEnv: 'RELAY_API_KEY'}},
+      routes: {backend: {connection: 'relay', model: 'openai/backend-model'}},
+    };
+    const profiles = new AgentProfileCatalog(root);
+    await profiles.discover();
+    const context: ContextProvider = {
+      async pack() { return {text: '', hits: [], estimatedTokens: 0, engine: 'test', truncated: false}; },
+      async search() { return []; },
+    };
+    const routed: Array<{provider: string; model: string; baseUrl?: string; apiKey?: string}> = [];
+    const manager = new DelegationManager({
+      config: cfg,
+      provider: {name: 'parent', async complete() { return {content: 'parent', toolCalls: []}; }},
+      contextEngine: context,
+      parentTools: createDefaultToolRegistry(),
+      profiles,
+      environment: {RELAY_API_KEY: 'relay-secret'},
+      providerFactory(model) {
+        routed.push(model);
+        return {name: 'relay', async complete() { return {content: 'connection evidence', toolCalls: []}; }};
+      },
+    });
+    const result = await manager.tool().execute({tasks: [{profile: 'backend', task: 'Inspect state.'}]}, {
+      config: cfg,
+      workspace: new WorkspaceAccess([root]),
+      session: createSession({workspace: root, provider: 'compatible', model: 'test'}),
+      contextEngine: context,
+    });
+    expect(result.ok).toBe(true);
+    expect(routed).toEqual([{
+      provider: 'compatible',
+      model: 'openai/backend-model',
+      baseUrl: 'https://relay.example/v1',
+      apiKey: 'relay-secret',
+    }]);
+  });
+
   it('rejects an external worker that exceeds its route budget', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-budget-team-'));
     roots.push(root);

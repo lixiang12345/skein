@@ -16,7 +16,7 @@ import {
 } from './config.js';
 import {ContextEngine, formatContextHits} from './context/context-engine.js';
 import {AgentRunner} from './agent/index.js';
-import {AgentProfileCatalog, TeamRunStore} from './agent/index.js';
+import {AgentProfileCatalog, listConnectionModels, TeamRunStore} from './agent/index.js';
 import {discoverWorkspaceRules} from './agent/rules.js';
 import {createProvider} from './providers/index.js';
 import {SessionStore, type SessionSummary} from './session/index.js';
@@ -384,14 +384,18 @@ agentsCommand
     const profiles = await catalog.discover();
     const roster = profiles.map((profile) => {
       const route = config.agents?.routes?.[profile.name];
+      const connection = route?.connection ? config.agents?.connections?.[route.connection] : undefined;
       return {
         ...profile,
         route: route ? {
           runtime: route.runtime ?? 'api',
-          provider: route.provider,
+          connection: route.connection,
+          provider: route.provider ?? connection?.provider,
           model: route.model,
-          endpoint: redactEndpoint(route.baseUrl),
-          credentials: route.apiKeyEnv ? `env:${route.apiKeyEnv}` : 'inherited when compatible',
+          endpoint: redactEndpoint(route.baseUrl ?? connection?.baseUrl),
+          credentials: route.apiKeyEnv ?? connection?.apiKeyEnv
+            ? `env:${route.apiKeyEnv ?? connection?.apiKeyEnv}`
+            : 'inherited when compatible',
           tokenBudget: route.tokenBudget,
           maxToolCalls: route.maxToolCalls,
           timeoutMs: route.timeoutMs,
@@ -408,6 +412,46 @@ agentsCommand
     if (options.json) printObject(roster, true);
     else for (const profile of roster) {
       process.stdout.write(`${profile.name.padEnd(14)} ${profile.readOnly ? 'read-only' : 'writer   '} ${profile.route.runtime}:${profile.route.provider}/${profile.route.model}  ${profile.description}\n`);
+    }
+  });
+agentsCommand
+  .command('connections')
+  .description('List named model endpoints and credential references')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--json', 'print JSON')
+  .action(async (options: ConfigOptions) => {
+    const workspace = workspaceOption(options.workspace);
+    const config = await runtimeConfig(workspace, runtimeOptions(options));
+    const connections = Object.entries(config.agents?.connections ?? {}).map(([name, connection]) => ({
+      name,
+      provider: connection.provider,
+      endpoint: redactEndpoint(connection.baseUrl),
+      credentials: connection.apiKeyEnv ? `env:${connection.apiKeyEnv}` : 'provider default environment',
+      routes: Object.values(config.agents?.routes ?? {}).filter((route) => route.connection === name).length,
+    }));
+    if (options.json) printObject(connections, true);
+    else if (!connections.length) process.stdout.write('No named model connections configured.\n');
+    else for (const connection of connections) {
+      process.stdout.write(`${connection.name.padEnd(16)} ${connection.provider.padEnd(10)} ${connection.credentials.padEnd(28)} ${connection.routes} routes  ${connection.endpoint}\n`);
+    }
+  });
+agentsCommand
+  .command('models <connection>')
+  .description('List model IDs exposed by a named compatible connection')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--json', 'print JSON')
+  .action(async (connectionName: string, options: ConfigOptions) => {
+    const workspace = workspaceOption(options.workspace);
+    const config = await runtimeConfig(workspace, runtimeOptions(options));
+    const connection = config.agents?.connections?.[connectionName];
+    if (!connection) throw new Error(`Unknown model connection: ${connectionName}`);
+    const models = await listConnectionModels(connection);
+    if (options.json) printObject(models, true);
+    else if (!models.length) process.stdout.write('No models returned by the connection.\n');
+    else for (const model of models) {
+      process.stdout.write(`${model.id}${model.ownedBy ? `  ${model.ownedBy}` : ''}${model.contextLength ? `  context ${model.contextLength}` : ''}\n`);
     }
   });
 agentsCommand

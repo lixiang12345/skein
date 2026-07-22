@@ -488,7 +488,7 @@ export class DelegationManager {
   private modelRoute(profile: string): ModelConfig {
     const configured = this.team.routes?.[profile];
     if (!configured) return this.options.config.model;
-    return modelConfigFromRoute(configured, this.options.config.model, this.options.environment ?? process.env);
+    return modelConfigFromRoute(configured, this.options.config.model, this.options.environment ?? process.env, this.team.connections);
   }
 
   private providerFor(config: ModelConfig): ModelProvider {
@@ -519,20 +519,36 @@ function modelConfigFromRoute(
   route: AgentModelRoute,
   parent: ModelConfig,
   environment: NodeJS.ProcessEnv,
+  connections: AgentTeamConfig['connections'],
 ): ModelConfig {
-  const inheritedKey = route.provider === parent.provider &&
-    (route.baseUrl ?? parent.baseUrl) === parent.baseUrl
+  const connection = route.connection ? connections?.[route.connection] : undefined;
+  if (route.connection && !connection) throw new Error(`Unknown agent model connection: ${route.connection}`);
+  const provider = route.provider ?? connection?.provider;
+  if (!provider) throw new Error('Agent route requires a provider or a valid connection.');
+  const baseUrl = route.baseUrl ?? connection?.baseUrl;
+  const apiKeyEnv = route.apiKeyEnv ?? connection?.apiKeyEnv;
+  const inheritedKey = provider === parent.provider && baseUrl === parent.baseUrl
     ? parent.apiKey
     : undefined;
-  const apiKey = route.apiKeyEnv ? environment[route.apiKeyEnv] : inheritedKey;
+  const apiKey = apiKeyEnv
+    ? environment[apiKeyEnv]
+    : inheritedKey ?? defaultProviderApiKey(provider, environment);
   return {
-    provider: route.provider,
+    provider,
     model: route.model,
-    ...(route.baseUrl ? {baseUrl: route.baseUrl} : {}),
+    ...(baseUrl ? {baseUrl} : {}),
     ...(apiKey ? {apiKey} : {}),
     ...(route.temperature !== undefined ? {temperature: route.temperature} : {}),
     ...(route.maxTokens !== undefined ? {maxTokens: route.maxTokens} : {}),
   };
+}
+
+function defaultProviderApiKey(provider: AgentModelRoute['provider'], environment: NodeJS.ProcessEnv): string | undefined {
+  if (provider === 'openai') return environment.OPENAI_API_KEY;
+  if (provider === 'anthropic') return environment.ANTHROPIC_API_KEY;
+  if (provider === 'gemini') return environment.GEMINI_API_KEY;
+  if (provider === 'compatible') return environment.SKEIN_API_KEY ?? environment.MOSAIC_API_KEY;
+  return undefined;
 }
 
 function reviewVerdict(summary: string): 'accept' | 'revise' {

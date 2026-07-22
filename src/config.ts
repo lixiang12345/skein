@@ -46,6 +46,15 @@ const memoryConfigSchema = z.object({
   maxPromptTokens: z.number().int().positive().max(20_000).optional(),
 }).partial();
 
+const agentConnectionNameSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
+const agentConnectionSchema = z.object({
+  provider: z.enum(['openai', 'anthropic', 'gemini', 'compatible']),
+  baseUrl: z.string().url().refine((value) => /^https?:$/i.test(new URL(value).protocol), {
+    message: 'agent connection baseUrl must use http or https',
+  }).optional(),
+  apiKeyEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/).optional(),
+}).strict();
+
 const agentTeamConfigSchema = z.object({
   enabled: z.boolean().optional(),
   maxConcurrent: z.number().int().positive().max(16).optional(),
@@ -59,9 +68,11 @@ const agentTeamConfigSchema = z.object({
   maxAgentToolCalls: z.number().int().positive().max(1_000).optional(),
   agentTimeoutMs: z.number().int().positive().max(1_800_000).optional(),
   budgetMode: z.enum(['observe', 'guard', 'strict']).optional(),
+  connections: z.record(agentConnectionNameSchema, agentConnectionSchema).optional(),
   routes: z.record(z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/), z.object({
     runtime: z.enum(['api', 'codex', 'claude', 'grok']).optional(),
-    provider: z.enum(['openai', 'anthropic', 'gemini', 'compatible']),
+    connection: agentConnectionNameSchema.optional(),
+    provider: z.enum(['openai', 'anthropic', 'gemini', 'compatible']).optional(),
     model: z.string().min(1).max(256),
     baseUrl: z.string().url().refine((value) => /^https?:$/i.test(new URL(value).protocol), {
       message: 'agent route baseUrl must use http or https',
@@ -73,7 +84,9 @@ const agentTeamConfigSchema = z.object({
     maxToolCalls: z.number().int().positive().max(1_000).optional(),
     timeoutMs: z.number().int().positive().max(1_800_000).optional(),
     budgetMode: z.enum(['observe', 'guard', 'strict']).optional(),
-  }).strict()).optional(),
+  }).strict().refine((route) => route.connection !== undefined || route.provider !== undefined, {
+    message: 'agent route requires provider or connection',
+  })).optional(),
 }).partial();
 
 const mcpServerSchema = z.object({
@@ -248,6 +261,7 @@ export function defaultConfig(workspace = process.cwd()): MosaicConfig {
       cockpit: true,
       persistBoard: true,
       budgetMode: 'observe',
+      connections: {},
       routes: {},
     },
     mcp: {
@@ -449,11 +463,20 @@ export async function loadConfig(
   if (!config.model.apiKey && envApiKey) config.model.apiKey = envApiKey;
   const uiPreference = await readUiPreference();
   if (uiPreference) config = mergeConfig(config, {ui: uiPreference});
+  validateAgentConnections(config.agents);
   config.workspaceRoots = [...new Set([
     resolve(workspace),
     ...config.workspaceRoots.map((root) => resolve(workspace, root)),
   ])];
   return config;
+}
+
+function validateAgentConnections(agents: AgentTeamConfig | undefined): void {
+  for (const [profile, route] of Object.entries(agents?.routes ?? {})) {
+    if (route.connection && !agents?.connections?.[route.connection]) {
+      throw new Error(`Agent route ${profile} references unknown connection ${route.connection}.`);
+    }
+  }
 }
 
 export async function saveUiPreference(update: {theme?: string; compact?: boolean}): Promise<void> {
@@ -542,6 +565,7 @@ function sanitizeProjectConfig(
     // Model routes can redirect credentials and source context to arbitrary
     // endpoints. Repository-owned config cannot activate them without trust.
     delete agents.routes;
+    delete agents.connections;
   }
   return {
     ...safeUpdate,
@@ -611,9 +635,15 @@ export function configSummary(config: MosaicConfig): Record<string, unknown> {
       maxAgentToolCalls: config.agents.maxAgentToolCalls,
       agentTimeoutMs: config.agents.agentTimeoutMs,
       budgetMode: config.agents.budgetMode,
+      connections: Object.fromEntries(Object.entries(config.agents.connections ?? {}).map(([name, connection]) => [name, {
+        provider: connection.provider,
+        endpoint: redactEndpoint(connection.baseUrl),
+        credentials: connection.apiKeyEnv ? `env:${connection.apiKeyEnv}` : 'provider default environment',
+      }])),
       routes: Object.fromEntries(Object.entries(config.agents.routes ?? {}).map(([profile, route]) => [profile, {
         runtime: route.runtime ?? 'api',
-        provider: route.provider,
+        connection: route.connection,
+        provider: route.provider ?? (route.connection ? config.agents?.connections?.[route.connection]?.provider : undefined),
         model: route.model,
         endpoint: redactEndpoint(route.baseUrl),
         credentials: route.apiKeyEnv ? `env:${route.apiKeyEnv}` : 'inherited when compatible',

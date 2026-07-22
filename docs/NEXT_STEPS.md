@@ -47,7 +47,7 @@ The last verified package was `skein-code-cli-0.2.0.tgz`. Its SHA-256 was:
 The final verification included a fresh install and real PTY interaction for
 all three executable aliases, `/about`, a permission prompt, denial, and clean
 Ctrl+C exit. PTY coverage included 20, 24 ASCII, 40, 80, 120 columns and a
-40x10 short-height case. The current suite contains 27 test files and 172 tests.
+40x10 short-height case. The current suite contains 28 test files and 180 tests.
 
 ## Recommended Order
 
@@ -169,6 +169,16 @@ Implementation progress:
   stopped attempt in telemetry, and feeds only the fresh result into the
   caller's aggregation. Completed attempts remain immutable until the next
   report-inspection increment.
+- Named `agents.connections` now let API routes share one provider, base URL,
+  and credential environment-variable reference. This supports the common
+  relay/gateway case where one key grants access to many model families while
+  keeping subscription-backed official CLIs on their own login path.
+- `skein agents connections` and `/connections` expose redacted connection
+  status and route counts. Repository-owned connections are stripped until
+  project config is trusted, just like direct model routes.
+- `skein agents models <connection>` can query a compatible/OpenAI connection's
+  standard `/models` endpoint, giving users model IDs without trial-and-error
+  configuration. The command is read-only and does not persist the catalog.
 - Team budgets default to `observe`: telemetry is retained, but configured
   thresholds do not warn or terminate work. `guard` adds non-blocking threshold
   warnings, while `strict` is an explicit hard-stop policy for controlled jobs.

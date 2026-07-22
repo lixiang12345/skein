@@ -56,6 +56,8 @@ export interface AgentTeamConfig {
   defaultProfile: string;
   /** Optional role-to-model routing. Credentials are referenced by env name, never stored here. */
   routes?: Record<string, AgentModelRoute>;
+  /** Named API connections let many routes share one endpoint and credential reference. */
+  connections?: Record<string, AgentConnectionConfig>;
   reviewerProfile?: string;
   maxReviewRounds?: number;
   cockpit?: boolean;
@@ -66,9 +68,16 @@ export interface AgentTeamConfig {
   budgetMode?: 'observe' | 'guard' | 'strict';
 }
 
+export interface AgentConnectionConfig {
+  provider: ProviderName;
+  baseUrl?: string;
+  apiKeyEnv?: string;
+}
+
 export interface AgentModelRoute {
   runtime?: 'api' | 'codex' | 'claude' | 'grok';
-  provider: ProviderName;
+  connection?: string;
+  provider?: ProviderName;
   model: string;
   baseUrl?: string;
   apiKeyEnv?: string;

@@ -99,6 +99,28 @@ the blackboard to a hosted service.
 Credentials are referenced by environment-variable name. They are never stored
 inside the project config.
 
+### Authentication paths
+
+Skein keeps subscription login and API routing separate because they have
+different ownership and billing semantics:
+
+- Subscription users authenticate once in each installed official CLI. Codex
+  supports ChatGPT subscription login, Claude Code supports Claude.ai/Teams
+  login, and Gemini CLI supports Google account login. A Skein route with
+  `runtime: "codex"`, `"claude"`, or `"grok"` reuses that CLI's local login;
+  Skein does not read, copy, or persist its tokens.
+- Direct API users reference the provider's environment variable on each
+  route, or let a compatible parent route inherit the same endpoint.
+- Relay/gateway users define one named `connection` and reuse it across model
+  routes. This matches gateways such as OpenRouter or LiteLLM that expose many
+  models behind one OpenAI-compatible endpoint and bearer key.
+
+Official authentication references: [Codex](https://developers.openai.com/codex/auth),
+[Claude Code](https://code.claude.com/docs/en/authentication), and
+[Gemini CLI](https://geminicli.com/docs/get-started/authentication/). Unified
+gateway examples: [OpenRouter](https://openrouter.ai/docs/quickstart) and
+[LiteLLM](https://docs.litellm.ai/docs/learn/gateway_quickstart).
+
 ```json
 {
   "agents": {
@@ -134,6 +156,58 @@ inside the project config.
   }
 }
 ```
+
+For a relay that exposes many model families through one key, configure the
+credential once in the user environment:
+
+```bash
+export TEAM_RELAY_API_KEY="..."
+```
+
+Then reference one connection from every role:
+
+```json
+{
+  "agents": {
+    "connections": {
+      "team-relay": {
+        "provider": "compatible",
+        "baseUrl": "https://relay.example/v1",
+        "apiKeyEnv": "TEAM_RELAY_API_KEY"
+      }
+    },
+    "routes": {
+      "architect": {
+        "connection": "team-relay",
+        "model": "anthropic/architecture-model"
+      },
+      "backend": {
+        "connection": "team-relay",
+        "model": "openai/coding-model"
+      },
+      "frontend": {
+        "connection": "team-relay",
+        "model": "google/frontend-model"
+      },
+      "reviewer": {
+        "connection": "team-relay",
+        "model": "openai/reviewer-model"
+      }
+    }
+  }
+}
+```
+
+Run `skein agents connections` or `/connections` to inspect the resolved
+endpoint, environment-variable reference, and route count without revealing
+the key. For compatible/OpenAI connections, run
+`skein agents models team-relay` to inspect the provider's `/models` catalog
+before choosing route IDs. Discovery is read-only and does not rewrite config;
+native Anthropic/Gemini subscription catalogs remain owned by their official
+CLIs. Named connections are best kept in user-level configuration. A
+repository-owned connection or route remains disabled until the project config
+is explicitly trusted, preventing a cloned repository from redirecting a
+developer's key and source context to an attacker-controlled endpoint.
 
 `runtime` defaults to `api`. The initial external adapters invoke installed
 `codex`, `claude`, or `grok` binaries without a shell and enforce each CLI's

@@ -8,6 +8,8 @@ export {runExternalAgent, externalAgentCommand, parseExternalAgentOutput, parseE
 export type {ExternalAgentRequest, ExternalAgentResult, ExternalAgentRuntime} from './external-runtime.js';
 export {TeamRunStore} from './team-store.js';
 export type {TeamRunManifest, TeamRunSummary, TeamRunAgentRecord, TeamRunMessageRecord} from './team-store.js';
+export {listConnectionModels} from './model-catalog.js';
+export type {ModelCatalogEntry} from './model-catalog.js';
 export {
   buildSystemPrompt,
   buildStableSystemPrompt,
