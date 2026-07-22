@@ -441,7 +441,7 @@ export function TeamCockpit({items, width = 36, glyphMode = 'auto'}: {
         return (
           <Box key={agent.id} flexDirection="column">
             <Text color={agent.state === 'error' ? theme.error : agent.state === 'running' ? theme.accent : theme.text}>
-              {truncateDisplay(`${status} ${agent.profile}${agent.phase && agent.phase !== 'work' ? ` · ${agent.phase}` : ''}`, inner)}
+              {truncateDisplay(`${status} ${agent.profile}${agent.phase && agent.phase !== 'work' ? ` ${glyphs.separator} ${agent.phase}` : ''}`, inner)}
             </Text>
             <Text color={theme.dim}>{truncateDisplay(route, inner)}</Text>
             <Text color={theme.muted}>{truncateDisplay(activity, inner)}</Text>
@@ -517,7 +517,7 @@ export function TeamWorkbench({items, tasks, width = 80, glyphMode = 'auto', vie
           const telemetry = `${formatTokens((agent.inputTokens ?? 0) + (agent.outputTokens ?? 0))} tok${glyphs.separator}${agent.toolCalls ?? 0} tools`;
           return (
             <Box key={agent.id} flexDirection="column">
-              <Text color={index === selectedIndex ? theme.textStrong : theme.text}>{truncateDisplay(`${marker}${stateGlyph} ${agent.profile}${agent.phase && agent.phase !== 'work' ? ` · ${agent.phase}` : ''}`, inner)}</Text>
+              <Text color={index === selectedIndex ? theme.textStrong : theme.text}>{truncateDisplay(`${marker}${stateGlyph} ${agent.profile}${agent.phase && agent.phase !== 'work' ? ` ${glyphs.separator} ${agent.phase}` : ''}`, inner)}</Text>
               <Text color={theme.dim}>{truncateDisplay(`  ${route}`, inner)}</Text>
               <Text color={agent.alerts?.length ? theme.warning : theme.muted}>{truncateDisplay(`  ${activity}${glyphs.separator}${telemetry}`, inner)}</Text>
               {expanded && index === selectedIndex ? (
@@ -541,7 +541,7 @@ export function TeamWorkbench({items, tasks, width = 80, glyphMode = 'auto', vie
       )}
       <Box flexGrow={1} />
       <Text color={theme.dim}>{truncateDisplay(`${view === 'agents' ? `s stop ${glyphs.separator} r retry ${glyphs.separator} ` : ''}${expanded ? 'enter collapse' : 'enter inspect'}`, inner)}</Text>
-      <Text color={theme.dim}>{truncateDisplay('left/right view · up/down select · esc close', inner)}</Text>
+      <Text color={theme.dim}>{truncateDisplay(`left/right view ${glyphs.separator} up/down select ${glyphs.separator} esc close`, inner)}</Text>
       <Text color={theme.dim}>{truncateDisplay(`view ${viewLabel}`, inner)}</Text>
     </Box>
   );

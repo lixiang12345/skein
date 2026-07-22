@@ -11,6 +11,8 @@ import {
   PermissionCard,
   PromptBar,
   TaskRail,
+  TeamCockpit,
+  TeamWorkbench,
   Timeline,
 } from '../src/ui/components.js';
 import type {MosaicConfig, ToolCall} from '../src/types.js';
@@ -120,6 +122,13 @@ describe('terminal display safety', () => {
           <PermissionCard call={{id: 'permission', name: 'shell', arguments: {command: 'npm test'}}} category="shell" glyphMode="ascii" width={80} />
           <PromptBar busy={false} value="" placeholder="Type a request" glyphMode="ascii" width={80}><></></PromptBar>
           <Footer busy tokens={1200} maxTokens={10_000} changedFiles={1} glyphMode="ascii" width={80} themeName="graphite" />
+          <TeamCockpit glyphMode="ascii" width={40} items={[
+            {id: 'a1', kind: 'agent', profile: 'reviewer', task: 'inspect', state: 'running', phase: 'review', provider: 'openai', model: 'gpt', inputTokens: 100, outputTokens: 50, toolCalls: 2},
+            {id: 'm1', kind: 'agent-message', from: 'reviewer', to: 'lead', text: 'handoff ready'},
+          ]} />
+          <TeamWorkbench glyphMode="ascii" width={80} view="agents" selectedIndex={0} expanded items={[
+            {id: 'a1', kind: 'agent', profile: 'reviewer', task: 'inspect', state: 'running', phase: 'review', provider: 'openai', model: 'gpt', inputTokens: 100, outputTokens: 50, toolCalls: 2, summary: 'looks good'},
+          ]} tasks={[{id: 't1', title: 'Run tests', status: 'in_progress'}]} run={{id: 'run-1', objective: 'ship it', startedAt: Date.now(), reviewRounds: 1}} notice="review pending" />
         </>,
         {columns: 80},
       );
