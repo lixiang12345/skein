@@ -82,20 +82,27 @@
   </div>
 
   <!-- Tools -->
-  <h3 class="grp">⚙ Tools</h3>
+  <h3 class="grp">⚙ Built-in tools <span class="pill" style="font-weight:400">permission-scoped</span></h3>
   <div class="grid c4">
-    <article class="rcard"><div class="ico" style="color:var(--thread)">✎</div><h4>edit</h4><p>Structured file edits with diff preview.</p></article>
-    <article class="rcard"><div class="ico" style="color:var(--info)">$</div><h4>bash</h4><p>Sandboxed shell, per-command approval.</p></article>
-    <article class="rcard"><div class="ico" style="color:var(--weft)">⌕</div><h4>grep</h4><p>Ripgrep across the indexed tree.</p></article>
-    <article class="rcard"><div class="ico" style="color:var(--ok)">◷</div><h4>web.fetch</h4><p>Fetch + reader-mode a URL into context.</p></article>
+    <article class="rcard"><div class="ico" style="color:var(--info)">◇</div><h4>read</h4><p>Read a workspace file. <span class="c-ok">read</span> category — always allowed.</p></article>
+    <article class="rcard"><div class="ico" style="color:var(--thread)">✎</div><h4>apply_patch</h4><p>Targeted diff edits, checkpointed before write. <span class="c-warn">write</span>.</p></article>
+    <article class="rcard"><div class="ico" style="color:var(--thread)">▤</div><h4>write_file</h4><p>Whole-file create or replace. <span class="c-warn">write</span>, checkpointed.</p></article>
+    <article class="rcard"><div class="ico" style="color:var(--warn)">$</div><h4>shell</h4><p>Sandboxed command, per-command approval. <span class="c-err">shell</span>.</p></article>
+    <article class="rcard"><div class="ico" style="color:var(--weft)">⌕</div><h4>search</h4><p>Ranked retrieval across the indexed tree. <span class="c-ok">read</span>.</p></article>
+    <article class="rcard"><div class="ico" style="color:var(--weft)">◱</div><h4>list</h4><p>Directory listing with ignore-file awareness. <span class="c-ok">read</span>.</p></article>
+    <article class="rcard"><div class="ico" style="color:var(--info)">⎇</div><h4>git</h4><p>Diff, status, log, and staged commits. <span class="c-warn">git</span>.</p></article>
+    <article class="rcard"><div class="ico" style="color:var(--ok)">◎</div><h4>task</h4><p>Delegate a bounded read-only investigation to a subagent.</p></article>
   </div>
 
   <!-- Commands -->
-  <h3 class="grp">/ Slash commands</h3>
+  <h3 class="grp">/ Slash commands <span class="pill" style="font-weight:400">shipped</span></h3>
   <div class="grid c3">
-    <article class="rcard"><div style="display:flex;gap:10px;align-items:center"><span class="c-thread mono">/plan</span><span class="pill" style="margin-left:auto">built-in</span></div><p>Draft a step plan before touching code.</p></article>
-    <article class="rcard"><div style="display:flex;gap:10px;align-items:center"><span class="c-thread mono">/review</span><span class="pill" style="margin-left:auto">built-in</span></div><p>Adversarial diff review of the working tree.</p></article>
-    <article class="rcard"><div style="display:flex;gap:10px;align-items:center"><span class="c-weft mono">/ship</span><span class="pill weft" style="margin-left:auto">custom</span></div><p>Run checks, commit, open a PR from a template.</p></article>
+    <article class="rcard"><div style="display:flex;gap:10px;align-items:center"><span class="c-thread mono">/context pin</span><span class="pill thread" style="margin-left:auto">built-in</span></div><p>Pin a file so it is re-read every turn and survives compaction. Also <span class="mono">unpin</span>, <span class="mono">mute</span>, <span class="mono">list</span>.</p></article>
+    <article class="rcard"><div style="display:flex;gap:10px;align-items:center"><span class="c-thread mono">/audit</span><span class="pill thread" style="margin-left:auto">built-in</span></div><p>Replay the tool-and-permission timeline for the session, newest first, color-coded by outcome.</p></article>
+    <article class="rcard"><div style="display:flex;gap:10px;align-items:center"><span class="c-ok mono">/rollback</span><span class="pill ok" style="margin-left:auto">reversible</span></div><p>Restore the workspace from a pre-mutation checkpoint by id. Atomic, self-recovering.</p></article>
+    <article class="rcard"><div style="display:flex;gap:10px;align-items:center"><span class="c-thread mono">/mode</span><span class="pill" style="margin-left:auto">ask · plan · build</span></div><p>Switch between read-only Ask, planning Plan, and action-capable Build.</p></article>
+    <article class="rcard"><div style="display:flex;gap:10px;align-items:center"><span class="c-weft mono">/team</span><span class="pill weft" style="margin-left:auto">multi-model</span></div><p>Launch a routed specialist council with peer review and acceptance criteria.</p></article>
+    <article class="rcard"><div style="display:flex;gap:10px;align-items:center"><span class="c-thread mono">/compact</span><span class="pill" style="margin-left:auto">built-in</span></div><p>Summarize older turns into a faithful handoff to reclaim the window.</p></article>
   </div>
 
   <!-- Agents & Skills -->
