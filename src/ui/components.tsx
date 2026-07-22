@@ -600,12 +600,20 @@ export function TaskRail({tasks, width = 80, glyphMode = 'auto', maxItems}: {
   const rowWidth = safeWidth(width);
   const innerWidth = Math.max(1, rowWidth - 2);
   const done = tasks.filter((task) => task.status === 'completed').length;
+  const active = tasks.filter((task) => task.status === 'in_progress').length;
   const visibleLimit = Math.max(1, maxItems ?? (width < 48 ? 5 : 12));
+  const showMeter = rowWidth >= 40;
+  const meterWidth = Math.max(8, Math.min(innerWidth - displayWidth(`Plan  ${done}/${tasks.length} `), 32));
+  const meterSegments: MeterSegment[] = [
+    {label: 'done', value: done, color: theme.success},
+    {label: 'active', value: active, color: theme.accent},
+  ];
   return (
     <Box flexDirection="column" marginBottom={1} paddingLeft={2}>
       <Box>
         <Text bold color={theme.textStrong}>Plan</Text>
         <Text color={theme.dim}>  {done}/{tasks.length}</Text>
+        {showMeter ? <><Text> </Text><MeterBar segments={meterSegments} total={tasks.length} width={meterWidth} glyphs={glyphs} /></> : null}
       </Box>
       {tasks.slice(0, visibleLimit).map((task) => {
         const glyph = task.status === 'completed'
