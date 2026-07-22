@@ -463,6 +463,7 @@ async function recoverNamespace(
       if (recovered.status !== 'complete') {
         throw new Error(`Recovered namespace did not pass verification: ${recovered.conflicts.join(', ')}`);
       }
+      await verifyRollbackManifest(recovered);
     } catch (error) {
       await rename(destination, primary.path).catch(() => undefined);
       throw error;
