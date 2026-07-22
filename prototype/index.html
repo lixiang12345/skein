@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Skein — Prototype Gallery</title>
+<link rel="stylesheet" href="styles/tokens.css" />
+<link rel="stylesheet" href="styles/app.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="glyph">S</span> Skein <span class="pill thread" style="margin-left:6px">prototype</span></div>
+  <nav>
+    <a class="active" href="index.html">Overview</a>
+    <a href="01-session.html">Session</a>
+    <a href="02-context.html">Context</a>
+    <a href="03-models.html">Models</a>
+    <a href="04-audit.html">Audit</a>
+    <a href="05-resources.html">Resources</a>
+    <a href="06-design.html">Design system</a>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <section class="sec">
+    <div class="reveal">
+      <div class="eyebrow">Context-first · Model-agnostic · Auditable</div>
+      <h1 class="title">A terminal coding agent<br/>you can actually <span class="c-thread">see through.</span></h1>
+      <p class="lead">Skein is a CLI coding agent built to beat the best. Where Claude Code and Auggie hide the context window and the plan, Skein makes the agent's working memory a first-class, editable surface — swap models mid-task, and rewind any action from a signed audit log.</p>
+      <div style="display:flex; gap:12px; margin-top:24px; flex-wrap:wrap">
+        <a class="btn primary" href="01-session.html">▶ Open the session view</a>
+        <a class="btn" href="06-design.html">◑ Design system</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- What makes it different -->
+  <section class="sec">
+    <div class="eyebrow">Why it wins</div>
+    <h2 class="title">Three things the incumbents don't give you</h2>
+    <div class="grid c3" style="margin-top:20px">
+      <article class="rcard reveal">
+        <div class="ico" style="color:var(--thread)">◈</div>
+        <h4>Context you can edit</h4>
+        <p>A live <b>Context Loom</b> panel shows every file, symbol, and memory in the window — with token cost. Pin, mute, or evict anything. No more guessing what the model "remembers."</p>
+        <div class="foot"><span class="pill">vs Claude Code: opaque</span><span class="pill">vs Auggie: opaque</span></div>
+      </article>
+      <article class="rcard reveal" style="animation-delay:.05s">
+        <div class="ico" style="color:var(--weft)">⇄</div>
+        <h4>Models, mid-flight</h4>
+        <p>Route planning to one model and edits to another. Hot-swap Anthropic → OpenAI → a local model on the same thread without losing state. Cost & latency shown per turn.</p>
+        <div class="foot"><span class="pill">Anthropic</span><span class="pill">OpenAI</span><span class="pill">Local</span></div>
+      </article>
+      <article class="rcard reveal" style="animation-delay:.1s">
+        <div class="ico" style="color:var(--ok)">⟲</div>
+        <h4>Every action reversible</h4>
+        <p>Each edit, command, and tool call lands in an append-only, hash-chained ledger. Scrub the timeline, diff any point, and roll the whole workspace back to a checkpoint.</p>
+        <div class="foot"><span class="pill">signed</span><span class="pill">reversible</span></div>
+      </article>
+    </div>
+  </section>
+
+  <!-- Screen gallery -->
+  <section class="sec">
+    <div class="eyebrow">Screens</div>
+    <h2 class="title">The prototype set</h2>
+    <div class="grid c2" style="margin-top:20px">
+
+      <a class="rcard reveal" href="01-session.html" style="text-decoration:none">
+        <div style="display:flex; align-items:center; gap:12px">
+          <div class="ico" style="color:var(--thread)">▤</div>
+          <div><h4>01 · Session workspace</h4><p class="faint mono" style="font-size:11px">the flagship three-pane TUI</p></div>
+        </div>
+        <p>Conversation stream with inline tool calls, diffs, and a live plan. Command palette, mode switch, and the status footer.</p>
+      </a>
+
+      <a class="rcard reveal" href="02-context.html" style="text-decoration:none; animation-delay:.05s">
+        <div style="display:flex; align-items:center; gap:12px">
+          <div class="ico" style="color:var(--info)">◈</div>
+          <div><h4>02 · Context Loom</h4><p class="faint mono" style="font-size:11px">the differentiator</p></div>
+        </div>
+        <p>The editable context window: sources, token budget meter, pin/mute controls, retrieval trace.</p>
+      </a>
+
+      <a class="rcard reveal" href="03-models.html" style="text-decoration:none; animation-delay:.1s">
+        <div style="display:flex; align-items:center; gap:12px">
+          <div class="ico" style="color:var(--weft)">⇄</div>
+          <div><h4>03 · Model router</h4><p class="faint mono" style="font-size:11px">model-agnostic</p></div>
+        </div>
+        <p>Provider cards, per-role routing, live cost/latency, and the mid-session swap flow.</p>
+      </a>
+
+      <a class="rcard reveal" href="04-audit.html" style="text-decoration:none; animation-delay:.15s">
+        <div style="display:flex; align-items:center; gap:12px">
+          <div class="ico" style="color:var(--ok)">⟲</div>
+          <div><h4>04 · Audit timeline</h4><p class="faint mono" style="font-size:11px">auditable workspace</p></div>
+        </div>
+        <p>Hash-chained event ledger, checkpoint scrubber, and one-key rollback with preview.</p>
+      </a>
+
+      <a class="rcard reveal" href="05-resources.html" style="text-decoration:none; animation-delay:.2s">
+        <div style="display:flex; align-items:center; gap:12px">
+          <div class="ico" style="color:var(--warn)">◆</div>
+          <div><h4>05 · Resources &amp; tools</h4><p class="faint mono" style="font-size:11px">icon card library</p></div>
+        </div>
+        <p>MCP servers, tools, slash-commands, agents, and skills as a browsable resource grid.</p>
+      </a>
+
+      <a class="rcard reveal" href="06-design.html" style="text-decoration:none; animation-delay:.25s">
+        <div style="display:flex; align-items:center; gap:12px">
+          <div class="ico" style="color:var(--tx-hi)">◑</div>
+          <div><h4>06 · Design system</h4><p class="faint mono" style="font-size:11px">tokens &amp; components</p></div>
+        </div>
+        <p>Color, type, iconography, pills, and the interaction-state reference.</p>
+      </a>
+
+    </div>
+  </section>
+
+  <footer class="footer wrap">
+    Skein prototype · designed to surpass Claude Code &amp; Auggie on transparency, portability, and safety.
+    References: <a href="https://docs.anthropic.com/en/docs/claude-code/overview">Claude Code</a> ·
+    <a href="https://docs.augmentcode.com/cli/overview">Auggie</a> ·
+    <a href="https://aider.chat">Aider</a> ·
+    <a href="https://github.com/google-gemini/gemini-cli">Gemini CLI</a>
+  </footer>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Skein — Context Loom</title>
+<link rel="stylesheet" href="styles/tokens.css" />
+<link rel="stylesheet" href="styles/app.css" />
+<style>
+  .ctxgrid { display:grid; grid-template-columns: 1.6fr 1fr; gap:16px; }
+  @media (max-width:960px){ .ctxgrid { grid-template-columns:1fr; } }
+
+  /* budget bar */
+  .budget { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+  .bigmeter { flex:1; min-width:280px; height:18px; border-radius:var(--r-pill); background:var(--bg-active); overflow:hidden; display:flex; border:1px solid var(--line); }
+  .bigmeter i { height:100%; display:block; position:relative; }
+  .legend { display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:var(--tx-dim); }
+  .legend span { display:flex; align-items:center; gap:6px; }
+  .legend .sw { width:10px; height:10px; border-radius:3px; }
+
+  /* source rows */
+  .srcs { display:flex; flex-direction:column; gap:6px; margin-top:4px; }
+  .src { display:grid; grid-template-columns: 22px 1fr auto auto; align-items:center; gap:10px;
+    padding:9px 12px; border:1px solid var(--line); border-radius:var(--r-sm); background:var(--bg-raised); font-family:var(--mono); font-size:12.5px; }
+  .src:hover { border-color:var(--line-strong); background:var(--bg-raised-2); }
+  .src.pinned { border-left:2px solid var(--thread); }
+  .src.muted { opacity:.5; }
+  .src .ic { text-align:center; }
+  .src .nm { color:var(--tx-hi); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .src .nm small { color:var(--tx-faint); font-size:10.5px; }
+  .src .tok { color:var(--tx-dim); font-size:11px; }
+  .src .acts { display:flex; gap:4px; }
+  .src .acts b { font-size:11px; padding:2px 7px; border-radius:6px; border:1px solid var(--line); color:var(--tx-dim); cursor:pointer; font-weight:500; }
+  .src .acts b:hover { color:var(--tx-hi); border-color:var(--line-strong); background:var(--bg-hover); }
+  .src .acts b.on { color:var(--thread); border-color:var(--thread-deep); background:var(--thread-glow); }
+
+  .trace { font-family:var(--mono); font-size:12px; color:var(--tx-dim); display:flex; flex-direction:column; gap:8px; }
+  .trace .t { display:flex; gap:9px; align-items:flex-start; }
+  .trace .t .n { color:var(--tx-ghost); }
+  .trace .score { margin-left:auto; color:var(--thread); }
+
+  .knob { display:flex; align-items:center; justify-content:space-between; padding:9px 0; border-bottom:1px solid var(--line-soft); font-size:13px; }
+  .knob:last-child { border-bottom:none; }
+  .toggle { width:38px; height:21px; border-radius:var(--r-pill); background:var(--bg-active); position:relative; border:1px solid var(--line); }
+  .toggle.on { background:var(--thread-glow); border-color:var(--thread-deep); }
+  .toggle i { position:absolute; top:2px; left:2px; width:15px; height:15px; border-radius:50%; background:var(--tx-faint); transition:.15s; }
+  .toggle.on i { left:19px; background:var(--thread); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="glyph">S</span> Skein</div>
+  <nav>
+    <a href="index.html">Overview</a>
+    <a href="01-session.html">Session</a>
+    <a class="active" href="02-context.html">Context</a>
+    <a href="03-models.html">Models</a>
+    <a href="04-audit.html">Audit</a>
+    <a href="05-resources.html">Resources</a>
+    <a href="06-design.html">Design system</a>
+  </nav>
+</header>
+
+<main class="wrap" style="padding-top:18px; padding-bottom:40px">
+  <div class="eyebrow">02 · Context Loom</div>
+  <h2 class="title" style="margin-bottom:6px">The context window, made of glass</h2>
+  <p class="lead" style="margin-bottom:22px">Every token the model sees, itemized and under your control. This is the panel Claude Code and Auggie don't have: you can pin what matters, mute the noise, and watch retrieval decisions in real time.</p>
+
+  <!-- budget -->
+  <div class="card" style="margin-bottom:16px">
+    <div class="budget">
+      <div>
+        <div style="font-size:var(--fs-2xl); color:var(--tx-hi); font-weight:700; font-family:var(--mono)">78,240 <span class="faint" style="font-size:14px">/ 128k tokens</span></div>
+        <div class="faint" style="font-size:12px">61% of window · headroom for ~4 more file reads</div>
+      </div>
+      <div class="bigmeter" title="context composition">
+        <i style="width:22%; background:var(--thread)"></i>
+        <i style="width:16%; background:var(--weft)"></i>
+        <i style="width:12%; background:var(--info)"></i>
+        <i style="width:7%;  background:var(--warn)"></i>
+        <i style="width:4%;  background:var(--tx-faint)"></i>
+      </div>
+    </div>
+    <div class="legend" style="margin-top:14px">
+      <span><span class="sw" style="background:var(--thread)"></span> Pinned files 28k</span>
+      <span><span class="sw" style="background:var(--weft)"></span> Working set 20k</span>
+      <span><span class="sw" style="background:var(--info)"></span> Retrieved 15k</span>
+      <span><span class="sw" style="background:var(--warn)"></span> Memory 9k</span>
+      <span><span class="sw" style="background:var(--tx-faint)"></span> System 5k</span>
+    </div>
+  </div>
+
+  <div class="ctxgrid">
+    <!-- sources -->
+    <div class="card">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px">
+        <h4 style="margin:0; color:var(--tx-hi)">Sources in window</h4>
+        <span class="pill">14 items</span>
+        <span class="pill thread" style="margin-left:auto">＋ add file / url / symbol</span>
+      </div>
+      <div class="srcs">
+        <div class="src pinned">
+          <span class="ic c-thread">📌</span>
+          <span class="nm">src/mw/rate-limit.ts <small>· whole file</small></span>
+          <span class="tok">3.1k</span>
+          <span class="acts"><b class="on">pin</b><b>mute</b><b>evict</b></span>
+        </div>
+        <div class="src pinned">
+          <span class="ic c-thread">📌</span>
+          <span class="nm">src/mw/index.ts <small>· symbols: applyLimiter</small></span>
+          <span class="tok">0.9k</span>
+          <span class="acts"><b class="on">pin</b><b>mute</b><b>evict</b></span>
+        </div>
+        <div class="src">
+          <span class="ic c-weft">◈</span>
+          <span class="nm">bench/burst.js <small>· working set</small></span>
+          <span class="tok">1.8k</span>
+          <span class="acts"><b>pin</b><b>mute</b><b>evict</b></span>
+        </div>
+        <div class="src">
+          <span class="ic c-info">⌕</span>
+          <span class="nm">retrieved · token-bucket algorithm <small>· web</small></span>
+          <span class="tok">1.5k</span>
+          <span class="acts"><b>pin</b><b>mute</b><b>evict</b></span>
+        </div>
+        <div class="src">
+          <span class="ic c-warn">◆</span>
+          <span class="nm">memory · project style guide</span>
+          <span class="tok">1.1k</span>
+          <span class="acts"><b>pin</b><b>mute</b><b>evict</b></span>
+        </div>
+        <div class="src muted">
+          <span class="ic">🔇</span>
+          <span class="nm">CHANGELOG.md <small>· muted — stale</small></span>
+          <span class="tok">2.4k</span>
+          <span class="acts"><b>pin</b><b class="on">mute</b><b>evict</b></span>
+        </div>
+        <div class="src">
+          <span class="ic c-info">⌕</span>
+          <span class="nm">retrieved · similar PR #482 <small>· git history</small></span>
+          <span class="tok">0.8k</span>
+          <span class="acts"><b>pin</b><b>mute</b><b>evict</b></span>
+        </div>
+      </div>
+      <p class="faint mono" style="font-size:11px; margin-top:12px">Muted sources stay listed but cost 0 tokens. Evicting is reversible from the audit log. Pins survive compaction.</p>
+    </div>
+
+    <!-- retrieval trace + controls -->
+    <div style="display:flex; flex-direction:column; gap:16px">
+      <div class="card">
+        <h4 style="margin:0 0 10px; color:var(--tx-hi)">Why these? — retrieval trace</h4>
+        <div class="trace">
+          <div class="t"><span class="n">1</span> matched <b class="c-hi" style="margin:0 4px">“rate limit 500”</b> → rate-limit.ts <span class="score">0.94</span></div>
+          <div class="t"><span class="n">2</span> call-graph neighbor of edited symbol <span class="score">0.88</span></div>
+          <div class="t"><span class="n">3</span> semantic · token-bucket docs <span class="score">0.71</span></div>
+          <div class="t"><span class="n">4</span> git · touched same file 30d <span class="score">0.63</span></div>
+          <div class="t faint"><span class="n">5</span> dropped · below 0.4 threshold — 6 files</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h4 style="margin:0 0 6px; color:var(--tx-hi)">Loom controls</h4>
+        <div class="knob"><span>Auto-retrieve on prompt</span><span class="toggle on"><i></i></span></div>
+        <div class="knob"><span>Compact at 90% <small class="faint">· summarize oldest</small></span><span class="toggle on"><i></i></span></div>
+        <div class="knob"><span>Include git history</span><span class="toggle on"><i></i></span></div>
+        <div class="knob"><span>Pin project memory</span><span class="toggle"><i></i></span></div>
+        <div class="knob"><span>Warn before eviction</span><span class="toggle on"><i></i></span></div>
+      </div>
+    </div>
+  </div>
+
+  <p class="faint mono" style="font-size:11px; margin-top:18px">Keys: <kbd>p</kbd> pin · <kbd>m</kbd> mute · <kbd>x</kbd> evict · <kbd>/</kbd> filter sources · <kbd>⌘⏎</kbd> re-run retrieval. The whole window is inspectable and reversible.</p>
+</main>
+</body>
+</html>

@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Skein — Model Router</title>
+<link rel="stylesheet" href="styles/tokens.css" />
+<link rel="stylesheet" href="styles/app.css" />
+<style>
+  .provs { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+  @media (max-width:960px){ .provs { grid-template-columns:repeat(2,1fr);} }
+  @media (max-width:560px){ .provs { grid-template-columns:1fr;} }
+  .prov { padding:14px; border:1px solid var(--line); border-radius:var(--r-md); background:var(--bg-raised); position:relative; }
+  .prov.active { border-color:var(--thread-deep); box-shadow:var(--glow); }
+  .prov .top { display:flex; align-items:center; gap:9px; margin-bottom:10px; }
+  .prov .logo { width:30px; height:30px; border-radius:8px; display:grid; place-items:center; font-weight:800; font-size:13px; color:#0a0d12; }
+  .prov h4 { margin:0; color:var(--tx-hi); font-size:13.5px; }
+  .prov .meta { font-size:11px; color:var(--tx-faint); font-family:var(--mono); }
+  .prov .stat { display:flex; justify-content:space-between; font-size:11.5px; padding:3px 0; color:var(--tx-dim); font-family:var(--mono); }
+  .prov .stat b { color:var(--tx-hi); font-weight:600; }
+  .prov .ontag { position:absolute; top:12px; right:12px; }
+
+  .routes { display:flex; flex-direction:column; gap:8px; }
+  .route { display:grid; grid-template-columns: 130px 1fr auto; align-items:center; gap:14px; padding:11px 14px; border:1px solid var(--line); border-radius:var(--r-md); background:var(--bg-raised); }
+  .route .role { color:var(--tx-hi); font-weight:600; font-size:13px; display:flex; align-items:center; gap:8px; }
+  .route .pick { font-family:var(--mono); font-size:12.5px; color:var(--tx); display:flex; align-items:center; gap:9px; }
+  .route .pick .swatch { width:9px; height:9px; border-radius:3px; }
+  .route .why { font-size:11px; color:var(--tx-faint); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="glyph">S</span> Skein</div>
+  <nav>
+    <a href="index.html">Overview</a>
+    <a href="01-session.html">Session</a>
+    <a href="02-context.html">Context</a>
+    <a class="active" href="03-models.html">Models</a>
+    <a href="04-audit.html">Audit</a>
+    <a href="05-resources.html">Resources</a>
+    <a href="06-design.html">Design system</a>
+  </nav>
+</header>
+
+<main class="wrap" style="padding-top:18px; padding-bottom:40px">
+  <div class="eyebrow">03 · Model Router</div>
+  <h2 class="title" style="margin-bottom:6px">One thread. Any model. Swap mid-task.</h2>
+  <p class="lead" style="margin-bottom:22px">Skein is model-agnostic by design. Route each role — planning, editing, review, embeddings — to the provider that's best or cheapest, and change your mind on turn 40 without losing the thread.</p>
+
+  <!-- providers -->
+  <h4 style="color:var(--tx-hi); margin:0 0 12px">Connected providers</h4>
+  <div class="provs" style="margin-bottom:22px">
+    <div class="prov active">
+      <span class="ontag pill ok"><span class="dot ok"></span>live</span>
+      <div class="top"><span class="logo" style="background:var(--m-anthropic)">A</span><div><h4>Anthropic</h4><div class="meta">claude-opus-4</div></div></div>
+      <div class="stat"><span>latency</span><b>1.9s</b></div>
+      <div class="stat"><span>$ / 1M in</span><b>$15.00</b></div>
+      <div class="stat"><span>context</span><b>200k</b></div>
+    </div>
+    <div class="prov active">
+      <span class="ontag pill ok"><span class="dot ok"></span>live</span>
+      <div class="top"><span class="logo" style="background:var(--m-openai)">O</span><div><h4>OpenAI</h4><div class="meta">gpt-5.1-codex</div></div></div>
+      <div class="stat"><span>latency</span><b>1.2s</b></div>
+      <div class="stat"><span>$ / 1M in</span><b>$10.00</b></div>
+      <div class="stat"><span>context</span><b>256k</b></div>
+    </div>
+    <div class="prov">
+      <span class="ontag pill"><span class="dot"></span>idle</span>
+      <div class="top"><span class="logo" style="background:var(--m-google)">G</span><div><h4>Google</h4><div class="meta">gemini-3-pro</div></div></div>
+      <div class="stat"><span>latency</span><b>1.5s</b></div>
+      <div class="stat"><span>$ / 1M in</span><b>$7.00</b></div>
+      <div class="stat"><span>context</span><b>1M</b></div>
+    </div>
+    <div class="prov">
+      <span class="ontag pill"><span class="dot"></span>ready</span>
+      <div class="top"><span class="logo" style="background:var(--m-local)">L</span><div><h4>Local</h4><div class="meta">qwen3-coder · ollama</div></div></div>
+      <div class="stat"><span>latency</span><b>0.6s</b></div>
+      <div class="stat"><span>$ / 1M in</span><b class="c-ok">$0.00</b></div>
+      <div class="stat"><span>context</span><b>128k</b></div>
+    </div>
+  </div>
+
+  <!-- routing table -->
+  <div class="card" style="margin-bottom:16px">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px">
+      <h4 style="margin:0; color:var(--tx-hi)">Role routing</h4>
+      <span class="pill weft" style="margin-left:auto">preset: cost-aware</span>
+    </div>
+    <div class="routes">
+      <div class="route">
+        <span class="role">◈ Plan</span>
+        <span class="pick"><span class="swatch" style="background:var(--m-anthropic)"></span> Anthropic · claude-opus-4</span>
+        <span class="why">deep reasoning</span>
+      </div>
+      <div class="route">
+        <span class="role">✎ Edit</span>
+        <span class="pick"><span class="swatch" style="background:var(--m-openai)"></span> OpenAI · gpt-5.1-codex</span>
+        <span class="why">fast, cheap diffs</span>
+      </div>
+      <div class="route">
+        <span class="role">⚑ Review</span>
+        <span class="pick"><span class="swatch" style="background:var(--m-anthropic)"></span> Anthropic · claude-opus-4</span>
+        <span class="why">catches regressions</span>
+      </div>
+      <div class="route">
+        <span class="role">⌕ Embed</span>
+        <span class="pick"><span class="swatch" style="background:var(--m-local)"></span> Local · nomic-embed</span>
+        <span class="why">$0 · never leaves box</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- swap flow -->
+  <div class="term">
+    <div class="chrome">
+      <div class="traffic"><i></i><i></i><i></i></div>
+      <div class="ttitle">skein <span class="sep">›</span> swap flow</div>
+      <div class="right">turn 41</div>
+    </div>
+    <div class="body">
+      <div class="line"><span class="c-faint">›</span> <span class="c-hi">/model edit local</span></div>
+      <div class="line c-dim" style="margin-top:6px">Rerouting role <b class="c-hi">edit</b> → <b class="c-hi">Local · qwen3-coder</b></div>
+      <div class="tool" style="border-left-color:var(--weft)">
+        <div class="th"><span class="c-weft">⇄</span> Handoff <span class="badge done" style="margin-left:auto">state preserved</span></div>
+        <div class="tb">
+          ✓ 78k-token context transferred<br/>
+          ✓ open plan + 3 pins carried over<br/>
+          ✓ tool permissions re-scoped for local runtime<br/>
+          <span class="c-faint">no re-indexing — thread continues on turn 41</span>
+        </div>
+      </div>
+      <div class="line c-ok" style="margin-top:4px">✓ edits now run on-device · est. savings this session <b>$0.42</b></div>
+    </div>
+  </div>
+
+  <p class="faint mono" style="font-size:11px; margin-top:18px">Keys: <kbd>⌘M</kbd> model menu · <kbd>/model &lt;role&gt; &lt;provider&gt;</kbd> reroute · <kbd>⌘⇧M</kbd> compare side-by-side on the same prompt.</p>
+</main>
+</body>
+</html>

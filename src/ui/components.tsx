@@ -73,6 +73,8 @@ interface UiGlyphs {
   up: string;
   down: string;
   swatch: string;
+  meterFull: string;
+  meterEmpty: string;
   separator: string;
   arrow: string;
   collapsed: string;
@@ -102,6 +104,8 @@ const unicodeGlyphs: UiGlyphs = {
   up: '↑',
   down: '↓',
   swatch: '●',
+  meterFull: '█',
+  meterEmpty: '░',
   separator: '·',
   arrow: '→',
   collapsed: '›',
@@ -131,6 +135,8 @@ const asciiGlyphs: UiGlyphs = {
   up: 'up',
   down: 'dn',
   swatch: '*',
+  meterFull: '#',
+  meterEmpty: '.',
   separator: '|',
   arrow: '->',
   collapsed: '>',
@@ -989,11 +995,13 @@ export function ActivityLine({activity, frame, width = 80}: {activity?: Activity
   );
 }
 
-export function ListPanel({title, entries, width = 80, glyphMode = 'auto'}: {
+export function ListPanel({title, entries, width = 80, glyphMode = 'auto', hideTitle = false, header}: {
   title: string;
   entries: ListEntry[];
   width?: number;
   glyphMode?: GlyphMode;
+  hideTitle?: boolean;
+  header?: React.ReactNode;
 }) {
   const theme = useTheme();
   const glyphs = resolveGlyphs(glyphMode);
@@ -1002,7 +1010,8 @@ export function ListPanel({title, entries, width = 80, glyphMode = 'auto'}: {
   const titleText = sanitizeInlineTerminalText(title);
   return (
     <Box flexDirection="column" marginBottom={1} paddingLeft={2}>
-      <Text bold color={theme.textStrong}>{truncateDisplay(titleText, innerWidth)}</Text>
+      {hideTitle ? null : <Text bold color={theme.textStrong}>{truncateDisplay(titleText, innerWidth)}</Text>}
+      {header ?? null}
       {entries.length ? entries.map((entry, index) => {
         const color = entry.tone === 'success' ? theme.success
           : entry.tone === 'warning' ? theme.warning
@@ -1027,6 +1036,52 @@ export function ListPanel({title, entries, width = 80, glyphMode = 'auto'}: {
           </Box>
         );
       }) : <Text color={theme.dim}>{glyphs.bullet} none</Text>}
+    </Box>
+  );
+}
+
+interface MeterSegment {
+  label: string;
+  value: number;
+  color: string;
+}
+
+/**
+ * A single-row composition meter: proportional filled cells per segment plus a
+ * muted remainder for headroom. The Loom's signature — it turns the abstract
+ * "context pressure" number into a visible budget you can read at a glance.
+ */
+export function MeterBar({segments, total, width, glyphs}: {
+  segments: MeterSegment[];
+  total: number;
+  width: number;
+  glyphs: UiGlyphs;
+}) {
+  const theme = useTheme();
+  const cells = Math.max(4, safeWidth(width));
+  const denominator = Math.max(total, segments.reduce((sum, segment) => sum + Math.max(0, segment.value), 0), 1);
+  let used = 0;
+  const filled = segments
+    .filter((segment) => segment.value > 0)
+    .map((segment) => {
+      const count = Math.max(1, Math.round((segment.value / denominator) * cells));
+      return {...segment, count};
+    });
+  // Never let rounding push the fill past the track width.
+  let overflow = filled.reduce((sum, segment) => sum + segment.count, 0) - cells;
+  for (let index = filled.length - 1; overflow > 0 && index >= 0; index -= 1) {
+    const take = Math.min(overflow, (filled[index]!.count) - 1);
+    filled[index]!.count -= take;
+    overflow -= take;
+  }
+  used = filled.reduce((sum, segment) => sum + segment.count, 0);
+  const remainder = Math.max(0, cells - used);
+  return (
+    <Box>
+      {filled.map((segment, index) => (
+        <Text key={`${segment.label}-${index}`} color={segment.color}>{glyphs.meterFull.repeat(segment.count)}</Text>
+      ))}
+      {remainder ? <Text color={theme.border}>{glyphs.meterEmpty.repeat(remainder)}</Text> : null}
     </Box>
   );
 }
@@ -1074,7 +1129,32 @@ export function ContextInspector({status, working, summary, width, memory, conne
   if (!compact && working?.openQuestions.length) entries.push({label: `open ${working.openQuestions.length}`, detail: working.openQuestions.slice(0, 2).join(` ${glyphs.separator} `), tone: 'warning'});
   if (!compact && working?.relevantFiles.length) entries.push({label: 'relevant files', detail: working.relevantFiles.map((file) => compactDisplayPath(sanitizeInlineTerminalText(file), 28)).join(` ${glyphs.separator} `)});
   if (connections) entries.push({label: 'connections', detail: connections});
-  return <ListPanel title={`Context ${formatPercent(status.pressure)}`} entries={entries} width={width} glyphMode={glyphMode} />;
+  const rowWidth = safeWidth(width);
+  const innerWidth = Math.max(1, rowWidth - 2);
+  const pressureColor = status.pressure >= 0.9 ? theme.error : status.pressure >= 0.75 ? theme.warning : theme.accent;
+  const summaryTokens = summary ? status.summaryTokens : 0;
+  const segments: MeterSegment[] = [
+    {label: 'active', value: status.activeTokens, color: theme.accent},
+    {label: 'tools', value: status.toolTokens, color: theme.assistant},
+    {label: 'summary', value: summaryTokens, color: theme.warning},
+  ];
+  // Scale the track to the same pressure the footer reports, so the remainder
+  // reads as real headroom rather than an artifact of the segment sum.
+  const meterTotal = status.pressure > 0
+    ? (status.activeTokens + status.toolTokens + summaryTokens) / status.pressure
+    : status.activeTokens + status.toolTokens + summaryTokens;
+  const showMeter = rowWidth >= 32;
+  const meterWidth = Math.max(8, Math.min(innerWidth - displayWidth(`Context ${formatPercent(status.pressure)} `), 48));
+  return (
+    <Box flexDirection="column" marginBottom={1} paddingLeft={2}>
+      <Box>
+        <Text bold color={theme.textStrong}>{`Context `}</Text>
+        <Text bold color={pressureColor}>{formatPercent(status.pressure)}</Text>
+        {showMeter ? <><Text> </Text><MeterBar segments={segments} total={meterTotal} width={meterWidth} glyphs={glyphs} /></> : null}
+      </Box>
+      <ListPanel title="" hideTitle entries={entries} width={width} glyphMode={glyphMode} />
+    </Box>
+  );
 }
 
 function ThemePreview({name, width, glyphs}: {name: string; width: number; glyphs: UiGlyphs}) {

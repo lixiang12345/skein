@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Skein — Resources & Tools</title>
+<link rel="stylesheet" href="styles/tokens.css" />
+<link rel="stylesheet" href="styles/app.css" />
+<style>
+  .seg { display:inline-flex; gap:2px; padding:3px; border:1px solid var(--line); border-radius:var(--r-pill); background:var(--bg-raised); margin-bottom:20px; }
+  .seg a { padding:6px 15px; border-radius:var(--r-pill); font-size:12px; color:var(--tx-dim); }
+  .seg a.on { background:var(--bg-active); color:var(--tx-hi); }
+  .status-dot { width:7px; height:7px; border-radius:50%; display:inline-block; }
+  .rcard .kv { display:flex; gap:10px; font-family:var(--mono); font-size:10.5px; color:var(--tx-faint); }
+  .rcard .actions { display:flex; gap:6px; margin-top:auto; padding-top:6px; }
+  .mini { font-size:11px; padding:5px 10px; border-radius:var(--r-sm); border:1px solid var(--line); background:var(--bg-raised-2); color:var(--tx-dim); cursor:pointer; }
+  .mini:hover { color:var(--tx-hi); border-color:var(--line-strong); }
+  h3.grp { color:var(--tx-hi); font-size:15px; margin:26px 0 12px; display:flex; align-items:center; gap:10px; }
+  h3.grp::after { content:""; flex:1; height:1px; background:var(--line-soft); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="glyph">S</span> Skein</div>
+  <nav>
+    <a href="index.html">Overview</a>
+    <a href="01-session.html">Session</a>
+    <a href="02-context.html">Context</a>
+    <a href="03-models.html">Models</a>
+    <a href="04-audit.html">Audit</a>
+    <a class="active" href="05-resources.html">Resources</a>
+    <a href="06-design.html">Design system</a>
+  </nav>
+</header>
+
+<main class="wrap" style="padding-top:18px; padding-bottom:40px">
+  <div class="eyebrow">05 · Resources &amp; Tools</div>
+  <h2 class="title" style="margin-bottom:6px">Everything the agent can reach, in one browsable grid.</h2>
+  <p class="lead" style="margin-bottom:20px">MCP servers, tools, slash-commands, subagents, and skills — each a card with live status, scope, and one-tap enable. Type <kbd>/</kbd> in a session to fuzzy-search all of it.</p>
+
+  <div class="seg">
+    <a class="on">All</a><a>MCP servers</a><a>Tools</a><a>Commands</a><a>Agents</a><a>Skills</a>
+  </div>
+
+  <!-- MCP servers -->
+  <h3 class="grp">◆ MCP servers <span class="pill" style="font-weight:400">4 connected</span></h3>
+  <div class="grid c3">
+    <article class="rcard">
+      <div style="display:flex; align-items:center; gap:10px">
+        <div class="ico" style="color:var(--thread)">◱</div>
+        <span class="status-dot" style="background:var(--ok)"></span>
+        <span class="mono faint" style="font-size:10px; margin-left:auto">stdio</span>
+      </div>
+      <h4>filesystem</h4>
+      <p>Sandboxed read/write over the repo root with ignore-file awareness.</p>
+      <div class="kv"><span>12 tools</span><span>·</span><span>scope: repo</span></div>
+      <div class="actions"><button class="mini">Inspect</button><button class="mini">Logs</button></div>
+    </article>
+    <article class="rcard">
+      <div style="display:flex; align-items:center; gap:10px">
+        <div class="ico" style="color:var(--info)">◵</div>
+        <span class="status-dot" style="background:var(--ok)"></span>
+        <span class="mono faint" style="font-size:10px; margin-left:auto">http</span>
+      </div>
+      <h4>github</h4>
+      <p>Issues, PRs, and Actions. OAuth-scoped, read by default.</p>
+      <div class="kv"><span>23 tools</span><span>·</span><span>scope: org</span></div>
+      <div class="actions"><button class="mini">Inspect</button><button class="mini">Auth</button></div>
+    </article>
+    <article class="rcard">
+      <div style="display:flex; align-items:center; gap:10px">
+        <div class="ico" style="color:var(--weft)">◈</div>
+        <span class="status-dot" style="background:var(--warn)"></span>
+        <span class="mono faint" style="font-size:10px; margin-left:auto">http</span>
+      </div>
+      <h4>postgres</h4>
+      <p>Read-only introspection + query. Awaiting credential.</p>
+      <div class="kv"><span>6 tools</span><span>·</span><span class="c-warn">needs auth</span></div>
+      <div class="actions"><button class="mini">Connect</button></div>
+    </article>
+  </div>
+
+  <!-- Tools -->
+  <h3 class="grp">⚙ Tools</h3>
+  <div class="grid c4">
+    <article class="rcard"><div class="ico" style="color:var(--thread)">✎</div><h4>edit</h4><p>Structured file edits with diff preview.</p></article>
+    <article class="rcard"><div class="ico" style="color:var(--info)">$</div><h4>bash</h4><p>Sandboxed shell, per-command approval.</p></article>
+    <article class="rcard"><div class="ico" style="color:var(--weft)">⌕</div><h4>grep</h4><p>Ripgrep across the indexed tree.</p></article>
+    <article class="rcard"><div class="ico" style="color:var(--ok)">◷</div><h4>web.fetch</h4><p>Fetch + reader-mode a URL into context.</p></article>
+  </div>
+
+  <!-- Commands -->
+  <h3 class="grp">/ Slash commands</h3>
+  <div class="grid c3">
+    <article class="rcard"><div style="display:flex;gap:10px;align-items:center"><span class="c-thread mono">/plan</span><span class="pill" style="margin-left:auto">built-in</span></div><p>Draft a step plan before touching code.</p></article>
+    <article class="rcard"><div style="display:flex;gap:10px;align-items:center"><span class="c-thread mono">/review</span><span class="pill" style="margin-left:auto">built-in</span></div><p>Adversarial diff review of the working tree.</p></article>
+    <article class="rcard"><div style="display:flex;gap:10px;align-items:center"><span class="c-weft mono">/ship</span><span class="pill weft" style="margin-left:auto">custom</span></div><p>Run checks, commit, open a PR from a template.</p></article>
+  </div>
+
+  <!-- Agents & Skills -->
+  <div class="grid c2">
+    <div>
+      <h3 class="grp">◎ Subagents</h3>
+      <article class="rcard" style="margin-bottom:12px"><div style="display:flex;gap:10px;align-items:center"><div class="ico" style="color:var(--thread)">◎</div><h4 style="margin:0">explorer</h4><span class="pill thread" style="margin-left:auto">read-only</span></div><p>Fans out across the repo to answer "where/how" without spending main context.</p></article>
+      <article class="rcard"><div style="display:flex;gap:10px;align-items:center"><div class="ico" style="color:var(--weft)">◎</div><h4 style="margin:0">reviewer</h4><span class="pill weft" style="margin-left:auto">adversarial</span></div><p>Independent critic that verifies changes before they land.</p></article>
+    </div>
+    <div>
+      <h3 class="grp">✦ Skills</h3>
+      <article class="rcard" style="margin-bottom:12px"><div style="display:flex;gap:10px;align-items:center"><div class="ico" style="color:var(--ok)">✦</div><h4 style="margin:0">migrate-db</h4><span class="pill ok" style="margin-left:auto">project</span></div><p>Encoded playbook for safe, reversible schema migrations.</p></article>
+      <article class="rcard"><div style="display:flex;gap:10px;align-items:center"><div class="ico" style="color:var(--info)">✦</div><h4 style="margin:0">design-sync</h4><span class="pill" style="margin-left:auto">shared</span></div><p>Keeps the local component library in step with the design source.</p></article>
+    </div>
+  </div>
+</main>
+</body>
+</html>

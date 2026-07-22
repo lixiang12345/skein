@@ -1,0 +1,79 @@
+/* ============================================================
+   SKEIN — Design Tokens
+   A context-first, model-agnostic coding agent.
+   Terminal-native aesthetic, modern surface treatment.
+   ============================================================ */
+
+:root {
+  /* ---- Core palette : "Graphite Loom" ---- */
+  --bg-void:        #07090d;   /* deepest app background */
+  --bg-base:        #0b0e14;   /* terminal surface */
+  --bg-raised:      #11151f;   /* panels, cards */
+  --bg-raised-2:    #161b28;   /* nested cards, inputs */
+  --bg-hover:       #1b2233;
+  --bg-active:      #212a3f;
+
+  --line-soft:      #1c2333;   /* hairline dividers */
+  --line:           #27304598; /* default borders */
+  --line-strong:    #3a465f;
+
+  /* ---- Text ---- */
+  --tx-hi:          #eef2fb;   /* headings, primary */
+  --tx:             #c3ccdd;   /* body */
+  --tx-dim:         #8794ab;   /* secondary */
+  --tx-faint:       #5a6478;   /* captions, hints */
+  --tx-ghost:       #3d4557;   /* placeholder */
+
+  /* ---- Brand : woven thread ---- */
+  --thread:         #6ee7d0;   /* primary accent (teal-mint) */
+  --thread-deep:    #2dd4bf;
+  --thread-glow:    #6ee7d033;
+  --weft:           #a78bfa;   /* secondary accent (violet) */
+  --weft-glow:      #a78bfa2b;
+
+  /* ---- Semantic ---- */
+  --ok:             #4ade80;
+  --ok-dim:         #4ade8022;
+  --warn:           #fbbf24;
+  --warn-dim:       #fbbf2422;
+  --err:            #fb7185;
+  --err-dim:        #fb718522;
+  --info:           #60a5fa;
+  --info-dim:       #60a5fa22;
+
+  /* ---- Diff ---- */
+  --add:            #3fb950;
+  --add-bg:         #2ea04326;
+  --del:            #f85149;
+  --del-bg:         #f8514926;
+
+  /* ---- Model-provider hues (for the model-agnostic story) ---- */
+  --m-anthropic:    #d4a27f;
+  --m-openai:       #74c0a8;
+  --m-google:       #7fa8f0;
+  --m-meta:         #8a9bf5;
+  --m-local:        #b9c0cf;
+
+  /* ---- Type ---- */
+  --mono: "SF Mono", "JetBrains Mono", "Fira Code", ui-monospace, Menlo, monospace;
+  --sans: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+
+  --fs-xs:   11px;
+  --fs-sm:   12.5px;
+  --fs-md:   14px;
+  --fs-lg:   16px;
+  --fs-xl:   20px;
+  --fs-2xl:  28px;
+  --fs-3xl:  40px;
+
+  /* ---- Space ---- */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 24px; --sp-6: 32px; --sp-7: 48px; --sp-8: 64px;
+
+  --r-sm: 6px; --r-md: 10px; --r-lg: 14px; --r-xl: 20px; --r-pill: 999px;
+
+  --shadow-1: 0 1px 2px #0008;
+  --shadow-2: 0 8px 24px -8px #000c;
+  --shadow-3: 0 24px 64px -16px #000e;
+  --glow:     0 0 0 1px var(--thread-glow), 0 0 24px -4px var(--thread-glow);
+}

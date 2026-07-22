@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Skein — Audit Timeline</title>
+<link rel="stylesheet" href="styles/tokens.css" />
+<link rel="stylesheet" href="styles/app.css" />
+<style>
+  .tl { position:relative; margin-left:8px; padding-left:26px; }
+  .tl::before { content:""; position:absolute; left:5px; top:6px; bottom:6px; width:2px; background:var(--line); }
+  .ev { position:relative; margin-bottom:12px; }
+  .ev::before { content:""; position:absolute; left:-24px; top:5px; width:11px; height:11px; border-radius:50%; background:var(--bg-base); border:2px solid var(--line-strong); }
+  .ev.edit::before { border-color:var(--thread); }
+  .ev.cmd::before  { border-color:var(--info); }
+  .ev.tool::before { border-color:var(--weft); }
+  .ev.check::before{ border-color:var(--ok); background:var(--ok); }
+  .ev.rollback::before{ border-color:var(--warn); }
+  .ev .row { display:flex; align-items:center; gap:10px; padding:9px 13px; border:1px solid var(--line); border-radius:var(--r-sm); background:var(--bg-raised); }
+  .ev .row:hover { border-color:var(--line-strong); background:var(--bg-hover); }
+  .ev .hash { font-family:var(--mono); font-size:10.5px; color:var(--tx-ghost); }
+  .ev .ttl { color:var(--tx-hi); font-size:12.5px; }
+  .ev .tm { margin-left:auto; font-family:var(--mono); font-size:10.5px; color:var(--tx-faint); }
+  .ev.check .row { border-color:color-mix(in srgb,var(--ok) 45%,transparent); background:var(--ok-dim); }
+
+  .scrub { display:flex; align-items:center; gap:12px; padding:14px; border:1px solid var(--line); border-radius:var(--r-md); background:var(--bg-raised); margin-bottom:18px; }
+  .track { flex:1; height:6px; border-radius:var(--r-pill); background:var(--bg-active); position:relative; }
+  .track .fill { position:absolute; left:0; top:0; bottom:0; width:64%; border-radius:var(--r-pill); background:linear-gradient(90deg,var(--thread),var(--thread-deep)); }
+  .track .knob { position:absolute; left:64%; top:50%; transform:translate(-50%,-50%); width:16px; height:16px; border-radius:50%; background:var(--tx-hi); border:3px solid var(--thread-deep); box-shadow:var(--shadow-2); }
+  .track .ck { position:absolute; top:50%; transform:translate(-50%,-50%); width:8px; height:8px; border-radius:50%; background:var(--ok); border:2px solid var(--bg-base); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="glyph">S</span> Skein</div>
+  <nav>
+    <a href="index.html">Overview</a>
+    <a href="01-session.html">Session</a>
+    <a href="02-context.html">Context</a>
+    <a href="03-models.html">Models</a>
+    <a class="active" href="04-audit.html">Audit</a>
+    <a href="05-resources.html">Resources</a>
+    <a href="06-design.html">Design system</a>
+  </nav>
+</header>
+
+<main class="wrap" style="padding-top:18px; padding-bottom:40px">
+  <div class="eyebrow">04 · Audit Timeline</div>
+  <h2 class="title" style="margin-bottom:6px">Every action, hash-chained and reversible.</h2>
+  <p class="lead" style="margin-bottom:22px">Nothing the agent does is a black box. Each edit, command, and tool call is appended to a signed, tamper-evident ledger. Scrub to any point, diff it, and roll the whole workspace back with one key.</p>
+
+  <!-- scrubber -->
+  <div class="scrub">
+    <span class="pill"><span class="dot ok"></span>HEAD · 47 events</span>
+    <div class="track">
+      <div class="fill"></div>
+      <span class="ck" style="left:22%"></span>
+      <span class="ck" style="left:48%"></span>
+      <span class="ck" style="left:78%"></span>
+      <div class="knob"></div>
+    </div>
+    <span class="mono faint" style="font-size:11px">◷ 14:22:07</span>
+    <button class="btn" style="padding:7px 14px">⟲ Roll back to here</button>
+  </div>
+
+  <div class="grid c2">
+    <!-- ledger -->
+    <div class="card tight">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:14px">
+        <h4 style="margin:0; color:var(--tx-hi)">Event ledger</h4>
+        <span class="pill ok" style="margin-left:auto"><span class="dot ok"></span>chain verified</span>
+      </div>
+      <div class="tl">
+        <div class="ev check"><div class="row"><span class="ttl">◆ Checkpoint — "green build"</span><span class="tm">14:24:51</span></div></div>
+        <div class="ev tool"><div class="row"><span class="ttl">⚙ test · vitest run</span><span class="c-ok mono" style="font-size:11px">142 pass</span><span class="tm">14:24:03</span></div></div>
+        <div class="ev edit"><div class="row"><span class="ttl">✎ edit · retry.ts</span><span class="hash">a3f9…</span><span class="tm">14:23:40</span></div></div>
+        <div class="ev edit"><div class="row"><span class="ttl">✎ edit · fetcher.ts</span><span class="hash">7b1c…</span><span class="tm">14:23:12</span></div></div>
+        <div class="ev cmd"><div class="row"><span class="ttl">$ npm run typecheck</span><span class="c-ok mono" style="font-size:11px">ok</span><span class="tm">14:22:55</span></div></div>
+        <div class="ev tool"><div class="row"><span class="ttl">⇄ model swap · edit→local</span><span class="tm">14:22:30</span></div></div>
+        <div class="ev check"><div class="row"><span class="ttl">◆ Checkpoint — "before refactor"</span><span class="tm">14:22:07</span></div></div>
+        <div class="ev edit"><div class="row"><span class="ttl">✎ edit · client.ts</span><span class="hash">e42a…</span><span class="tm">14:21:44</span></div></div>
+        <div class="ev cmd"><div class="row"><span class="ttl">$ git status</span><span class="tm">14:21:20</span></div></div>
+      </div>
+    </div>
+
+    <!-- rollback preview -->
+    <div style="display:flex; flex-direction:column; gap:14px">
+      <div class="card tight">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px">
+          <span class="c-warn">⟲</span><h4 style="margin:0; color:var(--tx-hi)">Rollback preview</h4>
+          <span class="pill warn" style="margin-left:auto">reverts 5 events</span>
+        </div>
+        <p class="dim" style="font-size:12.5px; margin:0 0 10px">Rolling back to <b class="c-hi">"before refactor"</b> will undo:</p>
+        <div class="diff">
+          <div class="dhead">2 files · 3 edits · 1 command</div>
+          <div class="dl del">retry.ts — exponential backoff</div>
+          <div class="dl del">fetcher.ts — timeout guard</div>
+          <div class="dl ctx">client.ts — unchanged</div>
+        </div>
+        <p class="faint" style="font-size:11px; margin:8px 0 0">Working tree is snapshotted first — rollback is itself a reversible event.</p>
+      </div>
+
+      <div class="card tight">
+        <h4 style="margin:0 0 10px; color:var(--tx-hi)">Event detail · a3f9…</h4>
+        <div style="font-family:var(--mono); font-size:11.5px; line-height:1.9; color:var(--tx-dim)">
+          <div><span class="c-faint">type</span>  edit</div>
+          <div><span class="c-faint">file</span>  src/net/retry.ts</div>
+          <div><span class="c-faint">by</span>    edit-agent · gpt-5.1-codex</div>
+          <div><span class="c-faint">prev</span>  <span class="c-thread">7b1c8e…</span></div>
+          <div><span class="c-faint">hash</span>  <span class="c-thread">a3f9d2…</span></div>
+          <div><span class="c-faint">sig</span>   <span class="c-ok">✓ ed25519 valid</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="faint mono" style="font-size:11px; margin-top:18px">Keys: <kbd>⌘Z</kbd> undo last event · <kbd>[</kbd> <kbd>]</kbd> scrub · <kbd>⌘K</kbd> set checkpoint · <kbd>⌘⇧V</kbd> verify chain integrity.</p>
+</main>
+</body>
+</html>

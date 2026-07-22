@@ -178,7 +178,7 @@ export async function askConsolePermission(
 export function printBanner(): void {
   const glyphs = resolveCliGlyphs();
   process.stdout.write(
-    `${chalk.hex('#A78BFA').bold(`${glyphs.brand} ${PRODUCT_NAME.toUpperCase()}`)} ${chalk.dim('context-first coding agent')}\n`,
+    `${chalk.hex('#6EE7D0').bold(`${glyphs.brand} ${PRODUCT_NAME.toUpperCase()}`)} ${chalk.dim('context-first coding agent')}\n`,
   );
 }
 

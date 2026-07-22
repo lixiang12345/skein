@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Skein — Design System</title>
+<link rel="stylesheet" href="styles/tokens.css" />
+<link rel="stylesheet" href="styles/app.css" />
+<style>
+  .swatch { border:1px solid var(--line); border-radius:var(--r-md); overflow:hidden; }
+  .swatch .chip { height:64px; }
+  .swatch .meta { padding:8px 10px; font-size:var(--fs-xs); }
+  .swatch .meta b { color:var(--tx-hi); display:block; font-family:var(--sans); font-weight:600; }
+  .swatch .meta span { color:var(--tx-faint); font-family:var(--mono); }
+  .typerow { display:flex; align-items:baseline; gap:16px; padding:10px 0; border-bottom:1px solid var(--line-soft); }
+  .typerow .lbl { color:var(--tx-faint); font-family:var(--mono); font-size:11px; width:64px; flex:none; }
+  .icogrid { display:grid; grid-template-columns:repeat(8,1fr); gap:10px; }
+  .icocell { aspect-ratio:1; display:grid; place-items:center; gap:4px; border:1px solid var(--line); border-radius:var(--r-md); background:var(--bg-raised); font-size:22px; color:var(--tx-hi); }
+  .icocell small { font-size:10px; color:var(--tx-faint); font-family:var(--mono); }
+  .stategrid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+  .stategrid > div { padding:14px; border:1px solid var(--line); border-radius:var(--r-md); background:var(--bg-raised); }
+  .stategrid .demo { padding:8px 12px; border-radius:var(--r-sm); margin-top:8px; font-size:var(--fs-sm); }
+  @media (max-width:900px){ .icogrid{grid-template-columns:repeat(4,1fr)} .stategrid{grid-template-columns:repeat(2,1fr)} }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="glyph">S</span> Skein <span class="pill thread" style="margin-left:6px">prototype</span></div>
+  <nav>
+    <a href="index.html">Overview</a>
+    <a href="01-session.html">Session</a>
+    <a href="02-context.html">Context</a>
+    <a href="03-models.html">Models</a>
+    <a href="04-audit.html">Audit</a>
+    <a href="05-resources.html">Resources</a>
+    <a class="active" href="06-design.html">Design system</a>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <section class="sec">
+    <div class="eyebrow">Foundations</div>
+    <h1 class="title">Design system</h1>
+    <p class="lead">The "Graphite Loom" language: a terminal-dark canvas, a woven teal-mint + violet accent pair, and monospace-forward chrome. Every screen in this prototype is built from these tokens.</p>
+  </section>
+
+  <!-- Color -->
+  <section class="sec">
+    <div class="eyebrow">Color</div>
+    <h2 class="title">Palette</h2>
+
+    <h4 class="dim" style="margin:18px 0 8px">Surfaces</h4>
+    <div class="grid c4">
+      <div class="swatch"><div class="chip" style="background:var(--bg-void)"></div><div class="meta"><b>void</b><span>#07090d</span></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--bg-base)"></div><div class="meta"><b>base</b><span>#0b0e14</span></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--bg-raised)"></div><div class="meta"><b>raised</b><span>#11151f</span></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--bg-raised-2)"></div><div class="meta"><b>raised-2</b><span>#161b28</span></div></div>
+    </div>
+
+    <h4 class="dim" style="margin:22px 0 8px">Brand — the woven thread</h4>
+    <div class="grid c4">
+      <div class="swatch"><div class="chip" style="background:var(--thread)"></div><div class="meta"><b>thread</b><span>#6ee7d0</span></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--thread-deep)"></div><div class="meta"><b>thread-deep</b><span>#2dd4bf</span></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--weft)"></div><div class="meta"><b>weft</b><span>#a78bfa</span></div></div>
+      <div class="swatch"><div class="chip" style="background:linear-gradient(140deg,var(--thread),var(--thread-deep) 55%,var(--weft))"></div><div class="meta"><b>brand glyph</b><span>gradient</span></div></div>
+    </div>
+
+    <h4 class="dim" style="margin:22px 0 8px">Semantic</h4>
+    <div class="grid c4">
+      <div class="swatch"><div class="chip" style="background:var(--ok)"></div><div class="meta"><b>ok</b><span>#4ade80</span></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--warn)"></div><div class="meta"><b>warn</b><span>#fbbf24</span></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--err)"></div><div class="meta"><b>err</b><span>#fb7185</span></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--info)"></div><div class="meta"><b>info</b><span>#60a5fa</span></div></div>
+    </div>
+
+    <h4 class="dim" style="margin:22px 0 8px">Provider hues — the model-agnostic story</h4>
+    <div class="grid c4">
+      <div class="swatch"><div class="chip" style="background:var(--m-anthropic)"></div><div class="meta"><b>Anthropic</b><span>#d4a27f</span></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--m-openai)"></div><div class="meta"><b>OpenAI</b><span>#74c0a8</span></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--m-google)"></div><div class="meta"><b>Google</b><span>#7fa8f0</span></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--m-local)"></div><div class="meta"><b>Local</b><span>#b9c0cf</span></div></div>
+    </div>
+  </section>
+
+  <!-- Type -->
+  <section class="sec">
+    <div class="eyebrow">Type</div>
+    <h2 class="title">Typography</h2>
+    <div class="card" style="margin-top:16px">
+      <div class="typerow"><span class="lbl">3xl / 40</span><span style="font-size:var(--fs-3xl);color:var(--tx-hi);font-weight:700;letter-spacing:-.02em">See through your agent</span></div>
+      <div class="typerow"><span class="lbl">2xl / 28</span><span style="font-size:var(--fs-2xl);color:var(--tx-hi)">Section heading</span></div>
+      <div class="typerow"><span class="lbl">lg / 16</span><span style="font-size:var(--fs-lg);color:var(--tx-dim)">Lead paragraph — Inter, the reading voice.</span></div>
+      <div class="typerow"><span class="lbl">md / 14</span><span style="font-size:var(--fs-md)">Body copy sits here for interface prose.</span></div>
+      <div class="typerow"><span class="lbl">mono / 12.5</span><span class="mono" style="font-size:var(--fs-sm);color:var(--tx)">$ skein --resume · SF Mono in every terminal surface</span></div>
+      <div class="typerow" style="border:none"><span class="lbl">xs / 11</span><span style="font-size:var(--fs-xs);color:var(--tx-faint)">Captions, hints, and metadata.</span></div>
+    </div>
+    <p class="faint" style="margin-top:12px">Sans: <b class="dim">Inter</b> for prose &amp; labels. Mono: <b class="dim">SF Mono / JetBrains Mono</b> for everything inside the terminal frame — commands, code, diffs, and hash IDs.</p>
+  </section>
+
+  <!-- Iconography -->
+  <section class="sec">
+    <div class="eyebrow">Iconography</div>
+    <h2 class="title">Glyph set</h2>
+    <p class="lead">Geometric Unicode glyphs render crisply at any terminal font — no icon-font dependency. Each concept owns one glyph across every screen.</p>
+    <div class="icogrid" style="margin-top:18px">
+      <div class="icocell" style="color:var(--thread)">◈<small>context</small></div>
+      <div class="icocell" style="color:var(--weft)">⇄<small>models</small></div>
+      <div class="icocell" style="color:var(--ok)">⟲<small>rewind</small></div>
+      <div class="icocell" style="color:var(--warn)">◆<small>resource</small></div>
+      <div class="icocell">▤<small>session</small></div>
+      <div class="icocell">◑<small>design</small></div>
+      <div class="icocell" style="color:var(--info)">⚙<small>tool</small></div>
+      <div class="icocell" style="color:var(--thread)">⌘<small>palette</small></div>
+      <div class="icocell" style="color:var(--weft)">⧉<small>mcp</small></div>
+      <div class="icocell" style="color:var(--ok)">✓<small>done</small></div>
+      <div class="icocell" style="color:var(--warn)">▲<small>plan</small></div>
+      <div class="icocell" style="color:var(--err)">■<small>stop</small></div>
+      <div class="icocell">⊕<small>pin</small></div>
+      <div class="icocell">⊘<small>mute</small></div>
+      <div class="icocell" style="color:var(--thread)">↯<small>agent</small></div>
+      <div class="icocell" style="color:var(--info)">◷<small>latency</small></div>
+    </div>
+  </section>
+
+  <!-- Components -->
+  <section class="sec">
+    <div class="eyebrow">Components</div>
+    <h2 class="title">Pills, badges &amp; keys</h2>
+    <div class="card" style="margin-top:16px; display:flex; flex-wrap:wrap; gap:10px; align-items:center">
+      <span class="pill">neutral</span>
+      <span class="pill thread"><span class="dot"></span> thread</span>
+      <span class="pill weft">weft</span>
+      <span class="pill ok"><span class="dot ok"></span> ok</span>
+      <span class="pill warn"><span class="dot warn"></span> warn</span>
+      <span class="pill err"><span class="dot err"></span> err</span>
+      <span class="badge run">running</span>
+      <span class="badge done">done</span>
+      <kbd>⌘</kbd><kbd>K</kbd> <span class="faint">command palette</span>
+      <kbd>Tab</kbd> <span class="faint">switch mode</span>
+    </div>
+
+    <h4 class="dim" style="margin:22px 0 10px">Interaction states</h4>
+    <div class="stategrid">
+      <div><span class="faint mono" style="font-size:11px">rest</span><div class="demo" style="background:var(--bg-raised);border:1px solid var(--line)">Menu item</div></div>
+      <div><span class="faint mono" style="font-size:11px">hover</span><div class="demo" style="background:var(--bg-hover);border:1px solid var(--line-strong)">Menu item</div></div>
+      <div><span class="faint mono" style="font-size:11px">active / selected</span><div class="demo" style="background:var(--bg-active);border:1px solid var(--thread-deep);color:var(--tx-hi)">Menu item</div></div>
+      <div><span class="faint mono" style="font-size:11px">disabled</span><div class="demo" style="background:var(--bg-base);border:1px solid var(--line-soft);color:var(--tx-ghost)">Menu item</div></div>
+    </div>
+
+    <h4 class="dim" style="margin:22px 0 10px">Buttons</h4>
+    <div style="display:flex; gap:12px; flex-wrap:wrap">
+      <button class="btn primary">▶ Primary action</button>
+      <button class="btn">Secondary</button>
+    </div>
+  </section>
+
+  <!-- Terminal primitives -->
+  <section class="sec">
+    <div class="eyebrow">Terminal primitives</div>
+    <h2 class="title">In-stream blocks</h2>
+    <div class="grid c2" style="margin-top:16px">
+      <div>
+        <p class="faint mono" style="font-size:11px; margin-bottom:6px">tool call</p>
+        <div class="tool">
+          <div class="th"><span class="c-thread">⚙</span> read <span class="c-hi">src/agent/runner.ts</span><span class="badge done">done</span></div>
+          <div class="tb">→ 412 lines · 3 symbols surfaced into context</div>
+        </div>
+      </div>
+      <div>
+        <p class="faint mono" style="font-size:11px; margin-bottom:6px">diff</p>
+        <div class="diff">
+          <div class="dhead"><span class="c-hi">runner.ts</span><span class="c-add">+2</span><span class="c-del">-1</span></div>
+          <div class="dl del">const model = defaultModel;</div>
+          <div class="dl add">const model = route.forRole("edit");</div>
+          <div class="dl add">logger.trace(model.id);</div>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:16px">
+      <p class="faint mono" style="font-size:11px; margin-bottom:6px">prompt input</p>
+      <div class="prompt">
+        <span class="sigil">›</span>
+        <span class="txt">route edits to the local model</span>
+        <span class="caret"></span>
+      </div>
+    </div>
+  </section>
+
+  <footer class="footer wrap">
+    Skein prototype · design system. References:
+    <a href="https://docs.anthropic.com/en/docs/claude-code/overview">Claude Code</a> ·
+    <a href="https://docs.augmentcode.com/cli/overview">Auggie</a> ·
+    <a href="https://aider.chat">Aider</a> ·
+    <a href="https://github.com/google-gemini/gemini-cli">Gemini CLI</a>
+  </footer>
+
+</main>
+</body>
+</html>
