@@ -33,6 +33,10 @@ describe('configuration defaults', () => {
       const config = defaultConfig('/tmp');
       expect(config.model.provider).toBe('compatible');
       expect(config.model.apiKey).toBe('skein-secret');
+      expect(config.agents?.budgetMode).toBe('observe');
+      expect(config.agents?.maxAgentTokens).toBeUndefined();
+      expect(config.agents?.maxAgentToolCalls).toBeUndefined();
+      expect(config.agents?.agentTimeoutMs).toBeUndefined();
     } finally {
       for (const [name, value] of Object.entries(previous)) {
         if (value === undefined) delete process.env[name];

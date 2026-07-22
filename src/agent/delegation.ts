@@ -267,6 +267,7 @@ export class DelegationManager {
     const id = randomUUID();
     const profile = this.options.profiles.get(task.profile);
     const configuredRoute = this.team.routes?.[task.profile];
+    const budgetMode = configuredRoute?.budgetMode ?? this.team.budgetMode ?? 'observe';
     const externalRuntime = configuredRoute?.runtime && configuredRoute.runtime !== 'api'
       ? configuredRoute.runtime
       : undefined;
@@ -285,39 +286,73 @@ export class DelegationManager {
     try {
       if (externalRuntime) {
         await emit?.({type: 'agent_update', id, profile: profile.name, stage: phase === 'review' ? 'review' : 'thinking', detail: `running ${externalRuntime} in read-only mode`});
-        const external = await (this.options.externalRunner ?? runExternalAgent)({
-          runtime: externalRuntime,
-          model,
-          workspace: this.options.config.workspaceRoots[0] ?? process.cwd(),
-          prompt: `${formatProfilePrompt(profile)}\n\nYou are a read-only teammate in a Skein team run. Do not modify files or delegate. Return a concise evidence-backed report for peer review.\n\nAssignment:\n${task.task}`,
-          ...(signal ? {signal} : {}),
-          ...(configuredRoute?.timeoutMs ?? this.team.agentTimeoutMs
-            ? {timeoutMs: configuredRoute?.timeoutMs ?? this.team.agentTimeoutMs}
-            : {}),
-        });
+        const externalTimeoutMs = configuredRoute?.timeoutMs ?? this.team.agentTimeoutMs;
+        const guardTimer = budgetMode === 'guard' && externalTimeoutMs !== undefined
+          ? setTimeout(() => {
+            void emit?.({type: 'agent_update', id, profile: profile.name, stage: 'thinking', detail: `soft time threshold exceeded (${externalTimeoutMs}ms); continuing`});
+          }, externalTimeoutMs)
+          : undefined;
+        let external;
+        try {
+          external = await (this.options.externalRunner ?? runExternalAgent)({
+            runtime: externalRuntime,
+            model,
+            workspace: this.options.config.workspaceRoots[0] ?? process.cwd(),
+            prompt: `${formatProfilePrompt(profile)}\n\nYou are a read-only teammate in a Skein team run. Do not modify files or delegate. Return a concise evidence-backed report for peer review.\n\nAssignment:\n${task.task}`,
+            ...(signal ? {signal} : {}),
+            timeoutMs: budgetMode === 'strict' && externalTimeoutMs !== undefined ? externalTimeoutMs : 0,
+          });
+        } finally {
+          if (guardTimer) clearTimeout(guardTimer);
+        }
         observedUsage = external.usage ?? emptyUsage;
         observedToolCalls = external.toolCalls ?? 0;
-        const externalTokenBudget = configuredRoute?.tokenBudget ?? this.team.maxAgentTokens ?? 80_000;
-        const externalToolBudget = configuredRoute?.maxToolCalls ?? this.team.maxAgentToolCalls ?? 80;
-        if (observedUsage.inputTokens + observedUsage.outputTokens > externalTokenBudget) {
+        const externalTokenBudget = configuredRoute?.tokenBudget ?? this.team.maxAgentTokens;
+        const externalToolBudget = configuredRoute?.maxToolCalls ?? this.team.maxAgentToolCalls;
+        const tokenExceeded = externalTokenBudget !== undefined &&
+          observedUsage.inputTokens + observedUsage.outputTokens > externalTokenBudget;
+        const toolsExceeded = externalToolBudget !== undefined && observedToolCalls > externalToolBudget;
+        if (budgetMode === 'strict' && tokenExceeded) {
           throw new Error(`External agent token budget exceeded (${externalTokenBudget}).`);
         }
-        if (observedToolCalls > externalToolBudget) {
+        if (budgetMode === 'strict' && toolsExceeded) {
           throw new Error(`External agent tool budget exceeded (${externalToolBudget}).`);
+        }
+        if (budgetMode === 'guard' && (tokenExceeded || toolsExceeded)) {
+          await emit?.({
+            type: 'agent_update',
+            id,
+            profile: profile.name,
+            stage: 'response',
+            detail: `soft budget exceeded; continuing (${[
+              tokenExceeded ? `${externalTokenBudget} tokens` : '',
+              toolsExceeded ? `${externalToolBudget} tools` : '',
+            ].filter(Boolean).join(', ')})`,
+          });
         }
         const result = {id, profile: profile.name, ok: true, summary: external.content.slice(0, 20_000), provider: providerName, model, usage: observedUsage, toolCalls: observedToolCalls, durationMs: external.durationMs};
         await emit?.({type: 'agent_update', id, profile: profile.name, stage: 'response', detail: 'final report received', toolCalls: observedToolCalls, inputTokens: observedUsage.inputTokens, outputTokens: observedUsage.outputTokens});
         await emit?.({type: 'agent_done', ...result, phase});
         return result;
       }
-      const toolBudget = configuredRoute?.maxToolCalls ?? this.team.maxAgentToolCalls ?? 80;
-      const tokenBudget = configuredRoute?.tokenBudget ?? this.team.maxAgentTokens ?? this.options.config.agent.maxSessionTokens;
-      const timeoutMs = configuredRoute?.timeoutMs ?? this.team.agentTimeoutMs ?? 180_000;
+      const toolBudget = configuredRoute?.maxToolCalls ?? this.team.maxAgentToolCalls;
+      const tokenBudget = configuredRoute?.tokenBudget ?? this.team.maxAgentTokens;
+      const timeoutMs = configuredRoute?.timeoutMs ?? this.team.agentTimeoutMs;
       const budgetController = new AbortController();
       const onParentAbort = () => budgetController.abort(signal?.reason);
       if (signal?.aborted) onParentAbort();
       else signal?.addEventListener('abort', onParentAbort, {once: true});
-      const timeout = setTimeout(() => budgetController.abort(new Error(`Agent budget timeout after ${timeoutMs}ms`)), timeoutMs);
+      let toolBudgetWarned = false;
+      let tokenBudgetWarned = false;
+      const timeout = timeoutMs === undefined
+        ? undefined
+        : setTimeout(() => {
+          if (budgetMode === 'strict') {
+            budgetController.abort(new Error(`Agent budget timeout after ${timeoutMs}ms`));
+          } else if (budgetMode === 'guard') {
+            void emit?.({type: 'agent_update', id, profile: profile.name, stage: 'thinking', detail: `soft time threshold exceeded (${timeoutMs}ms); continuing`});
+          }
+        }, timeoutMs);
       const childSignal = budgetController.signal;
       const registry = readOnlyRegistry(this.options.parentTools, profile);
       const childConfig: MosaicConfig = {
@@ -325,7 +360,9 @@ export class DelegationManager {
         model: route,
         agent: {
           ...this.options.config.agent,
-          maxSessionTokens: Math.min(this.options.config.agent.maxSessionTokens, tokenBudget),
+          maxSessionTokens: budgetMode === 'strict' && tokenBudget !== undefined
+            ? Math.min(this.options.config.agent.maxSessionTokens, tokenBudget)
+            : this.options.config.agent.maxSessionTokens,
         },
         permissions: {
           ...this.options.config.permissions,
@@ -357,7 +394,13 @@ export class DelegationManager {
             if (event.type === 'tool_start') {
               observedToolCalls += 1;
               await emit?.({type: 'agent_update', id, profile: profile.name, stage: 'tool', tool: event.call.name, toolCalls: observedToolCalls});
-              if (observedToolCalls > toolBudget) budgetController.abort(new Error(`Agent tool budget exhausted (${toolBudget})`));
+              if (toolBudget !== undefined && observedToolCalls > toolBudget) {
+                if (budgetMode === 'strict') budgetController.abort(new Error(`Agent tool budget exhausted (${toolBudget})`));
+                else if (budgetMode === 'guard' && !toolBudgetWarned) {
+                  toolBudgetWarned = true;
+                  await emit?.({type: 'agent_update', id, profile: profile.name, stage: 'tool', tool: event.call.name, toolCalls: observedToolCalls, detail: `soft tool threshold exceeded (${toolBudget}); continuing`});
+                }
+              }
             } else if (event.type === 'thinking') {
               await emit?.({type: 'agent_update', id, profile: profile.name, stage: phase === 'review' ? 'review' : 'thinking', detail: `turn ${event.turn}`});
             } else if (event.type === 'context') {
@@ -370,13 +413,18 @@ export class DelegationManager {
                 outputTokens: event.outputTokens,
               };
               await emit?.({type: 'agent_update', id, profile: profile.name, stage: 'response', inputTokens: observedUsage.inputTokens, outputTokens: observedUsage.outputTokens});
+              if (budgetMode === 'guard' && tokenBudget !== undefined &&
+                observedUsage.inputTokens + observedUsage.outputTokens > tokenBudget && !tokenBudgetWarned) {
+                tokenBudgetWarned = true;
+                await emit?.({type: 'agent_update', id, profile: profile.name, stage: 'response', detail: `soft token threshold exceeded (${tokenBudget}); continuing`, inputTokens: observedUsage.inputTokens, outputTokens: observedUsage.outputTokens});
+              }
             } else if (event.type === 'done') {
               observedStopReason = event.reason;
             }
           },
         });
       } finally {
-        clearTimeout(timeout);
+        if (timeout) clearTimeout(timeout);
         signal?.removeEventListener('abort', onParentAbort);
       }
       if (budgetController.signal.aborted) {
@@ -384,7 +432,9 @@ export class DelegationManager {
         throw new Error(reason instanceof Error ? reason.message : 'Agent budget or parent cancellation stopped the worker.');
       }
       if (observedStopReason === 'token_budget') {
-        throw new Error(`Agent token budget exhausted (${tokenBudget}).`);
+        throw new Error(budgetMode === 'strict' && tokenBudget !== undefined
+          ? `Agent token budget exhausted (${tokenBudget}).`
+          : `Agent session context budget exhausted (${this.options.config.agent.maxSessionTokens}).`);
       }
       observedUsage = {
         inputTokens: Math.max(observedUsage.inputTokens, session.usage.inputTokens),

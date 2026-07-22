@@ -178,7 +178,7 @@ describe('bounded orchestration', () => {
     const cfg = config(root);
     cfg.agents = {
       ...cfg.agents!,
-      routes: {backend: {runtime: 'codex', provider: 'openai', model: 'gpt-external', tokenBudget: 10}},
+      routes: {backend: {runtime: 'codex', provider: 'openai', model: 'gpt-external', tokenBudget: 10, budgetMode: 'strict'}},
     };
     const profiles = new AgentProfileCatalog(root);
     await profiles.discover();
@@ -204,6 +204,83 @@ describe('bounded orchestration', () => {
     });
     expect(result.ok).toBe(false);
     expect(result.content).toContain('token budget exceeded');
+  });
+
+  it('reports a guard threshold without stopping the worker', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-guard-team-'));
+    roots.push(root);
+    const cfg = config(root);
+    cfg.agents = {
+      ...cfg.agents!,
+      routes: {backend: {runtime: 'codex', provider: 'openai', model: 'gpt-external', tokenBudget: 10, budgetMode: 'guard'}},
+    };
+    const profiles = new AgentProfileCatalog(root);
+    await profiles.discover();
+    const context: ContextProvider = {
+      async pack() { return {text: '', hits: [], estimatedTokens: 0, engine: 'test', truncated: false}; },
+      async search() { return []; },
+    };
+    const events: AgentEvent[] = [];
+    const manager = new DelegationManager({
+      config: cfg,
+      provider: {name: 'parent', async complete() { return {content: 'parent', toolCalls: []}; }},
+      contextEngine: context,
+      parentTools: createDefaultToolRegistry(),
+      profiles,
+      async externalRunner(request) {
+        return {content: 'completed despite threshold', runtime: request.runtime, model: request.model, durationMs: 1, usage: {inputTokens: 9, outputTokens: 9}, toolCalls: 0};
+      },
+    });
+    const result = await manager.tool().execute({tasks: [{profile: 'backend', task: 'Inspect state.'}]}, {
+      config: cfg,
+      workspace: new WorkspaceAccess([root]),
+      session: createSession({workspace: root, provider: 'compatible', model: 'test'}),
+      contextEngine: context,
+      emit: (event) => { events.push(event); },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.content).toContain('completed despite threshold');
+    expect(events.some((event) => event.type === 'agent_update' && event.detail?.includes('soft budget exceeded'))).toBe(true);
+  });
+
+  it('observes usage by default without warning or stopping the worker', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-observe-team-'));
+    roots.push(root);
+    const cfg = config(root);
+    cfg.agents = {
+      ...cfg.agents!,
+      routes: {backend: {runtime: 'codex', provider: 'openai', model: 'gpt-external', tokenBudget: 10, maxToolCalls: 1, timeoutMs: 10}},
+    };
+    const profiles = new AgentProfileCatalog(root);
+    await profiles.discover();
+    const context: ContextProvider = {
+      async pack() { return {text: '', hits: [], estimatedTokens: 0, engine: 'test', truncated: false}; },
+      async search() { return []; },
+    };
+    const events: AgentEvent[] = [];
+    const timeouts: Array<number | undefined> = [];
+    const manager = new DelegationManager({
+      config: cfg,
+      provider: {name: 'parent', async complete() { return {content: 'parent', toolCalls: []}; }},
+      contextEngine: context,
+      parentTools: createDefaultToolRegistry(),
+      profiles,
+      async externalRunner(request) {
+        timeouts.push(request.timeoutMs);
+        return {content: 'observed without interruption', runtime: request.runtime, model: request.model, durationMs: 20, usage: {inputTokens: 90, outputTokens: 90}, toolCalls: 9};
+      },
+    });
+    const result = await manager.tool().execute({tasks: [{profile: 'backend', task: 'Inspect state.'}]}, {
+      config: cfg,
+      workspace: new WorkspaceAccess([root]),
+      session: createSession({workspace: root, provider: 'compatible', model: 'test'}),
+      contextEngine: context,
+      emit: (event) => { events.push(event); },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.content).toContain('observed without interruption');
+    expect(timeouts).toEqual([0]);
+    expect(events.some((event) => event.type === 'agent_update' && event.detail?.includes('soft'))).toBe(false);
   });
 
   it('defines single-writer workflows with parallel read-only review branches', () => {

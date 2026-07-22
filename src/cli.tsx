@@ -395,6 +395,7 @@ agentsCommand
           tokenBudget: route.tokenBudget,
           maxToolCalls: route.maxToolCalls,
           timeoutMs: route.timeoutMs,
+          budgetMode: route.budgetMode ?? config.agents?.budgetMode ?? 'observe',
         } : {
           runtime: 'api',
           provider: config.model.provider,

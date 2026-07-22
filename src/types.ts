@@ -63,6 +63,7 @@ export interface AgentTeamConfig {
   maxAgentTokens?: number;
   maxAgentToolCalls?: number;
   agentTimeoutMs?: number;
+  budgetMode?: 'observe' | 'guard' | 'strict';
 }
 
 export interface AgentModelRoute {
@@ -76,6 +77,7 @@ export interface AgentModelRoute {
   tokenBudget?: number;
   maxToolCalls?: number;
   timeoutMs?: number;
+  budgetMode?: 'observe' | 'guard' | 'strict';
 }
 
 export type McpTransport = 'stdio' | 'http';

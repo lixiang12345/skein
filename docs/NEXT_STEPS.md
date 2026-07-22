@@ -47,8 +47,7 @@ The last verified package was `skein-code-cli-0.2.0.tgz`. Its SHA-256 was:
 The final verification included a fresh install and real PTY interaction for
 all three executable aliases, `/about`, a permission prompt, denial, and clean
 Ctrl+C exit. PTY coverage included 20, 24 ASCII, 40, 80, 120 columns and a
-40x10 short-height case. The current suite contains 22 test files and 147
-tests.
+40x10 short-height case. The current suite contains 27 test files and 167 tests.
 
 ## Recommended Order
 
@@ -128,9 +127,9 @@ Definition of done:
 
 ### P1: Multi-Agent Scheduler And Team UX
 
-Harden the existing expert delegation into an explicit bounded scheduler:
+Harden the existing expert delegation into an explicit observable scheduler:
 
-- per-agent token and tool budgets;
+- opt-in per-agent token, tool, and time policies;
 - cancellation and timeout propagation;
 - permission inheritance and independent audit trails;
 - deterministic aggregation and conflict reporting;
@@ -161,9 +160,15 @@ Implementation progress:
 - Team Cockpit now renders safe observable telemetry—phase, active tool, token
   usage, tool count, timeout/budget state, and final report—without exposing
   hidden model chain-of-thought.
+- Team budgets default to `observe`: telemetry is retained, but configured
+  thresholds do not warn or terminate work. `guard` adds non-blocking threshold
+  warnings, while `strict` is an explicit hard-stop policy for controlled jobs.
+- Task budget policy is separate from the provider context window and Skein's
+  session compaction boundary. The latter remains a technical context limit,
+  not a default product ceiling for large tasks.
 - See `docs/MULTI_MODEL_TEAMS.md`. Writer worktrees, persistent blackboard
-  artifacts, per-route budgets, Gemini CLI, and optional tmux/iTerm pane hosts
-  remain next.
+  artifacts, cost controls, Gemini CLI, and optional tmux/iTerm pane hosts remain
+  next.
 
 ### P2: MCP, Skills, And Workflow Trust UX
 

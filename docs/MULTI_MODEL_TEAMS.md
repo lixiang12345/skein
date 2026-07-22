@@ -98,9 +98,7 @@ inside the project config.
     "reviewerProfile": "reviewer",
     "maxReviewRounds": 1,
     "cockpit": true,
-    "maxAgentTokens": 80000,
-    "maxAgentToolCalls": 80,
-    "agentTimeoutMs": 180000,
+    "budgetMode": "observe",
     "routes": {
       "research": {
         "runtime": "grok",
@@ -129,7 +127,7 @@ inside the project config.
 
 `runtime` defaults to `api`. The initial external adapters invoke installed
 `codex`, `claude`, or `grok` binaries without a shell and enforce each CLI's
-read-only/plan mode, bounded output, timeout, abort signal, and non-persistent
+read-only/plan mode, bounded output, parent cancellation, and non-persistent
 session option. Their existing login/config owns credentials. External output
 is normalized into the same peer-report protocol, so API and CLI teammates can
 participate in one council.
@@ -138,10 +136,46 @@ Routes loaded from repository-owned config are ignored until the project is
 trusted because a malicious endpoint could exfiltrate environment credentials
 or source context.
 
-Each route may override `tokenBudget`, `maxToolCalls`, and `timeoutMs`. The Team
-Cockpit shows observable phase, current tool, elapsed time, token usage, and
-tool count. It deliberately does not show hidden chain-of-thought; model
-reports and reviewer decisions are the explainable artifacts.
+Budget thresholds are opt-in policy, not a default task-size limit:
+
+- `observe` is the default. Skein records token, tool, and elapsed-time
+  telemetry but does not warn or stop a worker. Configured thresholds are
+  ignored for enforcement in this mode.
+- `guard` compares telemetry with configured thresholds, emits a soft warning,
+  and lets the worker continue.
+- `strict` enforces configured thresholds and may stop a worker. Use it only
+  when a user or an automation explicitly needs a hard ceiling.
+
+Team-wide thresholds use `maxAgentTokens`, `maxAgentToolCalls`, and
+`agentTimeoutMs`. Each route may override them with `tokenBudget`,
+`maxToolCalls`, `timeoutMs`, and its own `budgetMode`. For example:
+
+```json
+{
+  "agents": {
+    "budgetMode": "guard",
+    "maxAgentTokens": 120000,
+    "maxAgentToolCalls": 120,
+    "agentTimeoutMs": 600000,
+    "routes": {
+      "reviewer": {
+        "budgetMode": "strict",
+        "tokenBudget": 30000
+      }
+    }
+  }
+}
+```
+
+These task thresholds are separate from a model's context window and Skein's
+session compaction/context limits. A context boundary still exists because a
+provider cannot accept an unlimited prompt; it is not treated as a user task
+budget.
+
+The Team Cockpit shows observable phase, current tool, elapsed time, token
+usage, tool count, soft warnings, and final acceptance state. It deliberately
+does not show hidden chain-of-thought; model reports, peer handoffs, tool
+activity, and reviewer decisions are the explainable artifacts.
 
 ## Current Safety Boundary
 
@@ -158,7 +192,7 @@ reports and reviewer decisions are the explainable artifacts.
 1. Add provider-native search/tool adapters so a research route can use live
    search without granting arbitrary shell/network authority.
 2. Persist a content-addressed team blackboard and compact provenance bundle.
-3. Add per-route token, cost, latency, and tool budgets.
+3. Add per-route cost accounting and user-confirmed spend controls.
 4. Add worktree-isolated writer agents with explicit merge/review gates.
 5. Score routes from project-local eval outcomes instead of relying on model
    brand assumptions.

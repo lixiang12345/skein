@@ -128,13 +128,14 @@ export function runProcess(
     child.stdout.on('data', (chunk: Buffer) => { stdout = append(stdout, chunk); });
     child.stderr.on('data', (chunk: Buffer) => { stderr = append(stderr, chunk); });
     child.on('error', reject);
-    const timeout = setTimeout(() => {
+    const timeoutMs = options.timeoutMs ?? 120_000;
+    const timeout = timeoutMs > 0 ? setTimeout(() => {
       timedOut = true;
       child.kill('SIGTERM');
       setTimeout(() => child.kill('SIGKILL'), 1000).unref();
-    }, options.timeoutMs ?? 120_000);
+    }, timeoutMs) : undefined;
     child.on('close', (code) => {
-      clearTimeout(timeout);
+      if (timeout) clearTimeout(timeout);
       resolve({
         command: [command, ...args].join(' '),
         exitCode: code ?? (timedOut ? 124 : 1),
