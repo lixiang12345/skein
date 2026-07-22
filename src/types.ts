@@ -54,6 +54,10 @@ export interface AgentTeamConfig {
   maxConcurrent: number;
   maxDelegations: number;
   defaultProfile: string;
+  /** Default named connection inherited by profiles without an explicit provider or connection. */
+  defaultConnection?: string;
+  /** Default model inherited by profiles without an explicit model override. */
+  defaultModel?: string;
   /** Optional role-to-model routing. Credentials are referenced by env name, never stored here. */
   routes?: Record<string, AgentModelRoute>;
   /** Named API connections let many routes share one endpoint and credential reference. */
@@ -78,7 +82,7 @@ export interface AgentModelRoute {
   runtime?: 'api' | 'codex' | 'claude' | 'grok';
   connection?: string;
   provider?: ProviderName;
-  model: string;
+  model?: string;
   baseUrl?: string;
   apiKeyEnv?: string;
   temperature?: number;

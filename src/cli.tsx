@@ -17,6 +17,7 @@ import {
 import {ContextEngine, formatContextHits} from './context/context-engine.js';
 import {AgentRunner} from './agent/index.js';
 import {AgentProfileCatalog, listConnectionModels, TeamRunStore} from './agent/index.js';
+import {resolveAgentModelRoute} from './agent/model-route.js';
 import {discoverWorkspaceRules} from './agent/rules.js';
 import {createProvider} from './providers/index.js';
 import {SessionStore, type SessionSummary} from './session/index.js';
@@ -383,16 +384,18 @@ agentsCommand
     const catalog = new AgentProfileCatalog(workspace);
     const profiles = await catalog.discover();
     const roster = profiles.map((profile) => {
-      const route = config.agents?.routes?.[profile.name];
+      const resolved = resolveAgentModelRoute(config.agents, config.model, profile.name);
+      const route = resolved.route;
       const connection = route?.connection ? config.agents?.connections?.[route.connection] : undefined;
       return {
         ...profile,
+        routeSource: resolved.source,
         route: route ? {
           runtime: route.runtime ?? 'api',
           connection: route.connection,
           provider: route.provider ?? connection?.provider,
-          model: route.model,
-          endpoint: redactEndpoint(route.baseUrl ?? connection?.baseUrl),
+          model: route.model ?? config.model.model,
+          endpoint: redactEndpoint(route.baseUrl ?? connection?.baseUrl ?? (route.provider === config.model.provider ? config.model.baseUrl : undefined)),
           credentials: route.apiKeyEnv ?? connection?.apiKeyEnv
             ? `env:${route.apiKeyEnv ?? connection?.apiKeyEnv}`
             : 'inherited when compatible',
@@ -411,7 +414,7 @@ agentsCommand
     });
     if (options.json) printObject(roster, true);
     else for (const profile of roster) {
-      process.stdout.write(`${profile.name.padEnd(14)} ${profile.readOnly ? 'read-only' : 'writer   '} ${profile.route.runtime}:${profile.route.provider}/${profile.route.model}  ${profile.description}\n`);
+      process.stdout.write(`${profile.name.padEnd(14)} ${profile.readOnly ? 'read-only' : 'writer   '} ${profile.route.runtime}:${profile.route.provider}/${profile.route.model} (${profile.routeSource})  ${profile.description}\n`);
     }
   });
 agentsCommand
@@ -429,11 +432,12 @@ agentsCommand
       endpoint: redactEndpoint(connection.baseUrl),
       credentials: connection.apiKeyEnv ? `env:${connection.apiKeyEnv}` : 'provider default environment',
       routes: Object.values(config.agents?.routes ?? {}).filter((route) => route.connection === name).length,
+      default: config.agents?.defaultConnection === name,
     }));
     if (options.json) printObject(connections, true);
     else if (!connections.length) process.stdout.write('No named model connections configured.\n');
     else for (const connection of connections) {
-      process.stdout.write(`${connection.name.padEnd(16)} ${connection.provider.padEnd(10)} ${connection.credentials.padEnd(28)} ${connection.routes} routes  ${connection.endpoint}\n`);
+      process.stdout.write(`${connection.name.padEnd(16)} ${connection.provider.padEnd(10)} ${connection.credentials.padEnd(28)} ${connection.routes} explicit${connection.default ? ' + team default' : ''}  ${connection.endpoint}\n`);
     }
   });
 agentsCommand

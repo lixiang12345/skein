@@ -3,6 +3,7 @@ import {Box, render, Text, useApp, useInput, useWindowSize} from 'ink';
 import {relative} from 'node:path';
 import type {AgentRunner} from '../agent/index.js';
 import {PLAN_MODE_INSTRUCTIONS} from '../agent/prompt.js';
+import {resolveAgentModelRoute} from '../agent/model-route.js';
 import {redactEndpoint, saveUiPreference} from '../config.js';
 import {
   activeMentionToken,
@@ -570,11 +571,12 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     if (command === 'agents') {
       const profiles = extensions?.listAgents() ?? [];
       appendList('Experts', profiles.map((profile) => {
-        const route = config.agents?.routes?.[profile.name];
+        const resolved = resolveAgentModelRoute(config.agents, config.model, profile.name);
+        const route = resolved.route;
         const connection = route?.connection ? config.agents?.connections?.[route.connection] : undefined;
         const routeLabel = route
-          ? `${route.runtime ?? 'api'}:${route.connection ? `@${route.connection}` : route.provider ?? connection?.provider}/${route.model}`
-          : `inherits ${config.model.provider}/${config.model.model}`;
+          ? `${route.runtime ?? 'api'}:${route.connection ? `@${route.connection}` : route.provider ?? connection?.provider}/${route.model ?? config.model.model} (${resolved.source})`
+          : `${config.model.provider}/${config.model.model} (parent)`;
         return {
           label: `${profile.name}  ${profile.readOnly ? 'read-only' : 'writer'}`,
           detail: `${profile.description}${separator}${profile.source}${separator}${routeLabel}`,
@@ -587,17 +589,18 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       const connections = Object.entries(config.agents?.connections ?? {});
       appendList('Model connections', connections.length ? connections.map(([name, connection]) => ({
         label: `${name}  ${connection.provider}`,
-        detail: `${redactEndpoint(connection.baseUrl)}${separator}${connection.apiKeyEnv ? `env:${connection.apiKeyEnv}` : 'provider default environment'}${separator}${routes.filter((route) => route.connection === name).length} routes`,
+        detail: `${redactEndpoint(connection.baseUrl)}${separator}${connection.apiKeyEnv ? `env:${connection.apiKeyEnv}` : 'provider default environment'}${separator}${routes.filter((route) => route.connection === name).length} explicit routes${config.agents?.defaultConnection === name ? `${separator}team default` : ''}`,
       })) : [{label: 'No named model connections configured.'}]);
       return true;
     }
     if (command === 'team') {
       if (!argument) {
         appendList('Team routing', (extensions?.listAgents() ?? []).map((profile) => {
-          const route = config.agents?.routes?.[profile.name];
+          const resolved = resolveAgentModelRoute(config.agents, config.model, profile.name);
+          const route = resolved.route;
           const connection = route?.connection ? config.agents?.connections?.[route.connection] : undefined;
           return {
-            label: `${profile.name}  ${route ? `${route.runtime ?? 'api'}:${route.connection ? `@${route.connection}` : route.provider ?? connection?.provider}/${route.model}` : 'inherited model'}`,
+            label: `${profile.name}  ${route ? `${route.runtime ?? 'api'}:${route.connection ? `@${route.connection}` : route.provider ?? connection?.provider}/${route.model ?? config.model.model} (${resolved.source})` : `${config.model.provider}/${config.model.model} (parent)`}`,
             detail: profile.description,
           };
         }));

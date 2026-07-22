@@ -11,6 +11,7 @@ import {createDefaultToolRegistry, WorkspaceAccess} from '../../src/tools/index.
 import type {AgentEvent, MosaicConfig} from '../../src/types.js';
 import {WorkflowCatalog} from '../../src/workflows/catalog.js';
 import {TeamRunStore} from '../../src/agent/team-store.js';
+import {resolveAgentModelRoute} from '../../src/agent/model-route.js';
 
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, {recursive: true, force: true}))));
@@ -172,14 +173,15 @@ describe('bounded orchestration', () => {
     expect(requests).toEqual([`codex/gpt-external/${root}`]);
   });
 
-  it('resolves one named connection across agent model routes', async () => {
+  it('resolves a named connection inherited from team defaults', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-shared-connection-'));
     roots.push(root);
     const cfg = config(root);
     cfg.agents = {
       ...cfg.agents!,
+      defaultConnection: 'relay',
       connections: {relay: {provider: 'compatible', baseUrl: 'https://relay.example/v1', apiKeyEnv: 'RELAY_API_KEY'}},
-      routes: {backend: {connection: 'relay', model: 'openai/backend-model'}},
+      routes: {backend: {model: 'openai/backend-model'}},
     };
     const profiles = new AgentProfileCatalog(root);
     await profiles.discover();
@@ -213,6 +215,48 @@ describe('bounded orchestration', () => {
       baseUrl: 'https://relay.example/v1',
       apiKey: 'relay-secret',
     }]);
+  });
+
+  it('lets profiles inherit team defaults while preserving targeted overrides', () => {
+    const cfg = config('/tmp/team-defaults');
+    cfg.agents = {
+      ...cfg.agents!,
+      defaultConnection: 'relay',
+      defaultModel: 'openai/team-default',
+      connections: {
+        relay: {provider: 'compatible', baseUrl: 'https://relay.example/v1'},
+        special: {provider: 'gemini', baseUrl: 'https://special.example/v1'},
+      },
+      routes: {
+        frontend: {model: 'anthropic/frontend-model'},
+        reviewer: {connection: 'special', model: 'review-model'},
+        backend: {provider: 'openai', model: 'direct-backend'},
+      },
+    };
+    expect(resolveAgentModelRoute(cfg.agents, cfg.model, 'architect')).toMatchObject({
+      source: 'default',
+      route: {connection: 'relay', model: 'openai/team-default'},
+    });
+    expect(resolveAgentModelRoute(cfg.agents, cfg.model, 'frontend')).toMatchObject({
+      source: 'profile',
+      route: {connection: 'relay', model: 'anthropic/frontend-model'},
+    });
+    expect(resolveAgentModelRoute(cfg.agents, cfg.model, 'backend')).toMatchObject({
+      source: 'profile',
+      route: {provider: 'openai', model: 'direct-backend'},
+    });
+    expect(resolveAgentModelRoute(cfg.agents, cfg.model, 'backend').route?.connection).toBeUndefined();
+    expect(resolveAgentModelRoute(cfg.agents, cfg.model, 'reviewer')).toMatchObject({
+      source: 'profile',
+      route: {connection: 'special', model: 'review-model'},
+    });
+
+    const connectionOnly = {...cfg.agents, routes: {}};
+    delete connectionOnly.defaultModel;
+    expect(resolveAgentModelRoute(connectionOnly, cfg.model, 'architect')).toMatchObject({
+      source: 'default',
+      route: {connection: 'relay', model: cfg.model.model},
+    });
   });
 
   it('rejects an external worker that exceeds its route budget', async () => {

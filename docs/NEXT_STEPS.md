@@ -179,6 +179,11 @@ Implementation progress:
 - `skein agents models <connection>` can query a compatible/OpenAI connection's
   standard `/models` endpoint, giving users model IDs without trial-and-error
   configuration. The command is read-only and does not persist the catalog.
+- Team routing now supports `agents.defaultConnection` and optional
+  `agents.defaultModel`. Most users configure one shared gateway once; profile
+  routes only contain model or provider overrides when needed. CLI and TUI
+  surfaces label inherited versus overridden routes, and unknown defaults fail
+  validation before any agent starts.
 - Team budgets default to `observe`: telemetry is retained, but configured
   thresholds do not warn or terminate work. `guard` adds non-blocking threshold
   warnings, while `strict` is an explicit hard-stop policy for controlled jobs.

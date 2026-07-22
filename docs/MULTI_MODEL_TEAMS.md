@@ -164,7 +164,32 @@ credential once in the user environment:
 export TEAM_RELAY_API_KEY="..."
 ```
 
-Then reference one connection from every role:
+For the common case, set one team default. Every profile inherits this
+connection and model, so there is no need to repeat the same block for each
+role. Add a profile entry only when that role needs a different model:
+
+```json
+{
+  "agents": {
+    "defaultConnection": "team-relay",
+    "defaultModel": "openai/coding-model",
+    "connections": {
+      "team-relay": {
+        "provider": "compatible",
+        "baseUrl": "https://relay.example/v1",
+        "apiKeyEnv": "TEAM_RELAY_API_KEY"
+      }
+    },
+    "routes": {
+      "frontend": {"model": "anthropic/frontend-model"},
+      "reviewer": {"model": "openai/reviewer-model"}
+    }
+  }
+}
+```
+
+The equivalent fully explicit form is still supported when different roles
+need different connections:
 
 ```json
 {
@@ -208,6 +233,12 @@ CLIs. Named connections are best kept in user-level configuration. A
 repository-owned connection or route remains disabled until the project config
 is explicitly trusted, preventing a cloned repository from redirecting a
 developer's key and source context to an attacker-controlled endpoint.
+
+Routing precedence is explicit and predictable: a profile route overrides team
+defaults; a route that specifies `provider` without `connection` bypasses the
+default connection; otherwise the current parent model is used when no team
+default is configured. `skein agents list`, `/agents`, and `/team` show whether
+each profile uses the parent, team default, or a profile override.
 
 `runtime` defaults to `api`. The initial external adapters invoke installed
 `codex`, `claude`, or `grok` binaries without a shell and enforce each CLI's

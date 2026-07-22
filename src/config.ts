@@ -60,6 +60,8 @@ const agentTeamConfigSchema = z.object({
   maxConcurrent: z.number().int().positive().max(16).optional(),
   maxDelegations: z.number().int().positive().max(32).optional(),
   defaultProfile: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/).optional(),
+  defaultConnection: agentConnectionNameSchema.optional(),
+  defaultModel: z.string().min(1).max(256).optional(),
   reviewerProfile: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/).optional(),
   maxReviewRounds: z.number().int().min(0).max(3).optional(),
   cockpit: z.boolean().optional(),
@@ -73,7 +75,7 @@ const agentTeamConfigSchema = z.object({
     runtime: z.enum(['api', 'codex', 'claude', 'grok']).optional(),
     connection: agentConnectionNameSchema.optional(),
     provider: z.enum(['openai', 'anthropic', 'gemini', 'compatible']).optional(),
-    model: z.string().min(1).max(256),
+    model: z.string().min(1).max(256).optional(),
     baseUrl: z.string().url().refine((value) => /^https?:$/i.test(new URL(value).protocol), {
       message: 'agent route baseUrl must use http or https',
     }).optional(),
@@ -84,9 +86,7 @@ const agentTeamConfigSchema = z.object({
     maxToolCalls: z.number().int().positive().max(1_000).optional(),
     timeoutMs: z.number().int().positive().max(1_800_000).optional(),
     budgetMode: z.enum(['observe', 'guard', 'strict']).optional(),
-  }).strict().refine((route) => route.connection !== undefined || route.provider !== undefined, {
-    message: 'agent route requires provider or connection',
-  })).optional(),
+  }).strict()).optional(),
 }).partial();
 
 const mcpServerSchema = z.object({
@@ -472,6 +472,9 @@ export async function loadConfig(
 }
 
 function validateAgentConnections(agents: AgentTeamConfig | undefined): void {
+  if (agents?.defaultConnection && !agents.connections?.[agents.defaultConnection]) {
+    throw new Error(`Agent defaults reference unknown connection ${agents.defaultConnection}.`);
+  }
   for (const [profile, route] of Object.entries(agents?.routes ?? {})) {
     if (route.connection && !agents?.connections?.[route.connection]) {
       throw new Error(`Agent route ${profile} references unknown connection ${route.connection}.`);
@@ -566,6 +569,8 @@ function sanitizeProjectConfig(
     // endpoints. Repository-owned config cannot activate them without trust.
     delete agents.routes;
     delete agents.connections;
+    delete agents.defaultConnection;
+    delete agents.defaultModel;
   }
   return {
     ...safeUpdate,
@@ -627,6 +632,8 @@ export function configSummary(config: MosaicConfig): Record<string, unknown> {
       maxConcurrent: config.agents.maxConcurrent,
       maxDelegations: config.agents.maxDelegations,
       defaultProfile: config.agents.defaultProfile,
+      defaultConnection: config.agents.defaultConnection,
+      defaultModel: config.agents.defaultModel,
       reviewerProfile: config.agents.reviewerProfile,
       maxReviewRounds: config.agents.maxReviewRounds,
       cockpit: config.agents.cockpit,

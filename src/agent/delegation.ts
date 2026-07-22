@@ -11,6 +11,7 @@ import {AgentRunner} from './runner.js';
 import {AgentProfileCatalog, type AgentProfile} from './profiles.js';
 import {runExternalAgent, type ExternalAgentRequest, type ExternalAgentResult} from './external-runtime.js';
 import {TeamRunStore} from './team-store.js';
+import {resolveAgentModelRoute} from './model-route.js';
 
 export interface DelegationManagerOptions {
   config: MosaicConfig;
@@ -486,9 +487,9 @@ export class DelegationManager {
   }
 
   private modelRoute(profile: string): ModelConfig {
-    const configured = this.team.routes?.[profile];
-    if (!configured) return this.options.config.model;
-    return modelConfigFromRoute(configured, this.options.config.model, this.options.environment ?? process.env, this.team.connections);
+    const {route} = resolveAgentModelRoute(this.team, this.options.config.model, profile);
+    if (!route) return this.options.config.model;
+    return modelConfigFromRoute(route, this.options.config.model, this.options.environment ?? process.env, this.team.connections);
   }
 
   private providerFor(config: ModelConfig): ModelProvider {
@@ -525,6 +526,7 @@ function modelConfigFromRoute(
   if (route.connection && !connection) throw new Error(`Unknown agent model connection: ${route.connection}`);
   const provider = route.provider ?? connection?.provider;
   if (!provider) throw new Error('Agent route requires a provider or a valid connection.');
+  if (!route.model) throw new Error('Agent route requires a model or a team default model.');
   const baseUrl = route.baseUrl ?? connection?.baseUrl;
   const apiKeyEnv = route.apiKeyEnv ?? connection?.apiKeyEnv;
   const inheritedKey = provider === parent.provider && baseUrl === parent.baseUrl
