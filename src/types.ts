@@ -254,7 +254,7 @@ export type AgentEvent =
   | {type: 'tasks'; tasks: SessionTask[]}
   | {type: 'skill'; name: string; description: string}
   | {type: 'memory'; count: number; scope: string}
-  | {type: 'agent_start'; id: string; profile: string; task: string; provider?: string; model?: string; phase?: 'work' | 'review' | 'revision'}
+  | {type: 'agent_start'; id: string; profile: string; task: string; provider?: string; model?: string; phase?: 'work' | 'review' | 'revision'; retryOf?: string}
   | {type: 'agent_message'; id: string; from: string; to: string; content: string}
   | {type: 'agent_update'; id: string; profile: string; stage: 'context' | 'thinking' | 'tool' | 'response' | 'review'; detail?: string; tool?: string; toolCalls?: number; inputTokens?: number; outputTokens?: number}
   | {type: 'team_start'; id: string; objective: string}

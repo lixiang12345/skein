@@ -137,6 +137,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const [teamWorkbenchView, setTeamWorkbenchView] = useState<TeamWorkbenchView>('agents');
   const [teamWorkbenchIndex, setTeamWorkbenchIndex] = useState(0);
   const [teamWorkbenchExpanded, setTeamWorkbenchExpanded] = useState(false);
+  const [teamWorkbenchNotice, setTeamWorkbenchNotice] = useState<string>();
   const [teamRun, setTeamRun] = useState<TeamRunSummary>();
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [suggestionsDismissedFor, setSuggestionsDismissedFor] = useState<string>();
@@ -305,17 +306,21 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         append({id: nextId(), kind: 'memory', count: event.count, scope: event.scope});
         break;
       case 'agent_start':
-        append({
-          id: event.id,
-          kind: 'agent',
-          profile: event.profile,
-          task: event.task,
-          state: 'running',
-          startedAt: Date.now(),
-          ...(event.provider ? {provider: event.provider} : {}),
-          ...(event.model ? {model: event.model} : {}),
-          ...(event.phase ? {phase: event.phase} : {}),
-        });
+        setTimeline((items) => [
+          ...items.map((item) => item.kind === 'agent' && item.id === event.retryOf ? {...item, superseded: true} : item),
+          {
+            id: event.id,
+            kind: 'agent' as const,
+            profile: event.profile,
+            task: event.task,
+            state: 'running' as const,
+            startedAt: Date.now(),
+            ...(event.provider ? {provider: event.provider} : {}),
+            ...(event.model ? {model: event.model} : {}),
+            ...(event.phase ? {phase: event.phase} : {}),
+            ...(event.retryOf ? {retryOf: event.retryOf} : {}),
+          },
+        ].slice(-500));
         setTeamWorkbenchIndex(0);
         break;
       case 'agent_message':
@@ -500,6 +505,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     }
     if (command === 'workbench') {
       setTeamWorkbenchOpen((visible) => !visible);
+      setTeamWorkbenchNotice(undefined);
       return true;
     }
     if (command === 'compact') {
@@ -961,6 +967,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       if (key.escape || (key.ctrl && inputKey.toLocaleLowerCase() === 't')) {
         setTeamWorkbenchOpen(false);
         setTeamWorkbenchExpanded(false);
+        setTeamWorkbenchNotice(undefined);
         return;
       }
       if (key.leftArrow || key.rightArrow) {
@@ -972,8 +979,28 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         setTeamWorkbenchExpanded(false);
         return;
       }
+      if (inputKey.toLocaleLowerCase() === 's' || inputKey.toLocaleLowerCase() === 'r') {
+        const agents = timeline.filter((item): item is Extract<TimelineItem, {kind: 'agent'}> => item.kind === 'agent' && !item.superseded);
+        const selected = agents[teamWorkbenchIndex];
+        if (!selected) return;
+        const requested = inputKey.toLocaleLowerCase() === 's'
+          ? extensions?.cancelAgent(selected.id)
+          : extensions?.retryAgent(selected.id);
+        append({
+          id: nextId(),
+          kind: 'notice',
+          tone: requested ? 'info' : 'error',
+          text: requested
+            ? inputKey.toLocaleLowerCase() === 's' ? `Stop requested for ${selected.profile}.` : `Retry requested for ${selected.profile}.`
+            : `No active control is available for ${selected.profile}.`,
+        });
+        setTeamWorkbenchNotice(requested
+          ? inputKey.toLocaleLowerCase() === 's' ? `Stop requested for ${selected.profile}.` : `Retry requested for ${selected.profile}.`
+          : `No active control is available for ${selected.profile}.`);
+        return;
+      }
       const itemCount = teamWorkbenchView === 'agents'
-        ? timeline.filter((item) => item.kind === 'agent').length
+        ? timeline.filter((item) => item.kind === 'agent' && !item.superseded).length
         : teamWorkbenchView === 'tasks'
           ? tasks.length
           : Math.min(12, timeline.filter((item) => item.kind === 'agent-message').length);
@@ -994,6 +1021,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       setTeamWorkbenchView('agents');
       setTeamWorkbenchIndex(0);
       setTeamWorkbenchExpanded(false);
+      setTeamWorkbenchNotice(undefined);
       return;
     }
     if (key.ctrl && inputKey.toLocaleLowerCase() === 'r') {
@@ -1188,6 +1216,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
                 view={teamWorkbenchView}
                 selectedIndex={teamWorkbenchIndex}
                 expanded={teamWorkbenchExpanded}
+                {...(teamWorkbenchNotice ? {notice: teamWorkbenchNotice} : {})}
                 {...(teamRun ? {run: teamRun} : {})}
               />
             ) : <>

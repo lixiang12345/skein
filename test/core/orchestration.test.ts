@@ -283,6 +283,98 @@ describe('bounded orchestration', () => {
     expect(events.some((event) => event.type === 'agent_update' && event.detail?.includes('soft'))).toBe(false);
   });
 
+  it('stops a selected running agent through its own abort signal', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-stop-agent-'));
+    roots.push(root);
+    const cfg = config(root);
+    cfg.agents = {...cfg.agents!, routes: {backend: {runtime: 'codex', provider: 'openai', model: 'gpt-external'}}};
+    const profiles = new AgentProfileCatalog(root);
+    await profiles.discover();
+    const context: ContextProvider = {
+      async pack() { return {text: '', hits: [], estimatedTokens: 0, engine: 'test', truncated: false}; },
+      async search() { return []; },
+    };
+    let started!: (id: string) => void;
+    const agentStarted = new Promise<string>((resolve) => { started = resolve; });
+    const manager = new DelegationManager({
+      config: cfg,
+      provider: {name: 'parent', async complete() { return {content: 'parent', toolCalls: []}; }},
+      contextEngine: context,
+      parentTools: createDefaultToolRegistry(),
+      profiles,
+      externalRunner: (request) => new Promise((_resolve, reject) => {
+        const stop = () => reject(request.signal?.reason ?? new Error('aborted'));
+        if (request.signal?.aborted) stop();
+        else request.signal?.addEventListener('abort', stop, {once: true});
+      }),
+    });
+    const execution = manager.tool().execute({tasks: [{profile: 'backend', task: 'Inspect state.'}]}, {
+      config: cfg,
+      workspace: new WorkspaceAccess([root]),
+      session: createSession({workspace: root, provider: 'compatible', model: 'test'}),
+      contextEngine: context,
+      emit: (event) => { if (event.type === 'agent_start') started(event.id); },
+    });
+    const id = await agentStarted;
+    expect(manager.cancelAgent(id)).toBe(true);
+    const result = await execution;
+    expect(result.ok).toBe(false);
+    expect(result.content).toContain('Agent stopped by operator');
+    expect(manager.cancelAgent(id)).toBe(false);
+  });
+
+  it('retries a running agent and returns the fresh attempt to its caller', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-retry-agent-'));
+    roots.push(root);
+    const cfg = config(root);
+    cfg.agents = {...cfg.agents!, routes: {backend: {runtime: 'codex', provider: 'openai', model: 'gpt-external'}}};
+    const profiles = new AgentProfileCatalog(root);
+    await profiles.discover();
+    const context: ContextProvider = {
+      async pack() { return {text: '', hits: [], estimatedTokens: 0, engine: 'test', truncated: false}; },
+      async search() { return []; },
+    };
+    const events: AgentEvent[] = [];
+    let calls = 0;
+    let started!: (id: string) => void;
+    const agentStarted = new Promise<string>((resolve) => { started = resolve; });
+    const manager = new DelegationManager({
+      config: cfg,
+      provider: {name: 'parent', async complete() { return {content: 'parent', toolCalls: []}; }},
+      contextEngine: context,
+      parentTools: createDefaultToolRegistry(),
+      profiles,
+      externalRunner: async (request) => {
+        calls += 1;
+        if (calls === 1) {
+          return new Promise((_resolve, reject) => {
+            const retry = () => reject(request.signal?.reason ?? new Error('aborted'));
+            if (request.signal?.aborted) retry();
+            else request.signal?.addEventListener('abort', retry, {once: true});
+          });
+        }
+        return {content: 'fresh retry evidence', runtime: request.runtime, model: request.model, durationMs: 2};
+      },
+    });
+    const execution = manager.tool().execute({tasks: [{profile: 'backend', task: 'Inspect state.'}]}, {
+      config: cfg,
+      workspace: new WorkspaceAccess([root]),
+      session: createSession({workspace: root, provider: 'compatible', model: 'test'}),
+      contextEngine: context,
+      emit: (event) => {
+        events.push(event);
+        if (event.type === 'agent_start' && !event.retryOf) started(event.id);
+      },
+    });
+    const firstId = await agentStarted;
+    expect(manager.retryAgent(firstId)).toBe(true);
+    const result = await execution;
+    expect(result.ok).toBe(true);
+    expect(result.content).toContain('fresh retry evidence');
+    expect(calls).toBe(2);
+    expect(events.some((event) => event.type === 'agent_start' && event.retryOf === firstId)).toBe(true);
+  });
+
   it('defines single-writer workflows with parallel read-only review branches', () => {
     const catalog = new WorkflowCatalog();
     const review = catalog.get('review');

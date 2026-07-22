@@ -164,6 +164,11 @@ Implementation progress:
   Tasks, and Messages views, keyboard navigation, selected-agent report
   expansion, run summary, and persistent soft-budget alerts. The focused view
   degrades to the full available width on narrow terminals.
+- Running Agents can now receive an explicit stop or retry request from the
+  Workbench. A retry creates a new attempt linked by `retryOf`, preserves the
+  stopped attempt in telemetry, and feeds only the fresh result into the
+  caller's aggregation. Completed attempts remain immutable until the next
+  report-inspection increment.
 - Team budgets default to `observe`: telemetry is retained, but configured
   thresholds do not warn or terminate work. `guard` adds non-blocking threshold
   warnings, while `strict` is an explicit hard-stop policy for controlled jobs.

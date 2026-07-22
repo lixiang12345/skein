@@ -21,7 +21,7 @@ export type TimelineItem =
   | {id: string; kind: 'tool'; name: string; detail: string; state: 'running' | 'ok' | 'error'; startedAt?: number; durationMs?: number; errorDetail?: string; output?: string}
   | {id: string; kind: 'skill'; name: string; description: string}
   | {id: string; kind: 'memory'; count: number; scope: string}
-  | {id: string; kind: 'agent'; profile: string; task: string; provider?: string; model?: string; phase?: 'work' | 'review' | 'revision'; stage?: 'context' | 'thinking' | 'tool' | 'response' | 'review'; activityDetail?: string; activeTool?: string; toolCalls?: number; inputTokens?: number; outputTokens?: number; summary?: string; alerts?: string[]; state: 'running' | 'ok' | 'error'; startedAt?: number; durationMs?: number}
+  | {id: string; kind: 'agent'; profile: string; task: string; provider?: string; model?: string; phase?: 'work' | 'review' | 'revision'; stage?: 'context' | 'thinking' | 'tool' | 'response' | 'review'; activityDetail?: string; activeTool?: string; toolCalls?: number; inputTokens?: number; outputTokens?: number; summary?: string; alerts?: string[]; retryOf?: string; superseded?: boolean; state: 'running' | 'ok' | 'error'; startedAt?: number; durationMs?: number}
   | {id: string; kind: 'agent-message'; from: string; to: string; text: string}
   | {id: string; kind: 'workflow'; name: string; step: string; status: SessionTask['status']}
   | {id: string; kind: 'compaction'; messages: number; tokens: number}
@@ -396,7 +396,7 @@ export function TeamCockpit({items, width = 36, glyphMode = 'auto'}: {
 }) {
   const theme = useTheme();
   const glyphs = resolveGlyphs(glyphMode);
-  const agents = items.filter((item): item is Extract<TimelineItem, {kind: 'agent'}> => item.kind === 'agent').slice(-3);
+  const agents = items.filter((item): item is Extract<TimelineItem, {kind: 'agent'}> => item.kind === 'agent' && !item.superseded).slice(-3);
   const messages = items.filter((item): item is Extract<TimelineItem, {kind: 'agent-message'}> => item.kind === 'agent-message').slice(-2);
   const inner = Math.max(8, safeWidth(width) - 4);
   return (
@@ -449,7 +449,7 @@ export interface TeamRunSummary {
   reviewRounds?: number;
 }
 
-export function TeamWorkbench({items, tasks, width = 80, glyphMode = 'auto', view = 'agents', selectedIndex = 0, expanded = false, run}: {
+export function TeamWorkbench({items, tasks, width = 80, glyphMode = 'auto', view = 'agents', selectedIndex = 0, expanded = false, run, notice}: {
   items: TimelineItem[];
   tasks: SessionTask[];
   width?: number;
@@ -458,12 +458,13 @@ export function TeamWorkbench({items, tasks, width = 80, glyphMode = 'auto', vie
   selectedIndex?: number;
   expanded?: boolean;
   run?: TeamRunSummary;
+  notice?: string;
 }) {
   const theme = useTheme();
   const glyphs = resolveGlyphs(glyphMode);
   const rowWidth = safeWidth(width);
   const inner = Math.max(8, rowWidth - 4);
-  const agents = items.filter((item): item is Extract<TimelineItem, {kind: 'agent'}> => item.kind === 'agent');
+  const agents = items.filter((item): item is Extract<TimelineItem, {kind: 'agent'}> => item.kind === 'agent' && !item.superseded);
   const messages = items.filter((item): item is Extract<TimelineItem, {kind: 'agent-message'}> => item.kind === 'agent-message');
   const visibleMessages = messages.slice(-12);
   const completed = agents.filter((agent) => agent.state === 'ok').length;
@@ -486,6 +487,7 @@ export function TeamWorkbench({items, tasks, width = 80, glyphMode = 'auto', vie
       <Text bold color={theme.accent}>{truncateDisplay(`${glyphs.agent} TEAM WORKBENCH`, inner)}</Text>
       <Text color={theme.dim}>{truncateDisplay(summary, inner)}</Text>
       {run?.objective ? <Text color={theme.muted}>{truncateDisplay(`goal ${run.objective}`, inner)}</Text> : null}
+      {notice ? <Text color={theme.warning}>{truncateDisplay(`${glyphs.info} ${notice}`, inner)}</Text> : null}
       <Text color={theme.border}>{truncateDisplay(tabs, inner)}</Text>
       {view === 'agents' ? (
         agents.length ? agents.map((agent, index) => {
@@ -519,7 +521,7 @@ export function TeamWorkbench({items, tasks, width = 80, glyphMode = 'auto', vie
         visibleMessages.length ? visibleMessages.map((message, index) => <Text key={message.id} color={index === Math.min(selectedIndex, visibleMessages.length - 1) ? theme.textStrong : theme.muted}>{truncateDisplay(`${index === Math.min(selectedIndex, visibleMessages.length - 1) ? glyphs.arrow : ' '}${message.from}${glyphs.arrow}${message.to}: ${message.text}`, inner)}</Text>) : <Text color={theme.dim}>{truncateDisplay('No peer handoffs yet.', inner)}</Text>
       )}
       <Box flexGrow={1} />
-      <Text color={theme.dim}>{truncateDisplay(expanded ? 'enter collapse' : 'enter inspect', inner)}</Text>
+      <Text color={theme.dim}>{truncateDisplay(`${view === 'agents' ? `s stop ${glyphs.separator} r retry ${glyphs.separator} ` : ''}${expanded ? 'enter collapse' : 'enter inspect'}`, inner)}</Text>
       <Text color={theme.dim}>{truncateDisplay('left/right view · up/down select · esc close', inner)}</Text>
       <Text color={theme.dim}>{truncateDisplay(`view ${viewLabel}`, inner)}</Text>
     </Box>

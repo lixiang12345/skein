@@ -52,10 +52,13 @@ terminals keep the same information in the normal timeline.
 
 Press `Ctrl+T` or run `/workbench` to focus the interactive Team Workbench. It
 switches between `Agents`, `Tasks`, and `Messages`; arrow keys select an item,
-`Enter` expands the selected report and observable alerts, and `Esc` returns to
+`Enter` expands the selected report and observable alerts, `s` stops a running
+Agent, `r` requests a fresh attempt for a running Agent, and `Esc` returns to
 the transcript. The focused view uses the full available width, including on
 narrow terminals, so the same run summary and safe telemetry remain available
-without exposing hidden chain-of-thought.
+without exposing hidden chain-of-thought. Completed Agents are immutable in
+this first control pass; their persisted reports remain available through the
+Team Run inspection commands.
 
 The workflow is:
 

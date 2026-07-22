@@ -47,6 +47,8 @@ type AgentPhase = 'work' | 'review' | 'revision';
 export class DelegationManager {
   private readonly team: AgentTeamConfig;
   private readonly teamStore: TeamRunStore | undefined;
+  private readonly activeAgents = new Map<string, AbortController>();
+  private readonly retryRequests = new Set<string>();
 
   constructor(private readonly options: DelegationManagerOptions) {
     this.team = options.config.agents ?? {
@@ -58,6 +60,21 @@ export class DelegationManager {
     this.teamStore = options.teamStore ?? (this.team.persistBoard !== false
       ? new TeamRunStore(options.config.workspaceRoots[0] ?? process.cwd())
       : undefined);
+  }
+
+  cancelAgent(id: string): boolean {
+    const controller = this.activeAgents.get(id);
+    if (!controller) return false;
+    controller.abort(new Error('Agent stopped by operator.'));
+    return true;
+  }
+
+  retryAgent(id: string): boolean {
+    const controller = this.activeAgents.get(id);
+    if (!controller) return false;
+    this.retryRequests.add(id);
+    controller.abort(new Error('Agent retry requested by operator.'));
+    return true;
   }
 
   tool(): AgentTool {
@@ -97,7 +114,7 @@ export class DelegationManager {
           task: task.task,
         }));
         const results = await mapConcurrent(tasks, manager.team.maxConcurrent, (task) =>
-          manager.runOne(task, 'work', context.emit, context.signal));
+          manager.runRecorded(undefined, task, 'work', context.emit, context.signal));
         return {
           ok: results.every((result) => result.ok),
           content: formatResults(results),
@@ -230,7 +247,18 @@ export class DelegationManager {
     emit?: (event: AgentEvent) => void | Promise<void>,
     signal?: AbortSignal,
   ): Promise<DelegatedResult> {
-    const result = await this.runOne(task, phase, emit, signal);
+    let result = await this.runOne(task, phase, emit, signal);
+    await this.recordAgent(runId, result, phase);
+    const retryRequested = this.retryRequests.delete(result.id);
+    if (retryRequested && !signal?.aborted) {
+      await emit?.({type: 'agent_update', id: result.id, profile: result.profile, stage: 'response', detail: 'retry requested; starting a fresh attempt'});
+      result = await this.runOne(task, phase, emit, signal, result.id);
+      await this.recordAgent(runId, result, phase);
+    }
+    return result;
+  }
+
+  private async recordAgent(runId: string | undefined, result: DelegatedResult, phase: AgentPhase): Promise<void> {
     if (runId) await this.teamStore?.recordAgent(runId, {
       id: result.id,
       profile: result.profile,
@@ -243,7 +271,6 @@ export class DelegationManager {
       usage: result.usage,
       report: result.summary,
     });
-    return result;
   }
 
   private async peerMessage(
@@ -263,6 +290,7 @@ export class DelegationManager {
     phase: AgentPhase,
     emit?: (event: AgentEvent) => void | Promise<void>,
     signal?: AbortSignal,
+    retryOf?: string,
   ): Promise<DelegatedResult> {
     const id = randomUUID();
     const profile = this.options.profiles.get(task.profile);
@@ -282,7 +310,12 @@ export class DelegationManager {
     if (!profile) {
       return {id, profile: task.profile, ok: false, summary: `Unknown expert profile: ${task.profile}`, provider: providerName, model, usage: emptyUsage, toolCalls: 0, durationMs: 0};
     }
-    await emit?.({type: 'agent_start', id, profile: profile.name, task: task.task, provider: providerName, model, phase});
+    const agentController = new AbortController();
+    const onParentAbort = () => agentController.abort(signal?.reason);
+    if (signal?.aborted) onParentAbort();
+    else signal?.addEventListener('abort', onParentAbort, {once: true});
+    this.activeAgents.set(id, agentController);
+    await emit?.({type: 'agent_start', id, profile: profile.name, task: task.task, provider: providerName, model, phase, ...(retryOf ? {retryOf} : {})});
     try {
       if (externalRuntime) {
         await emit?.({type: 'agent_update', id, profile: profile.name, stage: phase === 'review' ? 'review' : 'thinking', detail: `running ${externalRuntime} in read-only mode`});
@@ -299,7 +332,7 @@ export class DelegationManager {
             model,
             workspace: this.options.config.workspaceRoots[0] ?? process.cwd(),
             prompt: `${formatProfilePrompt(profile)}\n\nYou are a read-only teammate in a Skein team run. Do not modify files or delegate. Return a concise evidence-backed report for peer review.\n\nAssignment:\n${task.task}`,
-            ...(signal ? {signal} : {}),
+            signal: agentController.signal,
             timeoutMs: budgetMode === 'strict' && externalTimeoutMs !== undefined ? externalTimeoutMs : 0,
           });
         } finally {
@@ -338,22 +371,18 @@ export class DelegationManager {
       const toolBudget = configuredRoute?.maxToolCalls ?? this.team.maxAgentToolCalls;
       const tokenBudget = configuredRoute?.tokenBudget ?? this.team.maxAgentTokens;
       const timeoutMs = configuredRoute?.timeoutMs ?? this.team.agentTimeoutMs;
-      const budgetController = new AbortController();
-      const onParentAbort = () => budgetController.abort(signal?.reason);
-      if (signal?.aborted) onParentAbort();
-      else signal?.addEventListener('abort', onParentAbort, {once: true});
       let toolBudgetWarned = false;
       let tokenBudgetWarned = false;
       const timeout = timeoutMs === undefined
         ? undefined
         : setTimeout(() => {
           if (budgetMode === 'strict') {
-            budgetController.abort(new Error(`Agent budget timeout after ${timeoutMs}ms`));
+            agentController.abort(new Error(`Agent budget timeout after ${timeoutMs}ms`));
           } else if (budgetMode === 'guard') {
             void emit?.({type: 'agent_update', id, profile: profile.name, stage: 'thinking', detail: `soft time threshold exceeded (${timeoutMs}ms); continuing`});
           }
         }, timeoutMs);
-      const childSignal = budgetController.signal;
+      const childSignal = agentController.signal;
       const registry = readOnlyRegistry(this.options.parentTools, profile);
       const childConfig: MosaicConfig = {
         ...this.options.config,
@@ -395,7 +424,7 @@ export class DelegationManager {
               observedToolCalls += 1;
               await emit?.({type: 'agent_update', id, profile: profile.name, stage: 'tool', tool: event.call.name, toolCalls: observedToolCalls});
               if (toolBudget !== undefined && observedToolCalls > toolBudget) {
-                if (budgetMode === 'strict') budgetController.abort(new Error(`Agent tool budget exhausted (${toolBudget})`));
+                if (budgetMode === 'strict') agentController.abort(new Error(`Agent tool budget exhausted (${toolBudget})`));
                 else if (budgetMode === 'guard' && !toolBudgetWarned) {
                   toolBudgetWarned = true;
                   await emit?.({type: 'agent_update', id, profile: profile.name, stage: 'tool', tool: event.call.name, toolCalls: observedToolCalls, detail: `soft tool threshold exceeded (${toolBudget}); continuing`});
@@ -425,10 +454,9 @@ export class DelegationManager {
         });
       } finally {
         if (timeout) clearTimeout(timeout);
-        signal?.removeEventListener('abort', onParentAbort);
       }
-      if (budgetController.signal.aborted) {
-        const reason = budgetController.signal.reason;
+      if (agentController.signal.aborted) {
+        const reason = agentController.signal.reason;
         throw new Error(reason instanceof Error ? reason.message : 'Agent budget or parent cancellation stopped the worker.');
       }
       if (observedStopReason === 'token_budget') {
@@ -451,6 +479,9 @@ export class DelegationManager {
       const result = {id, profile: profile.name, ok: false, summary, provider: providerName, model, usage: observedUsage, toolCalls: observedToolCalls, durationMs: Date.now() - startedAt};
       await emit?.({type: 'agent_done', ...result, phase});
       return result;
+    } finally {
+      this.activeAgents.delete(id);
+      signal?.removeEventListener('abort', onParentAbort);
     }
   }
 

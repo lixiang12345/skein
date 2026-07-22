@@ -30,6 +30,7 @@ export class ExtensionRuntime implements PromptContextProvider {
   readonly profiles: AgentProfileCatalog | undefined;
   readonly workflows = new WorkflowCatalog();
   private readonly options: ExtensionRuntimeOptions;
+  private delegation: DelegationManager | undefined;
   private initialized = false;
 
   private constructor(
@@ -96,6 +97,7 @@ export class ExtensionRuntime implements PromptContextProvider {
         profiles: this.profiles,
         promptContextProvider: this,
       });
+      this.delegation = delegation;
       registry.register(delegation.tool());
       registry.register(delegation.teamTool());
     }
@@ -187,6 +189,14 @@ export class ExtensionRuntime implements PromptContextProvider {
 
   mcpStatus(): McpServerStatus[] {
     return this.mcp?.list() ?? [];
+  }
+
+  cancelAgent(id: string): boolean {
+    return this.delegation?.cancelAgent(id) ?? false;
+  }
+
+  retryAgent(id: string): boolean {
+    return this.delegation?.retryAgent(id) ?? false;
   }
 
   async close(): Promise<void> {

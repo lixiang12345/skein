@@ -7,6 +7,7 @@ import {render, type Instance} from 'ink';
 import {describe, expect, it, vi} from 'vitest';
 import type {AgentRunner} from '../src/agent/index.js';
 import {defaultConfig} from '../src/config.js';
+import type {ExtensionRuntime} from '../src/runtime/index.js';
 import {createSession} from '../src/session/index.js';
 import {SkeinApp} from '../src/ui/tui.js';
 import type {AgentEvent, ChatMessage, ContextHit, Session} from '../src/types.js';
@@ -268,6 +269,42 @@ describe('SkeinApp completion flows', () => {
       await rm(root, {recursive: true, force: true});
     }
   });
+
+  it('routes Workbench retry controls to the active delegation manager', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-workbench-control-ui-'));
+    const session = testSession(root);
+    let finishTurn: ((value: Session) => void) | undefined;
+    const {runner} = mockRunner(root, session, [], {
+      run: async (_input, options) => {
+        options?.onEvent?.({type: 'team_start', id: 'run-control', objective: 'Control the agent'});
+        options?.onEvent?.({type: 'agent_start', id: 'agent-control', profile: 'backend', provider: 'openai', model: 'gpt', task: 'Inspect the API', phase: 'work'});
+        return new Promise<Session>((resolve) => { finishTurn = resolve; });
+      },
+    });
+    const retryAgent = vi.fn(() => true);
+    const extensions = {
+      listWorkflows: () => [],
+      mcpStatus: () => [],
+      memoryStats: () => undefined,
+      retryAgent,
+      cancelAgent: vi.fn(() => true),
+    } as unknown as ExtensionRuntime;
+    const harness = await mountApp(runner, root, extensions);
+
+    try {
+      harness.stdin.write('inspect the API\r');
+      await vi.waitFor(() => expect(harness.output()).toContain('backend'));
+      harness.stdin.write('\u0014');
+      await vi.waitFor(() => expect(harness.output()).toContain('TEAM WORKBENCH'));
+      harness.stdin.write('r');
+      await vi.waitFor(() => expect(retryAgent).toHaveBeenCalledWith('agent-control'));
+      expect(harness.output()).toContain('Retry requested for backend.');
+      finishTurn?.(session);
+    } finally {
+      await harness.cleanup();
+      await rm(root, {recursive: true, force: true});
+    }
+  });
 });
 
 type MockInput = PassThrough & {
@@ -310,7 +347,7 @@ function mockOutput(): MockOutput {
   return stream;
 }
 
-async function mountApp(runner: AgentRunner, root: string): Promise<{
+async function mountApp(runner: AgentRunner, root: string, extensions?: ExtensionRuntime): Promise<{
   stdin: MockInput;
   instance: Instance;
   output(): string;
@@ -326,7 +363,7 @@ async function mountApp(runner: AgentRunner, root: string): Promise<{
     context: {...base.context, engine: 'local' as const},
     ui: {...base.ui, color: false, compact: true},
   };
-  const instance = render(<SkeinApp runner={runner} config={config} />, {
+  const instance = render(<SkeinApp runner={runner} config={config} {...(extensions ? {extensions} : {})} />, {
     stdin: stdin as unknown as NodeJS.ReadStream,
     stdout: stdout as unknown as NodeJS.WriteStream,
     stderr: stderr as unknown as NodeJS.WriteStream,
