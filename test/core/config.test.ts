@@ -11,6 +11,7 @@ import {
   saveUserConfig,
   trustProjectModelConfig,
 } from '../../src/config.js';
+import {migrateProjectNamespace} from '../../src/utils/namespace.js';
 
 const roots: string[] = [];
 
@@ -258,6 +259,36 @@ describe('configuration defaults', () => {
     }
   });
 
+  it('loads only the active project config after migration', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-config-active-'));
+    roots.push(root);
+    await mkdir(join(root, '.mosaic'));
+    await writeFile(join(root, '.mosaic', 'config.json'), JSON.stringify({agent: {maxTurns: 3}}));
+    await migrateProjectNamespace(root);
+    await writeFile(join(root, '.skein', 'config.json'), JSON.stringify({agent: {maxTurns: 9}}));
+    expect((await loadConfig(root)).agent.maxTurns).toBe(9);
+  });
+
+  it('preserves trusted model routing across a verified namespace migration', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-config-migrated-trust-'));
+    const home = await mkdtemp(join(tmpdir(), 'skein-config-migrated-trust-home-'));
+    roots.push(root, home);
+    const previousHome = process.env.MOSAIC_HOME;
+    process.env.MOSAIC_HOME = home;
+    try {
+      const path = await saveProjectConfig(root, {
+        model: {provider: 'anthropic', model: 'trusted-before-migration'},
+      });
+      await trustProjectModelConfig(root, path);
+      await migrateProjectNamespace(root);
+      const config = await loadConfig(root);
+      expect(config.model.provider).toBe('anthropic');
+      expect(config.model.model).toBe('trusted-before-migration');
+    } finally {
+      restoreEnvironment('MOSAIC_HOME', previousHome);
+    }
+  });
+
   it('does not let an untrusted project switch to another remote provider', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mosaic-config-provider-trust-'));
     roots.push(root);
@@ -356,3 +387,8 @@ describe('configuration defaults', () => {
     expect(serialized).not.toMatch(/endpoint-user|endpoint-pass|query-secret|fragment-secret|api-secret/);
   });
 });
+
+function restoreEnvironment(name: 'MOSAIC_HOME', value: string | undefined): void {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}

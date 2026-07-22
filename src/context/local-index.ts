@@ -7,7 +7,12 @@ import {WorkspaceAccess} from '../tools/workspace.js';
 import {atomicWrite} from '../tools/write.js';
 import {assertNoSymlinkPath, ensureWorkspaceStorageDirectory} from '../utils/storage.js';
 import {workspaceAliasPath} from '../utils/path.js';
-import {resolveProjectNamespaceSync} from '../utils/namespace.js';
+import {
+  assertActiveProjectNamespacePath,
+  projectNamespacePaths,
+  resolveProjectNamespaceSync,
+} from '../utils/namespace.js';
+import {withNamespaceLease} from '../utils/namespace-lease.js';
 
 interface IndexedChunk {
   id: string;
@@ -78,7 +83,7 @@ const include = [
 ];
 
 const ignorePatterns = [
-  '**/.git/**', '**/.mosaic/**', '**/.skein/**', '**/.skein.lock/**', '**/.skein.migrating-*/**', '**/.skein.rollback-*/**', '**/node_modules/**', '**/dist/**',
+  '**/.git/**', '**/.mosaic/**', '**/.skein/**', '**/.skein.migrating-*/**', '**/.skein.rollback-*/**', '**/node_modules/**', '**/dist/**',
   '**/build/**', '**/coverage/**', '**/.next/**', '**/.cache/**',
   '**/vendor/**', '**/target/**', '**/*.min.js', '**/*.map',
   '**/package-lock.json', '**/pnpm-lock.yaml', '**/yarn.lock',
@@ -133,6 +138,19 @@ export class LocalContextIndex {
   }
 
   async build(onProgress?: (progress: IndexProgress) => void): Promise<{
+    files: number;
+    chunks: number;
+    reused: number;
+    durationMs: number;
+  }> {
+    const workspace = this.roots[0] ?? process.cwd();
+    return withNamespaceLease(projectNamespacePaths(workspace).canonical, 'shared', async () => {
+      assertActiveProjectNamespacePath(workspace, dirname(this.indexPath));
+      return this.buildUnlocked(onProgress);
+    });
+  }
+
+  private async buildUnlocked(onProgress?: (progress: IndexProgress) => void): Promise<{
     files: number;
     chunks: number;
     reused: number;
@@ -202,6 +220,7 @@ export class LocalContextIndex {
     await ensureWorkspaceStorageDirectory(
       this.roots[0] ?? process.cwd(),
       dirname(this.indexPath),
+      {requireActiveNamespace: true},
     );
     await atomicWrite(this.indexPath, `${JSON.stringify(this.index)}\n`, 0o600);
     return {

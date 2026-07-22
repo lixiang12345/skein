@@ -1,8 +1,9 @@
-import {mkdtemp, rm, symlink, writeFile} from 'node:fs/promises';
+import {mkdir, mkdtemp, rm, symlink, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {afterEach, describe, expect, it} from 'vitest';
 import {discoverWorkspaceRules, formatWorkspaceRules} from '../../src/agent/rules.js';
+import {migrateProjectNamespace} from '../../src/utils/namespace.js';
 
 const roots: string[] = [];
 
@@ -31,5 +32,21 @@ describe('workspace rules', () => {
 
     const rules = await discoverWorkspaceRules(root);
     expect(rules.some((rule) => rule.path === join(root, 'AGENTS.md'))).toBe(false);
+  });
+
+  it('loads only the active namespace rules after migration', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-rules-active-'));
+    roots.push(root);
+    await mkdir(join(root, '.mosaic'));
+    await writeFile(join(root, '.mosaic', 'rules.md'), 'legacy instructions\n');
+    await migrateProjectNamespace(root);
+    await writeFile(join(root, '.skein', 'rules.md'), 'canonical instructions\n');
+
+    const projectRules = (await discoverWorkspaceRules(root)).filter((rule) =>
+      rule.path === join(root, '.skein', 'rules.md') || rule.path === join(root, '.mosaic', 'rules.md'));
+    expect(projectRules).toMatchObject([{
+      path: join(root, '.skein', 'rules.md'),
+      content: 'canonical instructions\n',
+    }]);
   });
 });

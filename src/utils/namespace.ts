@@ -3,8 +3,8 @@ import {constants, lstatSync} from 'node:fs';
 import {chmod, lstat, mkdir, open, readdir, realpath, rename, rm} from 'node:fs/promises';
 import {homedir} from 'node:os';
 import {basename, dirname, isAbsolute, join, relative, resolve} from 'node:path';
-import * as lockfile from 'proper-lockfile';
 import {isInside} from './path.js';
+import {withNamespaceLease} from './namespace-lease.js';
 
 export const CANONICAL_PROJECT_NAMESPACE = '.skein';
 export const LEGACY_PROJECT_NAMESPACE = '.mosaic';
@@ -12,8 +12,6 @@ export const CANONICAL_HOME_NAMESPACE = '.skein';
 export const LEGACY_HOME_NAMESPACE = '.mosaic';
 const MAX_MANIFEST_BYTES = 16 * 1024 * 1024;
 const MIGRATION_MANIFEST_NAME = 'migration-manifest.json';
-const NAMESPACE_LOCK_STALE_MS = 10_000;
-const NAMESPACE_LOCK_UPDATE_MS = 2_000;
 
 export type NamespaceKind = 'canonical' | 'legacy' | 'none';
 
@@ -26,6 +24,12 @@ export interface NamespaceResolution {
   canonicalExists: boolean;
   legacyExists: boolean;
   conflict: boolean;
+}
+
+export interface NamespacePaths {
+  workspace: string;
+  canonical: string;
+  legacy: string;
 }
 
 export interface NamespaceFileEntry {
@@ -100,9 +104,7 @@ function isDirectorySync(path: string): boolean {
 }
 
 export async function resolveProjectNamespace(workspace: string): Promise<NamespaceResolution> {
-  const root = resolve(workspace);
-  const canonical = join(root, CANONICAL_PROJECT_NAMESPACE);
-  const legacy = join(root, LEGACY_PROJECT_NAMESPACE);
+  const {workspace: root, canonical, legacy} = projectNamespacePaths(workspace);
   await assertNamespacePathsSeparated(legacy, canonical);
   const [canonicalExists, legacyExists] = await Promise.all([isDirectory(canonical), isDirectory(legacy)]);
   // Keep installations on the legacy location until the user opts in to
@@ -122,9 +124,7 @@ export async function resolveProjectNamespace(workspace: string): Promise<Namesp
 }
 
 export function resolveProjectNamespaceSync(workspace: string): NamespaceResolution {
-  const root = resolve(workspace);
-  const canonical = join(root, CANONICAL_PROJECT_NAMESPACE);
-  const legacy = join(root, LEGACY_PROJECT_NAMESPACE);
+  const {workspace: root, canonical, legacy} = projectNamespacePaths(workspace);
   const canonicalExists = isDirectorySync(canonical);
   const legacyExists = isDirectorySync(legacy);
   const activeKind: NamespaceKind = canonicalExists ? 'canonical' : 'legacy';
@@ -141,29 +141,18 @@ export function resolveProjectNamespaceSync(workspace: string): NamespaceResolut
 }
 
 export function resolveHomeNamespace(environment: NodeJS.ProcessEnv = process.env): string {
-  const explicit = environment.SKEIN_HOME?.trim() || environment.MOSAIC_HOME?.trim();
-  if (explicit) return resolve(explicit);
+  const paths = homeNamespacePaths(environment);
+  if (environment.SKEIN_HOME?.trim()) return paths.canonical;
   // Prefer the canonical directory once it exists; otherwise retain the
   // historical default so upgrades never strand existing state.
-  const canonical = join(homedir(), CANONICAL_HOME_NAMESPACE);
-  return isDirectorySync(canonical) ? resolve(canonical) : resolve(join(homedir(), LEGACY_HOME_NAMESPACE));
+  return isDirectorySync(paths.canonical) ? paths.canonical : paths.legacy;
 }
 
 export async function resolveHomeStorageNamespace(
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<NamespaceResolution> {
-  const configuredSkein = environment.SKEIN_HOME?.trim();
-  const configuredMosaic = environment.MOSAIC_HOME?.trim();
-  const canonical = configuredSkein
-    ? resolve(configuredSkein)
-    : configuredMosaic
-      ? join(dirname(resolve(configuredMosaic)), CANONICAL_HOME_NAMESPACE)
-    : join(homedir(), CANONICAL_HOME_NAMESPACE);
-  const legacy = configuredMosaic
-    ? resolve(configuredMosaic)
-    : join(dirname(canonical), LEGACY_HOME_NAMESPACE);
+  const {workspace: root, canonical, legacy} = homeNamespacePaths(environment);
   await assertNamespacePathsSeparated(legacy, canonical);
-  const root = dirname(canonical);
   const [canonicalExists, legacyExists] = await Promise.all([isDirectory(canonical), isDirectory(legacy)]);
   const activeKind: NamespaceKind = canonicalExists ? 'canonical' : 'legacy';
   return {
@@ -178,16 +167,62 @@ export async function resolveHomeStorageNamespace(
   };
 }
 
+export function projectNamespacePaths(workspace: string): NamespacePaths {
+  const root = resolve(workspace);
+  return {
+    workspace: root,
+    canonical: join(root, CANONICAL_PROJECT_NAMESPACE),
+    legacy: join(root, LEGACY_PROJECT_NAMESPACE),
+  };
+}
+
+export function homeNamespacePaths(environment: NodeJS.ProcessEnv = process.env): NamespacePaths {
+  const configuredSkein = environment.SKEIN_HOME?.trim();
+  const configuredMosaic = environment.MOSAIC_HOME?.trim();
+  const canonical = configuredSkein
+    ? resolve(configuredSkein)
+    : configuredMosaic
+      ? join(dirname(resolve(configuredMosaic)), CANONICAL_HOME_NAMESPACE)
+      : join(homedir(), CANONICAL_HOME_NAMESPACE);
+  const legacy = configuredMosaic
+    ? resolve(configuredMosaic)
+    : join(dirname(canonical), LEGACY_HOME_NAMESPACE);
+  return {workspace: dirname(canonical), canonical, legacy};
+}
+
+export function assertActiveProjectNamespacePath(workspace: string, path: string): void {
+  const active = resolveProjectNamespaceSync(workspace).active;
+  if (!isInside(active, path)) {
+    throw new Error(`Project storage namespace changed; refusing to use stale path: ${path}`);
+  }
+}
+
+export function assertActiveHomeNamespacePath(
+  path: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): void {
+  const active = resolveHomeNamespace(environment);
+  if (!isInside(active, path)) {
+    throw new Error(`User storage namespace changed; refusing to use stale path: ${path}`);
+  }
+}
+
 export async function inspectProjectNamespace(workspace: string): Promise<NamespaceMigrationManifest> {
-  const resolution = await resolveProjectNamespace(workspace);
-  return inspectNamespacePaths(resolution.workspace, resolution.legacy, resolution.canonical);
+  const paths = projectNamespacePaths(workspace);
+  return withNamespaceLease(paths.canonical, 'shared', async () => {
+    const resolution = await resolveProjectNamespace(workspace);
+    return inspectNamespacePaths(resolution.workspace, resolution.legacy, resolution.canonical);
+  });
 }
 
 export async function inspectHomeNamespace(
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<NamespaceMigrationManifest> {
-  const resolution = await resolveHomeStorageNamespace(environment);
-  return inspectNamespacePaths(resolution.workspace, resolution.legacy, resolution.canonical);
+  const paths = homeNamespacePaths(environment);
+  return withNamespaceLease(paths.canonical, 'shared', async () => {
+    const resolution = await resolveHomeStorageNamespace(environment);
+    return inspectNamespacePaths(resolution.workspace, resolution.legacy, resolution.canonical);
+  });
 }
 
 async function inspectNamespacePaths(
@@ -241,17 +276,25 @@ async function inspectNamespacePaths(
 }
 
 export async function migrateProjectNamespace(workspace: string): Promise<NamespaceMigrationManifest> {
-  const resolution = await resolveProjectNamespace(workspace);
-  return withNamespaceMutationLock(resolution.canonical, async () =>
-    migrateNamespace(await inspectNamespacePaths(resolution.workspace, resolution.legacy, resolution.canonical)));
+  const paths = projectNamespacePaths(workspace);
+  return withNamespaceLease(paths.canonical, 'exclusive', async () => {
+    const resolution = await resolveProjectNamespace(workspace);
+    return migrateNamespace(await inspectNamespacePaths(
+      resolution.workspace, resolution.legacy, resolution.canonical,
+    ));
+  });
 }
 
 export async function migrateHomeNamespace(
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<NamespaceMigrationManifest> {
-  const resolution = await resolveHomeStorageNamespace(environment);
-  return withNamespaceMutationLock(resolution.canonical, async () =>
-    migrateNamespace(await inspectNamespacePaths(resolution.workspace, resolution.legacy, resolution.canonical)));
+  const paths = homeNamespacePaths(environment);
+  return withNamespaceLease(paths.canonical, 'exclusive', async () => {
+    const resolution = await resolveHomeStorageNamespace(environment);
+    return migrateNamespace(await inspectNamespacePaths(
+      resolution.workspace, resolution.legacy, resolution.canonical,
+    ));
+  });
 }
 
 async function migrateNamespace(manifest: NamespaceMigrationManifest): Promise<NamespaceMigrationManifest> {
@@ -289,76 +332,83 @@ async function migrateNamespace(manifest: NamespaceMigrationManifest): Promise<N
 }
 
 export async function rollbackProjectNamespace(workspace: string): Promise<NamespaceMigrationManifest> {
-  const resolution = await resolveProjectNamespace(workspace);
-  return withNamespaceMutationLock(resolution.canonical, async () =>
-    rollbackNamespace(await inspectNamespacePaths(resolution.workspace, resolution.legacy, resolution.canonical)));
+  const paths = projectNamespacePaths(workspace);
+  return withNamespaceLease(paths.canonical, 'exclusive', async () => {
+    const resolution = await resolveProjectNamespace(workspace);
+    return rollbackNamespace(await inspectNamespacePaths(
+      resolution.workspace, resolution.legacy, resolution.canonical,
+    ));
+  });
 }
 
 export async function inspectProjectRollback(workspace: string): Promise<NamespaceRollbackInspection> {
-  return inspectRollback(await inspectProjectNamespace(workspace));
+  const paths = projectNamespacePaths(workspace);
+  return withNamespaceLease(paths.canonical, 'shared', async () => {
+    const resolution = await resolveProjectNamespace(workspace);
+    return inspectRollback(await inspectNamespacePaths(
+      resolution.workspace, resolution.legacy, resolution.canonical,
+    ));
+  });
 }
 
 export async function rollbackHomeNamespace(
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<NamespaceMigrationManifest> {
-  const resolution = await resolveHomeStorageNamespace(environment);
-  return withNamespaceMutationLock(resolution.canonical, async () =>
-    rollbackNamespace(await inspectNamespacePaths(resolution.workspace, resolution.legacy, resolution.canonical)));
+  const paths = homeNamespacePaths(environment);
+  return withNamespaceLease(paths.canonical, 'exclusive', async () => {
+    const resolution = await resolveHomeStorageNamespace(environment);
+    return rollbackNamespace(await inspectNamespacePaths(
+      resolution.workspace, resolution.legacy, resolution.canonical,
+    ));
+  });
 }
 
 export async function inspectHomeRollback(
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<NamespaceRollbackInspection> {
-  return inspectRollback(await inspectHomeNamespace(environment));
+  const paths = homeNamespacePaths(environment);
+  return withNamespaceLease(paths.canonical, 'shared', async () => {
+    const resolution = await resolveHomeStorageNamespace(environment);
+    return inspectRollback(await inspectNamespacePaths(
+      resolution.workspace, resolution.legacy, resolution.canonical,
+    ));
+  });
 }
 
 export async function inspectProjectRecovery(workspace: string): Promise<NamespaceRecoveryInspection> {
-  const resolution = await resolveProjectNamespace(workspace);
-  return inspectRecovery(resolution.workspace, resolution.legacy, resolution.canonical);
+  const paths = projectNamespacePaths(workspace);
+  return withNamespaceLease(paths.canonical, 'shared', async () => {
+    const resolution = await resolveProjectNamespace(workspace);
+    return inspectRecovery(resolution.workspace, resolution.legacy, resolution.canonical);
+  });
 }
 
 export async function recoverProjectNamespace(workspace: string): Promise<NamespaceRecoveryInspection> {
-  const resolution = await resolveProjectNamespace(workspace);
-  return withNamespaceMutationLock(resolution.canonical, async () =>
-    recoverNamespace(resolution.workspace, resolution.legacy, resolution.canonical));
+  const paths = projectNamespacePaths(workspace);
+  return withNamespaceLease(paths.canonical, 'exclusive', async () => {
+    const resolution = await resolveProjectNamespace(workspace);
+    return recoverNamespace(resolution.workspace, resolution.legacy, resolution.canonical);
+  });
 }
 
 export async function inspectHomeRecovery(
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<NamespaceRecoveryInspection> {
-  const resolution = await resolveHomeStorageNamespace(environment);
-  return inspectRecovery(resolution.workspace, resolution.legacy, resolution.canonical);
+  const paths = homeNamespacePaths(environment);
+  return withNamespaceLease(paths.canonical, 'shared', async () => {
+    const resolution = await resolveHomeStorageNamespace(environment);
+    return inspectRecovery(resolution.workspace, resolution.legacy, resolution.canonical);
+  });
 }
 
 export async function recoverHomeNamespace(
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<NamespaceRecoveryInspection> {
-  const resolution = await resolveHomeStorageNamespace(environment);
-  return withNamespaceMutationLock(resolution.canonical, async () =>
-    recoverNamespace(resolution.workspace, resolution.legacy, resolution.canonical));
-}
-
-async function withNamespaceMutationLock<T>(destination: string, operation: () => Promise<T>): Promise<T> {
-  await mkdir(dirname(destination), {recursive: true, mode: 0o700});
-  let release: () => Promise<void>;
-  try {
-    release = await lockfile.lock(destination, {
-      realpath: false,
-      stale: NAMESPACE_LOCK_STALE_MS,
-      update: NAMESPACE_LOCK_UPDATE_MS,
-      retries: 0,
-    });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ELOCKED') {
-      throw new Error(`Another namespace operation is already running for ${destination}.`);
-    }
-    throw error;
-  }
-  try {
-    return await operation();
-  } finally {
-    await release();
-  }
+  const paths = homeNamespacePaths(environment);
+  return withNamespaceLease(paths.canonical, 'exclusive', async () => {
+    const resolution = await resolveHomeStorageNamespace(environment);
+    return recoverNamespace(resolution.workspace, resolution.legacy, resolution.canonical);
+  });
 }
 
 async function rollbackNamespace(manifest: NamespaceMigrationManifest): Promise<NamespaceMigrationManifest> {

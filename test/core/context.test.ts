@@ -164,9 +164,6 @@ describe('LocalContextIndex', () => {
     const interrupted = join(root, '.skein.rollback-00000000-0000-4000-8000-000000000010');
     await mkdir(interrupted);
     await writeFile(join(interrupted, 'private-session.json'), '{"secret":"do-not-index"}\n');
-    await mkdir(join(root, '.skein.lock'));
-    await writeFile(join(root, '.skein.lock', 'owner.json'), '{"pid":123}\n');
-
     const index = new LocalContextIndex([root]);
     const stats = await index.build();
     expect(stats.files).toBe(2);

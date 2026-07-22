@@ -3,7 +3,12 @@ import {chmod, lstat, mkdir} from 'node:fs/promises';
 import {dirname, join, resolve} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import type {MemoryScope} from '../types.js';
-import {resolveHomeNamespace} from '../utils/namespace.js';
+import {
+  assertActiveHomeNamespacePath,
+  homeNamespacePaths,
+  resolveHomeNamespace,
+} from '../utils/namespace.js';
+import {acquireNamespaceLease, type NamespaceLease} from '../utils/namespace-lease.js';
 
 export interface MemoryRecord {
   id: string;
@@ -133,112 +138,141 @@ const MEMORY_CANDIDATE_TTL_MS = 14 * 24 * 60 * 60 * 1_000;
 
 export class MemoryStore {
   readonly path: string;
+  private readonly managedPath: boolean;
   private database: DatabaseSync | undefined;
+  private namespaceLease: NamespaceLease | undefined;
+  private opening: Promise<this> | undefined;
 
-  constructor(path = defaultMemoryPath()) {
-    this.path = resolve(path);
+  constructor(path?: string) {
+    this.managedPath = path === undefined;
+    this.path = resolve(path ?? defaultMemoryPath());
   }
 
   async open(): Promise<this> {
     if (this.database) return this;
-    // Load node:sqlite lazily so the CLI can install its narrow warning filter
-    // before Node evaluates the experimental module.
-    const {DatabaseSync} = await import('node:sqlite');
-    const directory = dirname(this.path);
-    await mkdir(directory, {recursive: true, mode: 0o700});
-    await rejectSymlink(directory);
-    await rejectSymlink(this.path, true);
-    const database = new DatabaseSync(this.path);
-    const previousSchemaVersion = (database.prepare('PRAGMA user_version').get() as
-      {user_version?: number} | undefined)?.user_version ?? 0;
-    database.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;');
-    database.exec(`
-      CREATE TABLE IF NOT EXISTS memories (
-        rowid INTEGER PRIMARY KEY,
-        id TEXT NOT NULL UNIQUE,
-        scope TEXT NOT NULL CHECK(scope IN ('user', 'workspace', 'session', 'agent')),
-        scope_key TEXT NOT NULL,
-        content TEXT NOT NULL,
-        tags TEXT NOT NULL DEFAULT '[]',
-        kind TEXT NOT NULL DEFAULT 'semantic',
-        importance REAL NOT NULL DEFAULT 0.5,
-        confidence REAL NOT NULL DEFAULT 0.7,
-        source TEXT NOT NULL DEFAULT 'user',
-        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'archived')),
-        content_hash TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        last_accessed_at TEXT NOT NULL,
-        last_verified_at TEXT,
-        revision TEXT,
-        supersedes_id TEXT,
-        conflict_key TEXT,
-        expires_at TEXT
-      );
-      CREATE INDEX IF NOT EXISTS memories_scope_idx ON memories(scope, scope_key, status);
-      CREATE INDEX IF NOT EXISTS memories_updated_idx ON memories(updated_at DESC);
-      CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
-        content,
-        tags,
-        content='memories',
-        content_rowid='rowid',
-        tokenize='unicode61 remove_diacritics 2'
-      );
-      CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-        INSERT INTO memory_fts(rowid, content, tags) VALUES (new.rowid, new.content, new.tags);
-      END;
-      CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-        INSERT INTO memory_fts(memory_fts, rowid, content, tags)
-        VALUES ('delete', old.rowid, old.content, old.tags);
-      END;
-      CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-        INSERT INTO memory_fts(memory_fts, rowid, content, tags)
-        VALUES ('delete', old.rowid, old.content, old.tags);
-        INSERT INTO memory_fts(rowid, content, tags) VALUES (new.rowid, new.content, new.tags);
-      END;
-    `);
-    migrateMemoryColumns(database);
-    database.exec(`
-      CREATE INDEX IF NOT EXISTS memories_conflict_idx
-        ON memories(scope, scope_key, conflict_key, status);
-      CREATE INDEX IF NOT EXISTS memories_expiry_idx ON memories(expires_at);
-      CREATE TABLE IF NOT EXISTS memory_candidates (
-        id TEXT PRIMARY KEY,
-        scope TEXT NOT NULL CHECK(scope IN ('user', 'workspace', 'session', 'agent')),
-        scope_key TEXT NOT NULL,
-        content TEXT NOT NULL,
-        tags TEXT NOT NULL DEFAULT '[]',
-        kind TEXT NOT NULL DEFAULT 'semantic',
-        importance REAL NOT NULL DEFAULT 0.5,
-        confidence REAL NOT NULL DEFAULT 0.6,
-        source TEXT NOT NULL DEFAULT 'model',
-        rationale TEXT NOT NULL DEFAULT '',
-        status TEXT NOT NULL DEFAULT 'pending'
-          CHECK(status IN ('pending', 'approved', 'rejected')),
-        content_hash TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        approved_memory_id TEXT,
-        revision TEXT,
-        conflict_key TEXT,
-        expires_at TEXT
-      );
-      CREATE INDEX IF NOT EXISTS memory_candidates_status_idx
-        ON memory_candidates(status, updated_at DESC);
-    `);
-    migrateCandidateColumns(database);
-    if (previousSchemaVersion < 2) {
-      database.exec("INSERT INTO memory_fts(memory_fts) VALUES('rebuild');");
-      database.exec('PRAGMA user_version = 2;');
+    if (this.opening) return this.opening;
+    const opening = this.openDatabase();
+    this.opening = opening;
+    try {
+      return await opening;
+    } finally {
+      if (this.opening === opening) this.opening = undefined;
     }
-    this.database = database;
-    await chmod(this.path, 0o600).catch(() => undefined);
-    return this;
+  }
+
+  private async openDatabase(): Promise<this> {
+    const lease = this.managedPath
+      ? await acquireNamespaceLease(homeNamespacePaths().canonical, 'shared')
+      : undefined;
+    let database: DatabaseSync | undefined;
+    try {
+      // Load node:sqlite lazily so the CLI can install its narrow warning filter
+      // before Node evaluates the experimental module.
+      const {DatabaseSync} = await import('node:sqlite');
+      if (this.managedPath) assertActiveHomeNamespacePath(this.path);
+      const directory = dirname(this.path);
+      await mkdir(directory, {recursive: true, mode: 0o700});
+      await rejectSymlink(directory);
+      await rejectSymlink(this.path, true);
+      database = new DatabaseSync(this.path);
+      const previousSchemaVersion = (database.prepare('PRAGMA user_version').get() as
+        {user_version?: number} | undefined)?.user_version ?? 0;
+      database.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;');
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS memories (
+          rowid INTEGER PRIMARY KEY,
+          id TEXT NOT NULL UNIQUE,
+          scope TEXT NOT NULL CHECK(scope IN ('user', 'workspace', 'session', 'agent')),
+          scope_key TEXT NOT NULL,
+          content TEXT NOT NULL,
+          tags TEXT NOT NULL DEFAULT '[]',
+          kind TEXT NOT NULL DEFAULT 'semantic',
+          importance REAL NOT NULL DEFAULT 0.5,
+          confidence REAL NOT NULL DEFAULT 0.7,
+          source TEXT NOT NULL DEFAULT 'user',
+          status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'archived')),
+          content_hash TEXT NOT NULL UNIQUE,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          last_accessed_at TEXT NOT NULL,
+          last_verified_at TEXT,
+          revision TEXT,
+          supersedes_id TEXT,
+          conflict_key TEXT,
+          expires_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS memories_scope_idx ON memories(scope, scope_key, status);
+        CREATE INDEX IF NOT EXISTS memories_updated_idx ON memories(updated_at DESC);
+        CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+          content,
+          tags,
+          content='memories',
+          content_rowid='rowid',
+          tokenize='unicode61 remove_diacritics 2'
+        );
+        CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+          INSERT INTO memory_fts(rowid, content, tags) VALUES (new.rowid, new.content, new.tags);
+        END;
+        CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+          INSERT INTO memory_fts(memory_fts, rowid, content, tags)
+          VALUES ('delete', old.rowid, old.content, old.tags);
+        END;
+        CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+          INSERT INTO memory_fts(memory_fts, rowid, content, tags)
+          VALUES ('delete', old.rowid, old.content, old.tags);
+          INSERT INTO memory_fts(rowid, content, tags) VALUES (new.rowid, new.content, new.tags);
+        END;
+      `);
+      migrateMemoryColumns(database);
+      database.exec(`
+        CREATE INDEX IF NOT EXISTS memories_conflict_idx
+          ON memories(scope, scope_key, conflict_key, status);
+        CREATE INDEX IF NOT EXISTS memories_expiry_idx ON memories(expires_at);
+        CREATE TABLE IF NOT EXISTS memory_candidates (
+          id TEXT PRIMARY KEY,
+          scope TEXT NOT NULL CHECK(scope IN ('user', 'workspace', 'session', 'agent')),
+          scope_key TEXT NOT NULL,
+          content TEXT NOT NULL,
+          tags TEXT NOT NULL DEFAULT '[]',
+          kind TEXT NOT NULL DEFAULT 'semantic',
+          importance REAL NOT NULL DEFAULT 0.5,
+          confidence REAL NOT NULL DEFAULT 0.6,
+          source TEXT NOT NULL DEFAULT 'model',
+          rationale TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK(status IN ('pending', 'approved', 'rejected')),
+          content_hash TEXT NOT NULL UNIQUE,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          approved_memory_id TEXT,
+          revision TEXT,
+          conflict_key TEXT,
+          expires_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS memory_candidates_status_idx
+          ON memory_candidates(status, updated_at DESC);
+      `);
+      migrateCandidateColumns(database);
+      if (previousSchemaVersion < 2) {
+        database.exec("INSERT INTO memory_fts(memory_fts) VALUES('rebuild');");
+        database.exec('PRAGMA user_version = 2;');
+      }
+      this.database = database;
+      this.namespaceLease = lease;
+      await chmod(this.path, 0o600).catch(() => undefined);
+      return this;
+    } catch (error) {
+      database?.close();
+      lease?.release();
+      throw error;
+    }
   }
 
   close(): void {
     this.database?.close();
     this.database = undefined;
+    this.namespaceLease?.release();
+    this.namespaceLease = undefined;
   }
 
   remember(input: RememberInput): MemoryRecord {
@@ -569,6 +603,7 @@ export class MemoryStore {
 
   private requireDatabase(): DatabaseSync {
     if (!this.database) throw new Error('MemoryStore.open() must be called before use.');
+    if (this.managedPath) assertActiveHomeNamespacePath(this.path);
     return this.database;
   }
 }

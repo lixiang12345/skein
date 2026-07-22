@@ -3,7 +3,12 @@ import {lstat, readFile, readdir, rm} from 'node:fs/promises';
 import {join, resolve} from 'node:path';
 import {z} from 'zod';
 import {atomicWrite} from '../tools/write.js';
-import {resolveProjectNamespaceSync} from '../utils/namespace.js';
+import {
+  assertActiveProjectNamespacePath,
+  projectNamespacePaths,
+  resolveProjectNamespaceSync,
+} from '../utils/namespace.js';
+import {withNamespaceLease} from '../utils/namespace-lease.js';
 import {assertNoSymlinkPath, ensureWorkspaceStorageDirectory} from '../utils/storage.js';
 
 const runIdSchema = z.string().uuid();
@@ -77,10 +82,12 @@ export interface TeamRunSummary {
 export class TeamRunStore {
   readonly workspace: string;
   readonly directory: string;
+  private readonly managedDirectory: boolean;
   private writes: Promise<void> = Promise.resolve();
 
   constructor(workspace: string, directory?: string) {
     this.workspace = resolve(workspace);
+    this.managedDirectory = directory === undefined;
     this.directory = directory
       ? resolve(directory)
       : join(resolveProjectNamespaceSync(this.workspace).active, 'team-runs');
@@ -102,7 +109,7 @@ export class TeamRunStore {
       agents: [],
       messages: [],
     });
-    await this.queueWrite(async () => this.writeManifest(manifest));
+    await this.queueWrite(async () => this.withManagedLease(() => this.writeManifest(manifest)));
     return manifest;
   }
 
@@ -185,27 +192,29 @@ export class TeamRunStore {
 
   async remove(runId: string): Promise<boolean> {
     runIdSchema.parse(runId);
-    await this.writes;
-    const directory = this.runDirectory(runId);
-    await assertNoSymlinkPath(this.workspace, directory);
-    try {
-      const info = await lstat(directory);
-      if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('Team run storage is not a regular directory.');
-      await rm(directory, {recursive: true});
-      return true;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
-      throw error;
-    }
+    return this.withManagedLease(async () => {
+      await this.writes;
+      const directory = this.runDirectory(runId);
+      await assertNoSymlinkPath(this.workspace, directory);
+      try {
+        const info = await lstat(directory);
+        if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('Team run storage is not a regular directory.');
+        await rm(directory, {recursive: true});
+        return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+        throw error;
+      }
+    });
   }
 
   private async update(runId: string, operation: (manifest: TeamRunManifest) => Promise<TeamRunManifest>): Promise<void> {
     runIdSchema.parse(runId);
-    await this.queueWrite(async () => {
+    await this.queueWrite(async () => this.withManagedLease(async () => {
       const current = await this.loadUnlocked(runId);
       const next = manifestSchema.parse({...await operation(current), updatedAt: new Date().toISOString()});
       await this.writeManifest(next);
-    });
+    }));
   }
 
   private async queueWrite(operation: () => Promise<void>): Promise<void> {
@@ -223,7 +232,9 @@ export class TeamRunStore {
 
   private async writeManifest(manifest: TeamRunManifest): Promise<void> {
     const directory = this.runDirectory(manifest.id);
-    await ensureWorkspaceStorageDirectory(this.workspace, directory);
+    await ensureWorkspaceStorageDirectory(this.workspace, directory, {
+      requireActiveNamespace: this.managedDirectory,
+    });
     await atomicWrite(join(directory, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 0o600);
   }
 
@@ -232,7 +243,9 @@ export class TeamRunStore {
     const bytes = Buffer.byteLength(data);
     const sha256 = createHash('sha256').update(data).digest('hex');
     const directory = join(this.runDirectory(runId), 'blobs');
-    await ensureWorkspaceStorageDirectory(this.workspace, directory);
+    await ensureWorkspaceStorageDirectory(this.workspace, directory, {
+      requireActiveNamespace: this.managedDirectory,
+    });
     const path = join(directory, `${sha256}.txt`);
     try {
       await this.assertRegularFile(path);
@@ -245,6 +258,14 @@ export class TeamRunStore {
       await atomicWrite(path, data, 0o600);
     }
     return {sha256, bytes};
+  }
+
+  private async withManagedLease<T>(operation: () => Promise<T>): Promise<T> {
+    if (!this.managedDirectory) return operation();
+    return withNamespaceLease(projectNamespacePaths(this.workspace).canonical, 'shared', async () => {
+      assertActiveProjectNamespacePath(this.workspace, this.directory);
+      return operation();
+    });
   }
 
   private async verifyArtifact(runId: string, artifact: {sha256: string; bytes: number}): Promise<void> {

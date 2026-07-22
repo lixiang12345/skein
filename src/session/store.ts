@@ -16,7 +16,12 @@ import {basename, dirname, join, resolve} from 'node:path';
 import {z} from 'zod';
 import type {ProviderName, Session} from '../types.js';
 import {assertNoSymlinkPath, ensureWorkspaceStorageDirectory} from '../utils/storage.js';
-import {resolveProjectNamespaceSync} from '../utils/namespace.js';
+import {
+  assertActiveProjectNamespacePath,
+  projectNamespacePaths,
+  resolveProjectNamespaceSync,
+} from '../utils/namespace.js';
+import {withNamespaceLease} from '../utils/namespace-lease.js';
 
 const sessionIdSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/);
 
@@ -132,13 +137,17 @@ export class SessionStore {
     }
     session.updatedAt = new Date().toISOString();
     const validated = parseSession(session);
-    const operation = this.writes.then(() => this.writeAtomic(validated));
+    const operation = this.writes.then(() => this.withManagedLease(() => this.writeAtomic(validated)));
     this.writes = operation.catch(() => undefined);
     return operation;
   }
 
   async load(id: string): Promise<Session> {
     validateId(id);
+    return this.withManagedLease(() => this.loadUnlocked(id));
+  }
+
+  private async loadUnlocked(id: string): Promise<Session> {
     await this.writes;
     if (!(await this.directoryAvailable())) {
       throw new Error(`Session not found or unreadable: ${id}`);
@@ -177,18 +186,20 @@ export class SessionStore {
 
   async remove(id: string): Promise<boolean> {
     validateId(id);
-    await this.writes;
-    if (!(await this.directoryAvailable())) return false;
-    let removed = false;
-    for (const path of [this.pathFor(id), this.backupPathFor(id)]) {
-      try {
-        await unlink(path);
-        removed = true;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    return this.withManagedLease(async () => {
+      await this.writes;
+      if (!(await this.directoryAvailable())) return false;
+      let removed = false;
+      for (const path of [this.pathFor(id), this.backupPathFor(id)]) {
+        try {
+          await unlink(path);
+          removed = true;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
       }
-    }
-    return removed;
+      return removed;
+    });
   }
 
   private async writeAtomic(session: Session): Promise<void> {
@@ -272,10 +283,18 @@ export class SessionStore {
 
   private async ensureDirectory(): Promise<void> {
     if (this.managedDirectory) {
-      await ensureWorkspaceStorageDirectory(this.workspace, this.directory);
+      await ensureWorkspaceStorageDirectory(this.workspace, this.directory, {requireActiveNamespace: true});
       return;
     }
     await mkdir(this.directory, {recursive: true, mode: 0o700});
+  }
+
+  private async withManagedLease<T>(operation: () => Promise<T>): Promise<T> {
+    if (!this.managedDirectory) return operation();
+    return withNamespaceLease(projectNamespacePaths(this.workspace).canonical, 'shared', async () => {
+      assertActiveProjectNamespacePath(this.workspace, this.directory);
+      return operation();
+    });
   }
 
   private async directoryAvailable(): Promise<boolean> {

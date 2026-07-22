@@ -2,7 +2,7 @@ import {existsSync} from 'node:fs';
 import {join} from 'node:path';
 import {lstat, readFile} from 'node:fs/promises';
 import {WorkspaceAccess} from '../tools/workspace.js';
-import {resolveHomeNamespace} from '../utils/namespace.js';
+import {resolveHomeNamespace, resolveProjectNamespaceSync} from '../utils/namespace.js';
 
 export interface WorkspaceRule {
   path: string;
@@ -15,8 +15,6 @@ const workspaceRulePaths = [
   'AGENTS.md',
   'CLAUDE.md',
   'GEMINI.md',
-  '.skein/rules.md',
-  '.mosaic/rules.md',
   '.github/copilot-instructions.md',
 ];
 
@@ -25,10 +23,16 @@ export async function discoverWorkspaceRules(
   maxChars = 120_000,
 ): Promise<WorkspaceRule[]> {
   const workspaceAccess = new WorkspaceAccess([workspace]);
+  const activeProjectRules = join(resolveProjectNamespaceSync(workspace).active, 'rules.md');
+  const projectCandidates = [
+    ...workspaceRulePaths.slice(0, 3).map((path) => join(workspace, path)),
+    activeProjectRules,
+    ...workspaceRulePaths.slice(3).map((path) => join(workspace, path)),
+  ];
   const candidates = [
     {path: join(resolveHomeNamespace(), 'rules.md'), scope: 'user' as const},
-    ...workspaceRulePaths.map((path) => ({
-      path: join(workspace, path),
+    ...projectCandidates.map((path) => ({
+      path,
       scope: 'workspace' as const,
     })),
   ];

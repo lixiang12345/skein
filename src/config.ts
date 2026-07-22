@@ -20,7 +20,14 @@ import {atomicWrite} from './tools/write.js';
 import {assertNoSymlinkPath, ensureWorkspaceStorageDirectory} from './utils/storage.js';
 import {isInside} from './utils/path.js';
 import {preferredEnv} from './brand.js';
-import {resolveHomeNamespace, resolveProjectNamespaceSync} from './utils/namespace.js';
+import {
+  assertActiveHomeNamespacePath,
+  homeNamespacePaths,
+  projectNamespacePaths,
+  resolveHomeNamespace,
+  resolveProjectNamespaceSync,
+} from './utils/namespace.js';
+import {withNamespaceLease} from './utils/namespace-lease.js';
 
 const permissionSchema = z.enum(['allow', 'ask', 'deny']);
 
@@ -356,16 +363,16 @@ function mosaicHome(): string {
   return resolveHomeNamespace();
 }
 
-function modelTrustPath(): string {
-  return join(mosaicHome(), 'trusted-model-configs.json');
+function modelTrustPath(home = mosaicHome()): string {
+  return join(home, 'trusted-model-configs.json');
 }
 
 function configFingerprint(config: PartialConfig): string {
   return createHash('sha256').update(JSON.stringify(config.model ?? null)).digest('hex');
 }
 
-async function readModelTrustRegistry(): Promise<ModelTrustRegistry> {
-  const path = modelTrustPath();
+async function readModelTrustRegistry(home = mosaicHome()): Promise<ModelTrustRegistry> {
+  const path = modelTrustPath(home);
   try {
     const info = await lstat(path);
     if (!info.isFile() || info.isSymbolicLink() || info.size > 1_000_000) {
@@ -380,16 +387,13 @@ async function readModelTrustRegistry(): Promise<ModelTrustRegistry> {
 
 async function isProjectModelConfigTrusted(
   workspace: string,
-  configPath: string,
   config: PartialConfig,
 ): Promise<boolean> {
   const resolvedWorkspace = await realpath(resolve(workspace)).catch(() => resolve(workspace));
-  const resolvedConfigPath = await realpath(resolve(configPath)).catch(() => resolve(configPath));
   const registry = await readModelTrustRegistry();
   const fingerprint = configFingerprint(config);
   return registry.entries.some((entry) =>
     entry.workspace === resolvedWorkspace &&
-    entry.configPath === resolvedConfigPath &&
     entry.fingerprint === fingerprint,
   );
 }
@@ -399,26 +403,29 @@ export async function trustProjectModelConfig(
   workspace: string,
   configPath = join(resolveProjectNamespaceSync(resolve(workspace)).active, 'config.json'),
 ): Promise<void> {
-  const resolvedWorkspace = await realpath(resolve(workspace)).catch(() => resolve(workspace));
-  const resolvedConfigPath = await realpath(resolve(configPath)).catch(() => resolve(configPath));
-  const config = await readConfigFile(resolvedConfigPath);
-  const registry = await readModelTrustRegistry();
-  const entries = registry.entries.filter((entry) =>
-    entry.workspace !== resolvedWorkspace || entry.configPath !== resolvedConfigPath,
-  );
-  entries.push({
-    workspace: resolvedWorkspace,
-    configPath: resolvedConfigPath,
-    fingerprint: configFingerprint(config),
-    trustedAt: new Date().toISOString(),
+  return withNamespaceLease(homeNamespacePaths().canonical, 'shared', async () => {
+    const home = mosaicHome();
+    assertActiveHomeNamespacePath(home);
+    const resolvedWorkspace = await realpath(resolve(workspace)).catch(() => resolve(workspace));
+    const resolvedConfigPath = await realpath(resolve(configPath)).catch(() => resolve(configPath));
+    const config = await readConfigFile(resolvedConfigPath);
+    const registry = await readModelTrustRegistry(home);
+    const entries = registry.entries.filter((entry) =>
+      entry.workspace !== resolvedWorkspace || entry.configPath !== resolvedConfigPath,
+    );
+    entries.push({
+      workspace: resolvedWorkspace,
+      configPath: resolvedConfigPath,
+      fingerprint: configFingerprint(config),
+      trustedAt: new Date().toISOString(),
+    });
+    await mkdir(home, {recursive: true, mode: 0o700});
+    await atomicWrite(
+      modelTrustPath(home),
+      `${JSON.stringify({version: 1, entries: entries.slice(-500)}, null, 2)}\n`,
+      0o600,
+    );
   });
-  const home = mosaicHome();
-  await mkdir(home, {recursive: true, mode: 0o700});
-  await atomicWrite(
-    modelTrustPath(),
-    `${JSON.stringify({version: 1, entries: entries.slice(-500)}, null, 2)}\n`,
-    0o600,
-  );
 }
 
 export async function loadConfig(
@@ -427,15 +434,14 @@ export async function loadConfig(
   options: {trustProjectConfig?: boolean} = {},
 ): Promise<MosaicConfig> {
   let config = defaultConfig(workspace);
+  const activeProjectNamespace = resolveProjectNamespaceSync(resolve(workspace)).active;
   const candidates = explicitPath
     ? [resolve(explicitPath)]
     : [
         join(mosaicHome(), 'config.yaml'),
         join(mosaicHome(), 'config.json'),
-        join(resolveProjectNamespaceSync(resolve(workspace)).canonical, 'config.yaml'),
-        join(resolveProjectNamespaceSync(resolve(workspace)).canonical, 'config.json'),
-        join(resolve(workspace), '.mosaic', 'config.yaml'),
-        join(resolve(workspace), '.mosaic', 'config.json'),
+        join(activeProjectNamespace, 'config.yaml'),
+        join(activeProjectNamespace, 'config.json'),
   ];
   for (const path of candidates) {
     const projectConfig = explicitPath === undefined &&
@@ -450,7 +456,7 @@ export async function loadConfig(
     }
     const rawUpdate = await readConfigFile(path);
     const modelTransportTrusted = projectConfig && !options.trustProjectConfig
-      ? await isProjectModelConfigTrusted(workspace, path, rawUpdate)
+      ? await isProjectModelConfigTrusted(workspace, rawUpdate)
       : false;
     const update = projectConfig && !options.trustProjectConfig
       ? sanitizeProjectConfig(rawUpdate, config.model.provider, modelTransportTrusted)
@@ -485,16 +491,19 @@ function validateAgentConnections(agents: AgentTeamConfig | undefined): void {
 
 export async function saveUiPreference(update: {theme?: string; compact?: boolean}): Promise<void> {
   const preference = uiPreferenceSchema.parse(update);
-  const home = mosaicHome();
-  await mkdir(home, {recursive: true, mode: 0o700});
-  const existing = await readUiPreference();
-  const merged = uiPreferenceSchema.parse({...existing, ...preference});
-  await atomicWrite(join(home, 'ui.json'), `${JSON.stringify(merged, null, 2)}\n`, 0o600);
+  return withNamespaceLease(homeNamespacePaths().canonical, 'shared', async () => {
+    const home = mosaicHome();
+    assertActiveHomeNamespacePath(home);
+    await mkdir(home, {recursive: true, mode: 0o700});
+    const existing = await readUiPreference(home);
+    const merged = uiPreferenceSchema.parse({...existing, ...preference});
+    await atomicWrite(join(home, 'ui.json'), `${JSON.stringify(merged, null, 2)}\n`, 0o600);
+  });
 }
 
-async function readUiPreference(): Promise<z.infer<typeof uiPreferenceSchema> | undefined> {
+async function readUiPreference(home = mosaicHome()): Promise<z.infer<typeof uiPreferenceSchema> | undefined> {
   try {
-    return uiPreferenceSchema.parse(JSON.parse(await readFile(join(mosaicHome(), 'ui.json'), 'utf8')));
+    return uiPreferenceSchema.parse(JSON.parse(await readFile(join(home, 'ui.json'), 'utf8')));
   } catch {
     return undefined;
   }
@@ -599,33 +608,39 @@ export async function saveProjectConfig(
   workspace: string,
   config: PartialConfig,
 ): Promise<string> {
-  const namespace = resolveProjectNamespaceSync(resolve(workspace));
-  const path = join(namespace.active, 'config.json');
-  const parsed = partialConfigSchema.parse(config);
-  await ensureWorkspaceStorageDirectory(resolve(workspace), dirname(path));
-  await atomicWrite(path, `${JSON.stringify(parsed, null, 2)}\n`, 0o600);
-  return path;
+  const root = resolve(workspace);
+  return withNamespaceLease(projectNamespacePaths(root).canonical, 'shared', async () => {
+    const namespace = resolveProjectNamespaceSync(root);
+    const path = join(namespace.active, 'config.json');
+    const parsed = partialConfigSchema.parse(config);
+    await ensureWorkspaceStorageDirectory(root, dirname(path), {requireActiveNamespace: true});
+    await atomicWrite(path, `${JSON.stringify(parsed, null, 2)}\n`, 0o600);
+    return path;
+  });
 }
 
 /** Merge trusted user-owned settings without discarding unrelated preferences. */
 export async function saveUserConfig(config: PartialConfig): Promise<string> {
-  const home = mosaicHome();
-  const path = join(home, 'config.json');
-  const existing = await readConfigFile(path);
-  const agents = existing.agents || config.agents ? {
-    ...existing.agents,
-    ...config.agents,
-    connections: {...existing.agents?.connections, ...config.agents?.connections},
-    routes: {...existing.agents?.routes, ...config.agents?.routes},
-  } : undefined;
-  const merged = partialConfigSchema.parse({
-    ...existing,
-    ...config,
-    ...(agents ? {agents} : {}),
+  return withNamespaceLease(homeNamespacePaths().canonical, 'shared', async () => {
+    const home = mosaicHome();
+    assertActiveHomeNamespacePath(home);
+    const path = join(home, 'config.json');
+    const existing = await readConfigFile(path);
+    const agents = existing.agents || config.agents ? {
+      ...existing.agents,
+      ...config.agents,
+      connections: {...existing.agents?.connections, ...config.agents?.connections},
+      routes: {...existing.agents?.routes, ...config.agents?.routes},
+    } : undefined;
+    const merged = partialConfigSchema.parse({
+      ...existing,
+      ...config,
+      ...(agents ? {agents} : {}),
+    });
+    await mkdir(home, {recursive: true, mode: 0o700});
+    await atomicWrite(path, `${JSON.stringify(merged, null, 2)}\n`, 0o600);
+    return path;
   });
-  await mkdir(home, {recursive: true, mode: 0o700});
-  await atomicWrite(path, `${JSON.stringify(merged, null, 2)}\n`, 0o600);
-  return path;
 }
 
 export function configSummary(config: MosaicConfig): Record<string, unknown> {

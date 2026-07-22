@@ -26,7 +26,7 @@ product surfaces.
 | Parallel work | Claude documents isolated subagents and agent teams; Copilot CLI offers background delegation and fleet-style parallel work. | Routed multi-model councils now share bounded reports, run reviewer acceptance/revision, and appear in a responsive Team Cockpit. The main agent remains the only writer. | Add per-route budgets and worktree-isolated writers without weakening the visible review gate. |
 | Trust and execution | Gemini CLI documents sandboxing and trusted folders; Claude exposes lifecycle hooks and permission events. See the [Gemini CLI repository](https://github.com/google-gemini/gemini-cli) and [Claude hooks](https://code.claude.com/docs/en/hooks). | Category permissions, project trust, checkpoints, hooks, and audit trails are strong; process sandboxing and first-run trust inspection are incomplete. | Explain trust before activation and offer an optional OS/container sandbox. |
 | Collaboration | Auggie supports integrations and conversation export; Copilot supports GitHub-native MCP and shareable workflows. | Session export and resumability are local; no shareable artifact or review bundle. | Add a deterministic redacted session/review bundle before any hosted sharing. |
-| Distribution and recovery | Competitors provide guided installation, auth, update channels, and workflow-specific entry points. | Package/release verification is reproducible; `skein doctor` reports project/user namespace and interrupted-operation state, while `skein migrate` provides locked, verified migration, rollback, and recovery without deleting changed canonical data. | Extend the namespace lease to active state writers, add capability review and upgrade UX, then define the measured legacy-alias window. |
+| Distribution and recovery | Competitors provide guided installation, auth, update channels, and workflow-specific entry points. | Package/release verification is reproducible; `skein doctor` reports project/user namespace and interrupted-operation state, while shared live-process leases and exclusive mutation leases make migration, rollback, and recovery crash-safe without deleting changed canonical data. | Add capability review and upgrade UX, then define the measured legacy-alias window. |
 
 ## Prioritized Roadmap
 
@@ -34,13 +34,14 @@ product surfaces.
    configure `main` to require the stable `check` status.
 2. **P1 Plan mode:** shipped in this change as a read-only, approval-oriented
    mode for both interactive and headless use.
-3. **P1 storage migration (in progress):** `.skein/` and `SKEIN_HOME` are
+3. **P1 storage migration (compatibility window pending):** `.skein/` and `SKEIN_HOME` are
    recognized canonical names, while existing `.mosaic/` state remains active
    until an explicit `skein migrate --yes`. The command emits a hash-bearing
    manifest, blocks conflicts/symlinks, copies through a temporary directory,
    and retains the legacy source. `--rollback` verifies hashes before atomically
    quarantining the canonical copy; `--recover` handles interrupted operations;
-   `--home` covers user-level state.
+   `--home` covers user-level state. Shared leases cover live managed writers,
+   while namespace mutation requires an exclusive crash-released lease.
 4. **P1 MCP progressive disclosure:** search and activate remote tool schemas
    on demand instead of placing every schema in every model request.
 5. **P1 scheduler and isolation:** enforce budgets, cancellation, deterministic

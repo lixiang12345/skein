@@ -5,7 +5,12 @@ import {z} from 'zod';
 import {WorkspaceAccess} from '../tools/workspace.js';
 import {atomicWrite} from '../tools/write.js';
 import {assertNoSymlinkPath, ensureWorkspaceStorageDirectory} from '../utils/storage.js';
-import {resolveProjectNamespaceSync} from '../utils/namespace.js';
+import {
+  assertActiveProjectNamespacePath,
+  projectNamespacePaths,
+  resolveProjectNamespaceSync,
+} from '../utils/namespace.js';
+import {withNamespaceLease} from '../utils/namespace-lease.js';
 
 const entrySchema = z.object({
   path: z.string(),
@@ -50,6 +55,14 @@ export class CheckpointStore {
     validateIdentifier(sessionId, 'session');
     const unique = [...new Set(paths)];
     if (!unique.length) return undefined;
+    return this.withManagedLease(() => this.captureUnlocked(sessionId, unique, options));
+  }
+
+  private async captureUnlocked(
+    sessionId: string,
+    unique: string[],
+    options: {reason?: string; metadata?: Record<string, unknown>},
+  ): Promise<CheckpointManifest> {
     const id = `${Date.now().toString(36)}-${randomUUID()}`;
     const target = join(this.directory, sessionId, id);
     const blobDirectory = join(target, 'blobs');
@@ -202,10 +215,21 @@ export class CheckpointStore {
 
   private async ensureDirectory(): Promise<void> {
     if (this.managedDirectory) {
-      await ensureWorkspaceStorageDirectory(this.workspace.primaryRoot, this.directory);
+      await ensureWorkspaceStorageDirectory(this.workspace.primaryRoot, this.directory, {
+        requireActiveNamespace: true,
+      });
       return;
     }
     await mkdir(this.directory, {recursive: true, mode: 0o700});
+  }
+
+  private async withManagedLease<T>(operation: () => Promise<T>): Promise<T> {
+    if (!this.managedDirectory) return operation();
+    const workspace = this.workspace.primaryRoot;
+    return withNamespaceLease(projectNamespacePaths(workspace).canonical, 'shared', async () => {
+      assertActiveProjectNamespacePath(workspace, this.directory);
+      return operation();
+    });
   }
 
   private async directoryAvailable(): Promise<boolean> {

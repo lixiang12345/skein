@@ -33,6 +33,7 @@ import {
   type OutputFormat,
 } from './cli/output.js';
 import {resolveCliGlyphs} from './cli/glyphs.js';
+import {acquireCliNamespaceLeases, releaseCliNamespaceLeases} from './cli/namespace-leases.js';
 import {runInteractiveTui} from './ui/index.js';
 import {ExtensionRuntime} from './runtime/index.js';
 import {SkillCatalog} from './skills/index.js';
@@ -823,11 +824,24 @@ program
     }
   });
 
-program.parseAsync(process.argv).catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`${chalk.red(cliGlyphs.error)} ${message}\n`);
-  process.exitCode = 1;
+let cliNamespaceLeases: Awaited<ReturnType<typeof acquireCliNamespaceLeases>> = [];
+program.hook('preAction', async (_command, actionCommand) => {
+  cliNamespaceLeases = await acquireCliNamespaceLeases(actionCommand);
 });
+
+void runCli();
+
+async function runCli(): Promise<void> {
+  try {
+    await program.parseAsync(process.argv);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`${chalk.red(cliGlyphs.error)} ${message}\n`);
+    process.exitCode = 1;
+  } finally {
+    releaseCliNamespaceLeases(cliNamespaceLeases);
+  }
+}
 
 interface RootOptions {
   print?: boolean;

@@ -1,6 +1,7 @@
 import {chmod, lstat, mkdir, realpath} from 'node:fs/promises';
 import {join, relative, resolve, sep} from 'node:path';
 import {isInside} from './path.js';
+import {assertActiveProjectNamespacePath} from './namespace.js';
 
 /**
  * Creates a project-owned storage directory without following symlinks below
@@ -10,12 +11,14 @@ import {isInside} from './path.js';
 export async function ensureWorkspaceStorageDirectory(
   workspace: string,
   directory: string,
+  options: {requireActiveNamespace?: boolean} = {},
 ): Promise<void> {
   const root = resolve(workspace);
   const target = resolve(directory);
   if (!isInside(root, target)) {
     throw new Error(`Storage directory is outside the workspace: ${target}`);
   }
+  if (options.requireActiveNamespace) assertActiveProjectNamespacePath(root, target);
 
   await assertNoSymlinkPath(root, target);
   await mkdir(target, {recursive: true, mode: 0o700});

@@ -65,8 +65,13 @@ export class ExtensionRuntime implements PromptContextProvider {
     options: ExtensionRuntimeOptions = {},
   ): Promise<ExtensionRuntime> {
     const runtime = new ExtensionRuntime(config, resolve(config.workspaceRoots[0] ?? process.cwd()), options);
-    await runtime.initialize(registry, options.signal);
-    return runtime;
+    try {
+      await runtime.initialize(registry, options.signal);
+      return runtime;
+    } catch (error) {
+      await runtime.close().catch(() => undefined);
+      throw error;
+    }
   }
 
   async initialize(registry: ToolRegistry, signal?: AbortSignal): Promise<void> {

@@ -1,7 +1,6 @@
 import {mkdtemp, mkdir, readFile, writeFile, access, cp, rename, rm, stat, symlink} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import * as lockfile from 'proper-lockfile';
 import {describe, expect, it} from 'vitest';
 import {
   inspectProjectNamespace,
@@ -18,7 +17,9 @@ import {
   resolveProjectNamespace,
   resolveProjectNamespaceSync,
   resolveHomeStorageNamespace,
+  projectNamespacePaths,
 } from '../../src/utils/namespace.js';
+import {acquireNamespaceLease} from '../../src/utils/namespace-lease.js';
 
 async function workspace(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'skein-namespace-'));
@@ -208,21 +209,21 @@ describe('storage namespace migration', () => {
     expect(await readFile(join(outside, 'secret.json'), 'utf8')).toBe('outside');
   });
 
-  it('serializes namespace mutation commands across processes', async () => {
+  it('serializes namespace mutation commands while a shared lease is held', async () => {
     const root = await workspace();
     await mkdir(join(root, '.mosaic'), {recursive: true});
     await writeFile(join(root, '.mosaic', 'config.json'), 'legacy');
     const candidate = join(root, '.skein.migrating-00000000-0000-4000-8000-000000000009');
     await mkdir(candidate);
     await writeFile(join(candidate, 'config.json'), 'legacy');
-    const release = await lockfile.lock(join(root, '.skein'), {realpath: false});
+    const lease = await acquireNamespaceLease(projectNamespacePaths(root).canonical, 'shared');
     try {
-      await expect(migrateProjectNamespace(root)).rejects.toThrow('already running');
-      await expect(rollbackProjectNamespace(root)).rejects.toThrow('already running');
-      await expect(recoverProjectNamespace(root)).rejects.toThrow('already running');
+      await expect(migrateProjectNamespace(root)).rejects.toThrow('in use by another Skein process');
+      await expect(rollbackProjectNamespace(root)).rejects.toThrow('in use by another Skein process');
+      await expect(recoverProjectNamespace(root)).rejects.toThrow('in use by another Skein process');
       expect(await readFile(join(candidate, 'config.json'), 'utf8')).toBe('legacy');
     } finally {
-      await release();
+      lease.release();
     }
     await recoverProjectNamespace(root);
     await migrateProjectNamespace(root);

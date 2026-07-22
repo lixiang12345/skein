@@ -390,12 +390,13 @@ If a process exits between copy, rename, verification, and cleanup,
 `--recover` previews the remaining `.migrating-*` or `.rollback-*` directory.
 `--recover --yes` resumes a complete migration, restores a complete rollback
 snapshot, or removes only a partial copy proven redundant with legacy state.
-Conflicting or ambiguous candidates remain untouched. Migration, rollback, and
-recovery also share a stale-aware process lock so concurrent namespace mutation
-commands cannot act on an operation that is still running. Stop other Skein
-sessions that may still be writing legacy storage before applying migration,
-rollback, or recovery. Custom legacy and canonical paths must be separate and
-non-nested after symbolic links are resolved.
+Conflicting or ambiguous candidates remain untouched. Normal Skein processes
+hold shared namespace leases for the storage they use; migration, rollback, and
+recovery require an exclusive lease. A live session, indexer, team run, or
+default memory store therefore blocks namespace mutation, while an operating
+system process exit (including a crash) releases its lease immediately. Custom
+legacy and canonical paths must be separate and non-nested after symbolic links
+are resolved.
 
 The default durable memory database is user-owned at `~/.mosaic/memory.sqlite`
 until user storage is migrated to `~/.skein/` (or overridden by `SKEIN_HOME`).
