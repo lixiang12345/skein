@@ -1228,8 +1228,12 @@ function printObject(value: unknown, json: boolean): void {
 function printStatusSummary(config: MosaicConfig, context: Record<string, unknown>): void {
   const glyphs = cliGlyphs;
   const dim = (text: string): string => chalk.dim(text);
-  const line = (ok: boolean, name: string, detail: string): void => {
-    const icon = ok ? chalk.green(glyphs.success) : chalk.yellow('!');
+  const line = (level: 'ok' | 'warn' | 'error', name: string, detail: string): void => {
+    const icon = level === 'ok'
+      ? chalk.green(glyphs.success)
+      : level === 'error'
+        ? chalk.red(glyphs.error)
+        : chalk.yellow('!');
     process.stdout.write(`${icon} ${name.padEnd(16)} ${dim(detail)}\n`);
   };
   const keyReady = Boolean(config.model.apiKey) || config.model.provider === 'compatible';
@@ -1243,19 +1247,21 @@ function printStatusSummary(config: MosaicConfig, context: Record<string, unknow
       : selected === 'unavailable'
         ? `ContextEngine required but unavailable ${glyphs.separator} run ${PRODUCT_COMMAND} doctor`
         : 'local index';
-  const indexDetail = local.available
-    ? `${local.files ?? 0} files ${glyphs.separator} ${local.chunks ?? 0} chunks`
+  const indexFiles = local.files ?? 0;
+  const indexReady = Boolean(local.available) && indexFiles > 0;
+  const indexDetail = indexReady
+    ? `${indexFiles} files ${glyphs.separator} ${local.chunks ?? 0} chunks`
     : `not built ${glyphs.separator} run ${PRODUCT_COMMAND} index`;
 
   process.stdout.write(`${chalk.hex('#A78BFA').bold(`${glyphs.brand} ${PRODUCT_NAME.toUpperCase()} STATUS`)}\n\n`);
-  line(true, 'Model', `${config.model.provider}/${config.model.model}`);
-  line(true, 'Endpoint', endpoint);
-  line(keyReady, 'API key', keyReady
+  line('ok', 'Model', `${config.model.provider}/${config.model.model}`);
+  line('ok', 'Endpoint', endpoint);
+  line(keyReady ? 'ok' : 'warn', 'API key', keyReady
     ? 'configured'
     : `missing ${glyphs.separator} set it, then run ${PRODUCT_COMMAND} doctor to verify`);
-  line(selected !== 'unavailable', 'Context engine', engineDetail);
-  line(Boolean(local.available), 'Code index', indexDetail);
-  line(true, 'Workspace', config.workspaceRoots.join(`  ${glyphs.separator}  `));
+  line(selected === 'unavailable' ? 'error' : 'ok', 'Context engine', engineDetail);
+  line(indexReady ? 'ok' : 'warn', 'Code index', indexDetail);
+  line('ok', 'Workspace', config.workspaceRoots.join(`  ${glyphs.separator}  `));
   process.stdout.write(`\n${dim(`Run ${PRODUCT_COMMAND} status --json for the full machine-readable record.`)}\n`);
 }
 
