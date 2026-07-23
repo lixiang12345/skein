@@ -6,74 +6,91 @@
 <title>Skein — Terminal</title>
 <style>
 /* ============================================================
-   Skein CLI — faithful terminal emulator
-   A single-column transcript with a bottom bordered prompt,
-   inline tool lines, and a spinner status line — the way real
-   CLI coding agents (Claude Code, Codex, Aider, Gemini CLI) work.
+   Skein CLI — faithful interactive terminal
+   Single-column transcript, bottom bordered prompt, inline tool
+   lines, spinner status line — the shape of real CLI coding
+   agents (Claude Code, Codex, Aider, Gemini CLI), with a polished
+   product identity on top.
    ============================================================ */
 :root{
-  /* graphite loom — terminal palette */
-  --bg:#0b0e14; --fg:#c3ccdd; --strong:#eef2fb; --dim:#8794ab; --faint:#5a6478; --ghost:#3d4557;
+  --bg:#0b0e14; --bg-soft:#0d1119; --panel:#11151f; --panel-2:#161b28;
+  --fg:#c3ccdd; --strong:#eef2fb; --dim:#8794ab; --faint:#5a6478; --ghost:#3d4557;
   --accent:#6ee7d0; --accent-deep:#2dd4bf;
   --ok:#4ade80; --warn:#fbbf24; --err:#fb7185; --info:#60a5fa; --violet:#a78bfa;
   --add:#3fb950; --del:#f85149; --add-bg:#2ea04322; --del-bg:#f8514922;
-  --border:#273045; --border-focus:#2dd4bf;
+  --border:#273045; --border-soft:#1c2333; --border-focus:#2dd4bf;
   --mono:"SF Mono","JetBrains Mono","Fira Code",ui-monospace,Menlo,Consolas,monospace;
+  --glow:0 0 0 1px #6ee7d022, 0 0 22px -6px #6ee7d055;
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 html,body{height:100%;}
 body{
   background:var(--bg); color:var(--fg);
   font-family:var(--mono); font-size:13px; line-height:1.5;
-  -webkit-font-smoothing:antialiased;
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
   display:flex; flex-direction:column; height:100vh; overflow:hidden;
+  transition:background .25s ease;
 }
 ::selection{background:#6ee7d033;color:var(--strong);}
-::-webkit-scrollbar{width:6px;} ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;} ::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar{width:7px;} ::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px;} ::-webkit-scrollbar-thumb:hover{background:var(--faint);} ::-webkit-scrollbar-track{background:transparent;}
 
-/* theme toolbar — tiny, out of the way */
+/* ── top chrome: logo + theme + actions ── */
 #chrome{
-  display:flex;align-items:center;gap:8px;padding:5px 12px;
-  border-bottom:1px solid var(--border);flex-shrink:0;color:var(--faint);font-size:11px;
+  display:flex;align-items:center;gap:10px;padding:7px 14px;
+  border-bottom:1px solid var(--border-soft);flex-shrink:0;
+  background:linear-gradient(180deg,var(--panel-2),var(--panel));
 }
-#chrome .tsw{width:12px;height:12px;border-radius:50%;cursor:pointer;border:1.5px solid transparent;}
-#chrome .tsw.on{border-color:var(--strong);}
-#chrome .tbtn{background:none;border:1px solid var(--border);color:var(--dim);font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:4px;cursor:pointer;}
-#chrome .tbtn:hover{border-color:var(--accent);color:var(--accent);}
+#chrome .logo{display:flex;align-items:center;gap:8px;font-weight:700;color:var(--strong);letter-spacing:.2px;}
+#chrome .mark{width:22px;height:22px;flex-shrink:0;filter:drop-shadow(0 0 6px #6ee7d055);}
+#chrome .ver{color:var(--faint);font-size:10px;font-weight:400;padding:1px 6px;border:1px solid var(--border);border-radius:999px;}
 #chrome .grow{flex:1;}
+#chrome .lbl{color:var(--faint);font-size:10px;text-transform:uppercase;letter-spacing:.1em;}
+#chrome .tsw{width:13px;height:13px;border-radius:50%;cursor:pointer;border:1.5px solid transparent;transition:transform .12s,border-color .12s;}
+#chrome .tsw:hover{transform:scale(1.18);}
+#chrome .tsw.on{border-color:var(--strong);}
+#chrome .tbtn{background:none;border:1px solid var(--border);color:var(--dim);font-family:var(--mono);font-size:11px;padding:3px 10px;border-radius:6px;cursor:pointer;transition:.12s;}
+#chrome .tbtn:hover{border-color:var(--accent);color:var(--accent);}
+#chrome .tbtn.go{border-color:var(--accent-deep);color:var(--accent);}
+#chrome .tbtn.go:hover{background:#6ee7d012;box-shadow:var(--glow);}
 
-/* transcript — single full-width scroll column */
-#transcript{flex:1;overflow-y:auto;padding:14px 16px 4px;}
-.blk{margin-bottom:12px;white-space:pre-wrap;word-break:break-word;}
+/* ── transcript ── */
+#transcript{flex:1;overflow-y:auto;padding:16px 18px 6px;scroll-behavior:smooth;}
+.blk{margin-bottom:12px;white-space:pre-wrap;word-break:break-word;animation:rise .28s ease;}
+@keyframes rise{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:none;}}
 
-/* welcome banner */
-.banner{border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:14px;color:var(--dim);}
-.banner .b1{color:var(--accent);font-weight:700;}
-.banner .b2{color:var(--strong);}
+/* ── boot / banner ── */
+.banner{border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:16px;color:var(--dim);background:linear-gradient(180deg,var(--panel),var(--bg-soft));box-shadow:0 8px 26px -14px #000;}
+.banner .logowrap{display:flex;align-items:center;gap:14px;margin-bottom:8px;}
+.banner .glyphart{color:var(--accent);font-size:11px;line-height:1.15;text-shadow:0 0 12px #6ee7d033;white-space:pre;}
+.banner .tagline .t1{color:var(--strong);font-weight:700;font-size:15px;}
+.banner .tagline .t2{color:var(--dim);font-size:12px;}
+.banner .meta{color:var(--faint);border-top:1px solid var(--border-soft);padding-top:8px;margin-top:4px;}
+.banner .meta b{color:var(--accent);cursor:pointer;}
+.banner .kbd{color:var(--dim);}
 .banner a{color:var(--accent);text-decoration:none;}
 
-/* user turn: › prefix, bold */
+/* ── user turn ── */
 .user{display:flex;gap:8px;}
 .user .sig{color:var(--accent);font-weight:700;flex-shrink:0;}
 .user .txt{color:var(--strong);font-weight:600;}
 
-/* assistant text: ◆ Skein header, indented body */
-.asst .hdr{color:var(--accent);font-weight:700;margin-bottom:2px;}
+/* ── assistant ── */
+.asst .hdr{color:var(--accent);font-weight:700;margin-bottom:2px;display:flex;align-items:center;gap:8px;}
 .asst .hdr .streaming{color:var(--dim);font-weight:400;}
 .asst .body{padding-left:14px;color:var(--fg);}
-.asst .body code{background:#161b28;color:var(--accent);padding:0 4px;border-radius:3px;}
-.asst .body .h{color:var(--strong);font-weight:700;display:block;margin:4px 0 2px;}
+.asst .body code{background:var(--panel-2);color:var(--accent);padding:0 4px;border-radius:3px;}
+.asst .body .h{color:var(--strong);font-weight:700;display:block;margin:5px 0 2px;}
 .asst .body .li{display:block;padding-left:2px;}
 .asst .body .li .bullet{color:var(--accent);}
-.caret{display:inline-block;width:7px;height:14px;background:var(--accent);vertical-align:-2px;animation:blink 1s step-end infinite;}
+.caret{display:inline-block;width:7px;height:14px;background:var(--accent);vertical-align:-2px;animation:blink 1s step-end infinite;border-radius:1px;}
 @keyframes blink{50%{opacity:0;}}
 
-/* tool call: ⏺ name(args)  then ⎿ result (indented) */
+/* ── tool call ── */
 .tool .call{display:flex;gap:7px;align-items:baseline;}
 .tool .call .g{flex-shrink:0;}
 .tool .call .name{color:var(--strong);font-weight:600;}
 .tool .call .args{color:var(--dim);}
-.tool .call .dur{color:var(--faint);margin-left:6px;font-size:11px;}
+.tool .call .dur{color:var(--faint);margin-left:auto;font-size:11px;padding-left:10px;}
 .tool .result{padding-left:15px;color:var(--dim);}
 .tool .result .lead{color:var(--faint);}
 .tool .result.err{color:var(--err);}
@@ -82,78 +99,147 @@ body{
 .tool .result .hidden-lines{display:none;}
 .tool .result.expanded .hidden-lines{display:block;}
 
-/* diff inside a tool result */
-.diff{margin:3px 0 3px 15px;border-left:1px solid var(--border);}
-.diff .dl{padding:0 8px;}
+/* ── diff ── */
+.diff{margin:4px 0 3px 15px;border:1px solid var(--border-soft);border-left:2px solid var(--accent-deep);border-radius:5px;overflow:hidden;}
+.diff .dhdr{color:var(--dim);padding:3px 10px;background:var(--panel-2);border-bottom:1px solid var(--border-soft);}
+.diff .dl{padding:0 10px;}
 .diff .dl.add{background:var(--add-bg);color:var(--add);}
 .diff .dl.del{background:var(--del-bg);color:var(--del);}
 .diff .dl.ctx{color:var(--faint);}
-.diff .dhdr{color:var(--dim);padding:0 8px 2px;}
 
-/* plan / todo block: rendered like Claude Code's todo list */
-.todo{padding-left:14px;}
-.todo .row{color:var(--dim);}
+/* ── todo ── */
+.todo{padding-left:14px;border-left:2px solid var(--border-soft);margin-left:1px;}
+.todo .row{color:var(--dim);cursor:pointer;border-radius:4px;padding:0 4px;}
+.todo .row:hover{background:var(--panel-2);}
 .todo .row.done{color:var(--faint);}
 .todo .row.done .mark{color:var(--ok);}
 .todo .row.now{color:var(--strong);}
 .todo .row.now .mark{color:var(--accent);}
 .todo .row .mark{display:inline-block;width:16px;}
 
-/* approval prompt (inline, like a permission request) */
-.perm{border:1px solid var(--warn);border-left-width:2px;border-radius:6px;padding:8px 12px;margin-left:14px;color:var(--fg);}
-.perm .q{color:var(--strong);margin-bottom:4px;}
-.perm .opts{display:flex;gap:14px;color:var(--dim);flex-wrap:wrap;}
+/* ── context retrieval line ── */
+.ctxline .call .name{color:var(--info);}
+.ctxline.deg .call .name{color:var(--warn);}
+
+/* ── permission ── */
+.perm{border:1px solid var(--warn);border-left-width:2px;border-radius:7px;padding:9px 13px;margin-left:14px;color:var(--fg);background:#fbbf240a;}
+.perm .q{color:var(--strong);margin-bottom:5px;}
+.perm .opts{display:flex;gap:16px;color:var(--dim);flex-wrap:wrap;}
 .perm .opts b{cursor:pointer;font-weight:400;}
 .perm .opts b:hover{color:var(--accent);}
 .perm .opts .k{color:var(--accent);font-weight:700;}
 
-/* notices */
+/* ── notices ── */
 .notice{color:var(--dim);}
 .notice.info{color:var(--info);} .notice.ok{color:var(--ok);} .notice.warn{color:var(--warn);} .notice.err{color:var(--err);}
 
-/* spinner status line — the signature "esc to interrupt" line */
-#spinner{padding:2px 16px;color:var(--accent);flex-shrink:0;display:none;}
+/* ── panel (for /context, /engine, /resources) ── */
+.panel{border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--bg-soft);}
+.panel .ph{display:flex;align-items:center;gap:8px;padding:6px 12px;background:var(--panel-2);border-bottom:1px solid var(--border-soft);color:var(--strong);font-weight:600;}
+.panel .ph .n{margin-left:auto;color:var(--faint);font-weight:400;font-size:11px;}
+.panel .pb{padding:8px 12px;display:flex;flex-direction:column;gap:6px;}
+.meter{height:8px;border-radius:999px;background:var(--panel-2);overflow:hidden;display:flex;border:1px solid var(--border-soft);}
+.meter i{height:100%;display:block;}
+.mrow{display:flex;align-items:center;gap:8px;color:var(--dim);}
+.mrow .sw{width:9px;height:9px;border-radius:2px;flex-shrink:0;}
+.mrow .tk{margin-left:auto;color:var(--faint);font-size:11px;}
+.mrow .tag{font-size:10px;padding:0 5px;border-radius:999px;border:1px solid var(--border);color:var(--faint);}
+.mrow .tag.pin{color:var(--accent);border-color:var(--accent-deep);}
+
+/* resource grid */
+.rgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;}
+.rcell{border:1px solid var(--border-soft);border-radius:7px;padding:8px 10px;background:var(--panel);display:flex;gap:9px;align-items:flex-start;}
+.rcell .ic{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;background:var(--panel-2);border:1px solid var(--border-soft);flex-shrink:0;font-size:14px;}
+.rcell .rt{color:var(--strong);font-weight:600;font-size:12px;}
+.rcell .rd{color:var(--faint);font-size:11px;}
+
+/* ── spinner ── */
+#spinner{padding:3px 18px;color:var(--accent);flex-shrink:0;display:none;}
 #spinner.on{display:block;}
 #spinner .meta{color:var(--faint);}
 
-/* bottom bordered prompt box — ╭─╮ │ ╰─╯ style */
-#composer{padding:6px 12px 4px;flex-shrink:0;}
-.pbox{border:1px solid var(--border);border-radius:8px;padding:6px 10px;display:flex;align-items:center;gap:8px;transition:border-color .15s;background:#0d1119;}
-.pbox.focus{border-color:var(--border-focus);box-shadow:0 0 0 1px #2dd4bf22;}
-.pbox.shell{border-color:var(--warn);}
+/* ── prompt box ── */
+#composer{padding:6px 14px 4px;flex-shrink:0;}
+.pbox{border:1px solid var(--border);border-radius:9px;padding:7px 11px;display:flex;align-items:center;gap:8px;transition:border-color .15s,box-shadow .15s;background:var(--bg-soft);}
+.pbox.focus{border-color:var(--border-focus);box-shadow:var(--glow);}
+.pbox.shell{border-color:var(--warn);box-shadow:0 0 0 1px #fbbf2422;}
 .pbox .sig{color:var(--accent);font-weight:700;flex-shrink:0;}
 .pbox .sig.shell{color:var(--warn);}
 #input{flex:1;background:transparent;border:none;outline:none;color:var(--strong);font-family:var(--mono);font-size:13px;caret-color:var(--accent);}
 #input::placeholder{color:var(--ghost);}
+.pbox .hint{color:var(--ghost);font-size:11px;flex-shrink:0;}
 
-/* footer status bar — single line: mode · model · context · cwd */
-#footer{display:flex;gap:0;padding:0 16px 6px;color:var(--faint);font-size:11px;align-items:center;flex-shrink:0;}
+/* reverse-search bar */
+#rsearch{display:none;margin-bottom:4px;border:1px solid var(--violet);border-radius:8px;padding:6px 11px;background:var(--bg-soft);color:var(--dim);}
+#rsearch.on{display:flex;gap:8px;align-items:center;}
+#rsearch .lab{color:var(--violet);font-weight:700;}
+#rsearch .match{color:var(--strong);flex:1;}
+
+/* ── footer ── */
+#footer{display:flex;gap:0;padding:0 18px 7px;color:var(--faint);font-size:11px;align-items:center;flex-shrink:0;}
 #footer .seg{color:var(--faint);}
 #footer .sep{color:var(--border);margin:0 8px;}
 #footer .mode{font-weight:700;}
 #footer .mode.build{color:var(--accent);} #footer .mode.plan{color:var(--warn);} #footer .mode.ask{color:var(--dim);}
 #footer .grow{flex:1;}
 #footer .ctx-ok{color:var(--dim);} #footer .ctx-warn{color:var(--warn);} #footer .ctx-hi{color:var(--err);}
+#footer .queue{color:var(--violet);}
 
-/* command palette — pops above the prompt box */
-#palette{margin:0 0 4px;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:#0d1119;display:none;}
-#palette .pi{display:flex;gap:12px;padding:4px 12px;cursor:pointer;align-items:baseline;}
-#palette .pi.active,#palette .pi:hover{background:#161b28;}
-#palette .pi .c{color:var(--accent);font-weight:600;min-width:110px;}
+/* ── palette ── */
+#palette{margin:0 0 4px;border:1px solid var(--border);border-radius:9px;overflow:hidden;background:var(--bg-soft);display:none;box-shadow:0 -8px 26px -18px #000;}
+#palette .pi{display:flex;gap:12px;padding:5px 12px;cursor:pointer;align-items:baseline;border-left:2px solid transparent;}
+#palette .pi.active,#palette .pi:hover{background:var(--panel-2);border-left-color:var(--accent);}
+#palette .pi .c{color:var(--accent);font-weight:600;min-width:120px;}
 #palette .pi .d{color:var(--dim);font-size:12px;}
+#palette .pi.active .arrow{color:var(--accent);}
+
+/* ── help overlay ── */
+#overlay{position:fixed;inset:0;background:rgba(5,7,10,.72);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;z-index:100;}
+#overlay.on{display:flex;}
+#overlay .card{width:min(560px,92vw);max-height:82vh;overflow:auto;border:1px solid var(--border);border-radius:12px;background:linear-gradient(180deg,var(--panel),var(--bg-soft));box-shadow:0 30px 80px -20px #000;}
+#overlay .oh{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border-soft);color:var(--strong);font-weight:700;}
+#overlay .oh .x{margin-left:auto;color:var(--faint);cursor:pointer;}
+#overlay .oh .x:hover{color:var(--accent);}
+#overlay .ob{padding:12px 16px;}
+#overlay .grp{color:var(--faint);text-transform:uppercase;font-size:10px;letter-spacing:.12em;margin:10px 0 4px;}
+#overlay .krow{display:flex;justify-content:space-between;padding:3px 0;color:var(--dim);}
+#overlay .krow kbd{font-family:var(--mono);background:var(--panel-2);border:1px solid var(--border);border-bottom-width:2px;border-radius:5px;padding:1px 7px;color:var(--fg);font-size:11px;}
+
+/* toast for copy */
+#toast{position:fixed;bottom:74px;left:50%;transform:translateX(-50%) translateY(10px);opacity:0;background:var(--panel-2);border:1px solid var(--accent-deep);color:var(--accent);padding:5px 14px;border-radius:999px;font-size:11px;transition:.2s;pointer-events:none;z-index:120;}
+#toast.on{opacity:1;transform:translateX(-50%) translateY(0);}
 </style>
 </head>
 <body>
 
 <div id="chrome">
-  <span>theme</span>
+  <div class="logo">
+    <svg class="mark" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Skein">
+      <defs>
+        <linearGradient id="sk" x1="4" y1="4" x2="28" y2="28" gradientUnits="userSpaceOnUse">
+          <stop stop-color="#6ee7d0"/><stop offset="0.55" stop-color="#2dd4bf"/><stop offset="1" stop-color="#a78bfa"/>
+        </linearGradient>
+      </defs>
+      <rect x="1.5" y="1.5" width="29" height="29" rx="8" stroke="url(#sk)" stroke-width="1.6" opacity="0.5"/>
+      <!-- woven "S" thread -->
+      <path d="M22 9.5c-2.2-2.3-8-2.6-9.5 0.6-1.4 3 1.8 4.4 4 5.2 2.4 0.9 5.6 2.2 4.2 5.4-1.6 3.4-7.6 3-9.9 0.5"
+            stroke="url(#sk)" stroke-width="2.4" stroke-linecap="round"/>
+      <circle cx="11" cy="10" r="1.4" fill="#6ee7d0"/>
+      <circle cx="21" cy="22" r="1.4" fill="#a78bfa"/>
+    </svg>
+    <span>Skein</span>
+    <span class="ver">v0.4</span>
+  </div>
+  <span class="grow"></span>
+  <span class="lbl">theme</span>
   <span class="tsw on" style="background:#6ee7d0" title="graphite" onclick="setTheme('graphite')"></span>
   <span class="tsw" style="background:#d6ad72" title="cinder"   onclick="setTheme('cinder')"></span>
   <span class="tsw" style="background:#e7e7e7" title="mono"     onclick="setTheme('mono')"></span>
   <span class="tsw" style="background:#b2b9f0" title="midnight" onclick="setTheme('midnight')"></span>
   <span class="tsw" style="background:#236b8e" title="paper"    onclick="setTheme('paper')"></span>
-  <span class="grow"></span>
-  <button class="tbtn" onclick="runDemo()">▶ demo</button>
+  <span class="lbl" style="margin-left:6px">run</span>
+  <button class="tbtn go" onclick="runDemo()">▶ demo</button>
+  <button class="tbtn" onclick="showHelp()">? help</button>
   <button class="tbtn" onclick="cmd('/clear')">clear</button>
 </div>
 
@@ -162,10 +248,12 @@ body{
 <div id="spinner"><span id="spin-glyph">✻</span> <span id="spin-label">Working</span><span class="meta" id="spin-meta"> … (0s · esc to interrupt)</span></div>
 
 <div id="composer">
+  <div id="rsearch"><span class="lab">bck-i-search:</span><span id="rs-q"></span><span class="match" id="rs-match"></span></div>
   <div id="palette"></div>
   <div class="pbox" id="pbox">
     <span class="sig" id="sig">›</span>
     <input id="input" placeholder="Try a request, / for commands, @ for files — or click ▶ demo" autocomplete="off" spellcheck="false"/>
+    <span class="hint" id="phint">⏎ send</span>
   </div>
 </div>
 
@@ -175,30 +263,42 @@ body{
   <span class="seg" id="f-model">anthropic/claude-opus</span>
   <span class="sep">·</span>
   <span class="seg ctx-ok" id="f-ctx">context 0%</span>
+  <span class="sep" id="f-qsep" style="display:none">·</span>
+  <span class="queue" id="f-queue" style="display:none"></span>
   <span class="grow"></span>
   <span class="seg" id="f-cwd">~/proj/api</span>
 </div>
 
+<div id="overlay" onclick="if(event.target.id==='overlay')hideHelp()">
+  <div class="card">
+    <div class="oh">◆ Skein — keyboard & commands <span class="x" onclick="hideHelp()">✕ esc</span></div>
+    <div class="ob" id="help-body"></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
 <script>
 // ── themes ──────────────────────────────────────────────────────────────────
 const THEMES={
-  graphite:{'--bg':'#0b0e14','--fg':'#c3ccdd','--strong':'#eef2fb','--dim':'#8794ab','--faint':'#5a6478','--ghost':'#3d4557','--accent':'#6ee7d0','--accent-deep':'#2dd4bf','--ok':'#4ade80','--warn':'#fbbf24','--err':'#fb7185','--info':'#60a5fa','--violet':'#a78bfa','--add':'#3fb950','--del':'#f85149','--add-bg':'#2ea04322','--del-bg':'#f8514922','--border':'#273045','--border-focus':'#2dd4bf'},
-  cinder:{'--bg':'#141009','--fg':'#dbd7d1','--strong':'#f6f2ec','--dim':'#aaa39a','--faint':'#837d76','--ghost':'#5a5248','--accent':'#d6ad72','--accent-deep':'#c49a58','--ok':'#8fc38a','--warn':'#e0a35e','--err':'#df7d82','--info':'#7ab0d4','--violet':'#c084a0','--add':'#6aaa65','--del':'#d06060','--add-bg':'#6aaa6522','--del-bg':'#d0606022','--border':'#4a4540','--border-focus':'#c49a58'},
-  mono:{'--bg':'#111111','--fg':'#d2d2d2','--strong':'#ffffff','--dim':'#a5a5a5','--faint':'#7d7d7d','--ghost':'#555555','--accent':'#e7e7e7','--accent-deep':'#cccccc','--ok':'#e1e1e1','--warn':'#c5c5c5','--err':'#f0f0f0','--info':'#d0d0d0','--violet':'#bbbbbb','--add':'#c8c8c8','--del':'#f0f0f0','--add-bg':'#c8c8c818','--del-bg':'#f0f0f018','--border':'#484848','--border-focus':'#cccccc'},
-  midnight:{'--bg':'#0f0f18','--fg':'#dddde5','--strong':'#f6f5f8','--dim':'#a09faa','--faint':'#7e7d8b','--ghost':'#5a5968','--accent':'#b2b9f0','--accent-deep':'#8892e8','--ok':'#82c79b','--warn':'#d8b773','--err':'#e18a91','--info':'#7ab0d4','--violet':'#c084c0','--add':'#6aaa80','--del':'#d07080','--add-bg':'#6aaa8022','--del-bg':'#d0708022','--border':'#42414b','--border-focus':'#8892e8'},
-  paper:{'--bg':'#f4f1ec','--fg':'#30343a','--strong':'#15181c','--dim':'#626a73','--faint':'#8a9099','--ghost':'#b0b8c0','--accent':'#236b8e','--accent-deep':'#1a5070','--ok':'#287a46','--warn':'#8a621b','--err':'#ad3942','--info':'#2060a0','--violet':'#7040a0','--add':'#287a46','--del':'#ad3942','--add-bg':'#287a4618','--del-bg':'#ad394218','--border':'#c8cdd3','--border-focus':'#236b8e'},
+  graphite:{'--bg':'#0b0e14','--bg-soft':'#0d1119','--panel':'#11151f','--panel-2':'#161b28','--fg':'#c3ccdd','--strong':'#eef2fb','--dim':'#8794ab','--faint':'#5a6478','--ghost':'#3d4557','--accent':'#6ee7d0','--accent-deep':'#2dd4bf','--ok':'#4ade80','--warn':'#fbbf24','--err':'#fb7185','--info':'#60a5fa','--violet':'#a78bfa','--add':'#3fb950','--del':'#f85149','--add-bg':'#2ea04322','--del-bg':'#f8514922','--border':'#273045','--border-soft':'#1c2333','--border-focus':'#2dd4bf'},
+  cinder:{'--bg':'#141009','--bg-soft':'#191309','--panel':'#211a10','--panel-2':'#2a2116','--fg':'#dbd7d1','--strong':'#f6f2ec','--dim':'#aaa39a','--faint':'#837d76','--ghost':'#5a5248','--accent':'#d6ad72','--accent-deep':'#c49a58','--ok':'#8fc38a','--warn':'#e0a35e','--err':'#df7d82','--info':'#7ab0d4','--violet':'#c084a0','--add':'#6aaa65','--del':'#d06060','--add-bg':'#6aaa6522','--del-bg':'#d0606022','--border':'#4a4540','--border-soft':'#332d26','--border-focus':'#c49a58'},
+  mono:{'--bg':'#111111','--bg-soft':'#151515','--panel':'#1a1a1a','--panel-2':'#222222','--fg':'#d2d2d2','--strong':'#ffffff','--dim':'#a5a5a5','--faint':'#7d7d7d','--ghost':'#555555','--accent':'#e7e7e7','--accent-deep':'#cccccc','--ok':'#e1e1e1','--warn':'#c5c5c5','--err':'#f0f0f0','--info':'#d0d0d0','--violet':'#bbbbbb','--add':'#c8c8c8','--del':'#f0f0f0','--add-bg':'#c8c8c818','--del-bg':'#f0f0f018','--border':'#484848','--border-soft':'#2c2c2c','--border-focus':'#cccccc'},
+  midnight:{'--bg':'#0f0f18','--bg-soft':'#13131e','--panel':'#181824','--panel-2':'#20202e','--fg':'#dddde5','--strong':'#f6f5f8','--dim':'#a09faa','--faint':'#7e7d8b','--ghost':'#5a5968','--accent':'#b2b9f0','--accent-deep':'#8892e8','--ok':'#82c79b','--warn':'#d8b773','--err':'#e18a91','--info':'#7ab0d4','--violet':'#c084c0','--add':'#6aaa80','--del':'#d07080','--add-bg':'#6aaa8022','--del-bg':'#d0708022','--border':'#42414b','--border-soft':'#2c2b34','--border-focus':'#8892e8'},
+  paper:{'--bg':'#f4f1ec','--bg-soft':'#eeeae3','--panel':'#e9e4db','--panel-2':'#e0dacf','--fg':'#30343a','--strong':'#15181c','--dim':'#626a73','--faint':'#8a9099','--ghost':'#b0b8c0','--accent':'#236b8e','--accent-deep':'#1a5070','--ok':'#287a46','--warn':'#8a621b','--err':'#ad3942','--info':'#2060a0','--violet':'#7040a0','--add':'#287a46','--del':'#ad3942','--add-bg':'#287a4618','--del-bg':'#ad394218','--border':'#c8cdd3','--border-soft':'#d8dce1','--border-focus':'#236b8e'},
 };
-function setTheme(n){const t=THEMES[n];if(!t)return;Object.entries(t).forEach(([k,v])=>document.documentElement.style.setProperty(k,v));document.querySelectorAll('.tsw').forEach(s=>s.classList.toggle('on',s.title===n));document.body.style.background=t['--bg'];curTheme=n;}
 let curTheme='graphite';
+function setTheme(n){const t=THEMES[n];if(!t)return;Object.entries(t).forEach(([k,v])=>document.documentElement.style.setProperty(k,v));document.querySelectorAll('.tsw').forEach(s=>s.classList.toggle('on',s.title===n));document.body.style.background=t['--bg'];curTheme=n;}
 
 // ── state ─────────────────────────────────────────────────────────────────────
-let mode='build', ctxPct=0, cost=0, spinTimer=null, spinStart=0, streamTimer=null, busy=false;
+let mode='build', ctxPct=0, spinTimer=null, spinStart=0, streamTimer=null, busy=false;
+let history=[], histIdx=-1, draft='', queue=[];
+let rsOn=false, rsQuery='';
 const T=document.getElementById('transcript');
 const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const scroll=()=>{T.scrollTop=T.scrollHeight;};
-const clock=()=>{const d=new Date();return d.getHours()+':'+String(d.getMinutes()).padStart(2,'0');};
 
-// ── rich body renderer (headings, bullets, inline code) ──
+// ── rich body renderer ──
 function rich(text){
   return text.split('\n').map(ln=>{
     const h=ln.match(/^#{1,4}\s+(.+)$/); if(h) return `<span class="h">${esc(h[1])}</span>`;
@@ -208,7 +308,8 @@ function rich(text){
 }
 function inline(s){return esc(s).replace(/`([^`]+)`/g,'<code>$1</code>');}
 
-// ── transcript blocks ──
+// ── blocks ──
+function blk(cls){const d=document.createElement('div');d.className='blk '+cls;T.appendChild(d);scroll();return d;}
 function addUser(text){const d=blk('user');d.innerHTML=`<span class="sig">›</span><span class="txt">${esc(text)}</span>`;}
 function addNotice(text,tone='info'){const d=blk('notice '+tone);d.textContent=text;}
 
@@ -216,7 +317,7 @@ function addAsst(){const d=blk('asst');d.innerHTML=`<div class="hdr">◆ Skein <
 function streamInto(d,text,onDone){
   const body=d.querySelector('.body'), words=text.split(' '); let i=0;
   (function tick(){
-    if(i>=words.length){body.innerHTML=rich(text);d.querySelector('.streaming').remove();if(onDone)onDone();return;}
+    if(i>=words.length){body.innerHTML=rich(text);const s=d.querySelector('.streaming');if(s)s.remove();if(onDone)onDone();return;}
     body.innerHTML=rich(words.slice(0,i+1).join(' '))+'<span class="caret"></span>';scroll();i++;
     streamTimer=setTimeout(tick,20+Math.random()*30);
   })();
@@ -225,13 +326,14 @@ function streamInto(d,text,onDone){
 function addTool(glyph,name,args,resultLead,resultLines,state='ok',dur){
   const d=blk('tool');
   const gc=state==='err'?'var(--err)':state==='run'?'var(--info)':'var(--ok)';
-  const g=state==='run'?'◌':state==='err'?'⏺':'⏺';
+  const g=state==='run'?'◌':'⏺';
   const durTxt=dur?`<span class="dur">${dur}</span>`:'';
   let result='';
   if(resultLead!==undefined){
     const extra=(resultLines||[]).map(l=>esc(l)).join('\n');
     const hidden=extra?`<span class="hidden-lines">\n${extra}</span>`:'';
-    const more=extra?` <span class="more" onclick="this.closest('.result').classList.toggle('expanded');this.textContent=this.closest('.result').classList.contains('expanded')?'⌄ less':'› ${(resultLines||[]).length} more lines'">› ${(resultLines||[]).length} more lines</span>`:'';
+    const n=(resultLines||[]).length;
+    const more=extra?` <span class="more" onclick="const r=this.closest('.result');r.classList.toggle('expanded');this.textContent=r.classList.contains('expanded')?'⌄ less':'› ${n} more lines'">› ${n} more lines</span>`:'';
     result=`<div class="result${state==='err'?' err':''}"><span class="lead">⎿ </span>${esc(resultLead)}${more}${hidden}</div>`;
   }
   d.innerHTML=`<div class="call"><span class="g" style="color:${gc}">${g}</span><span class="name">${esc(name)}</span><span class="args">(${esc(args)})</span>${durTxt}</div>${result}`;
@@ -261,14 +363,11 @@ function cycleTodo(el){
   el.querySelector('.mark').textContent=nx==='done'?'☒':nx==='now'?'▸':'☐';
 }
 
-// ── context retrieval line: shows engine tier, hits, tokens, degradation ──
-// Mirrors ContextEngine.pack() in src/context/context-engine.ts — auto tier
-// prefers the external ContextEngine (semantic + rerank) and falls back to the
-// local BM25 index, surfacing a ContextDegradation when a channel is missing.
+// ── context retrieval line (mirrors ContextEngine.pack in src/context/context-engine.ts) ──
 function addContext(engine,hits,tokens,degrade){
-  const d=blk('tool');
+  const d=blk('tool ctxline'+(degrade?' deg':''));
   const label=engine==='contextengine'?'ContextEngine · semantic+rerank'
-    :engine==='local'?'local · bm25+path+symbol':'auto';
+    :engine==='local'?'local · bm25+path+symbol':'auto → ContextEngine';
   const gc=degrade?'var(--warn)':'var(--info)';
   let deg='';
   if(degrade) deg=`<div class="result" style="color:var(--warn)"><span class="lead">⎿ </span>! ${esc(degrade)} — fell back to local index</div>`;
@@ -278,17 +377,54 @@ function addContext(engine,hits,tokens,degrade){
 
 function addPerm(question,onApply){
   const d=blk('');
-  d.innerHTML=`<div class="perm"><div class="q">${esc(question)}</div><div class="opts"><b onclick="permYes(this)"><span class="k">⏎</span> yes</b><b><span class="k">a</span> yes, and don't ask again</b><b onclick="permNo(this)"><span class="k">esc</span> no</b><b><span class="k">e</span> edit</b></div></div>`;
+  d.innerHTML=`<div class="perm"><div class="q">${esc(question)}</div><div class="opts"><b onclick="permYes(this)"><span class="k">⏎</span> yes</b><b onclick="permYes(this)"><span class="k">a</span> yes, and don't ask again</b><b onclick="permNo(this)"><span class="k">esc</span> no</b><b><span class="k">e</span> edit</b></div></div>`;
   d._onApply=onApply;
   return d;
 }
 function permYes(b){const d=b.closest('.blk');d.querySelector('.perm').innerHTML='<span class="notice ok">✓ approved</span>';if(d._onApply)d._onApply();}
-function permNo(b){const d=b.closest('.blk');d.querySelector('.perm').innerHTML='<span class="notice err">✕ rejected</span>';}
+function permNo(b){const d=b.closest('.blk');d.querySelector('.perm').innerHTML='<span class="notice err">✕ rejected — proposing an alternative</span>';}
 
-function blk(cls){const d=document.createElement('div');d.className='blk '+cls;T.appendChild(d);scroll();return d;}
+// ── panels: context / engine / resources ──
+function panelContext(){
+  const d=blk('');
+  d.innerHTML=`<div class="panel"><div class="ph">◇ Context window <span class="n">42% · 54k / 128k</span></div><div class="pb">
+    <div class="meter"><i style="width:20%;background:var(--accent)"></i><i style="width:12%;background:var(--violet)"></i><i style="width:6%;background:var(--info)"></i><i style="width:4%;background:var(--warn)"></i></div>
+    <div class="mrow"><span class="sw" style="background:var(--accent)"></span> src/mw/rate-limit.ts <span class="tag pin">pinned</span><span class="tk">3.1k</span></div>
+    <div class="mrow"><span class="sw" style="background:var(--accent)"></span> src/mw/index.ts <span class="tag pin">pinned</span><span class="tk">0.9k</span></div>
+    <div class="mrow"><span class="sw" style="background:var(--violet)"></span> bench/burst.js <span class="tag">working set</span><span class="tk">1.8k</span></div>
+    <div class="mrow"><span class="sw" style="background:var(--info)"></span> retrieved · token-bucket docs <span class="tk">1.5k</span></div>
+    <div class="mrow"><span class="sw" style="background:var(--warn)"></span> memory · project style guide <span class="tk">1.1k</span></div>
+    <div class="mrow" style="color:var(--faint);font-size:11px">↳ pinned files re-read each turn · survive compaction · /context unpin &lt;path&gt;</div>
+  </div></div>`;
+}
+function panelEngine(){
+  const d=blk('');
+  d.innerHTML=`<div class="panel"><div class="ph">◈ Context engine <span class="n">auto</span></div><div class="pb">
+    <div class="mrow"><span class="c-ok" style="color:var(--ok)">●</span> external · ContextEngine v0.4.2 <span class="tk" style="color:var(--ok)">healthy · indexed</span></div>
+    <div class="mrow"><span style="color:var(--info)">◇</span> channels · semantic + rerank + bm25 <span class="tk">318 chunks</span></div>
+    <div class="mrow"><span style="color:var(--dim)">○</span> local fallback · bm25+path+symbol <span class="tk">ready</span></div>
+    <div class="mrow" style="color:var(--faint);font-size:11px">↳ auto tier prefers the external engine and falls back on any failure</div>
+  </div></div>`;
+}
+function panelResources(){
+  const d=blk('');
+  const cell=(ic,t,dd,col)=>`<div class="rcell"><div class="ic" style="color:${col}">${ic}</div><div><div class="rt">${t}</div><div class="rd">${dd}</div></div></div>`;
+  d.innerHTML=`<div class="panel"><div class="ph">◆ Resources <span class="n">tools · commands · agents · skills · mcp</span></div><div class="pb">
+    <div class="rgrid">
+      ${cell('⏺','Read','file into context','var(--accent)')}
+      ${cell('✎','Update','apply_patch edit','var(--ok)')}
+      ${cell('⚡','Bash','run shell command','var(--warn)')}
+      ${cell('⌕','Search','grep / semantic','var(--info)')}
+      ${cell('◇','Context','engine retrieval','var(--info)')}
+      ${cell('◍','Agent','delegate subtask','var(--violet)')}
+      ${cell('⟲','Audit','hash-chained log','var(--ok)')}
+      ${cell('⧉','MCP','external servers','var(--violet)')}
+    </div>
+  </div></div>`;
+}
 
 // ── spinner ──
-const SPIN=['✻','✽','✢','✳','∗','✻','✽'];
+const SPIN=['✻','✽','✢','✳','∗','✽'];
 function startSpin(label){
   busy=true; spinStart=Date.now(); let f=0, up=0;
   const el=document.getElementById('spinner'), g=document.getElementById('spin-glyph'), lb=document.getElementById('spin-label'), mt=document.getElementById('spin-meta');
@@ -301,152 +437,233 @@ function startSpin(label){
 }
 function stopSpin(){busy=false;clearInterval(spinTimer);document.getElementById('spinner').classList.remove('on');}
 
-// ── footer / context ──
+// ── footer ──
 function setCtx(pct){ctxPct=pct;const el=document.getElementById('f-ctx');el.textContent=`context ${pct}%`;el.className='seg '+(pct>=90?'ctx-hi':pct>=75?'ctx-warn':'ctx-ok');}
 function setMode(m){
   mode=m;const el=document.getElementById('f-mode');
   el.textContent=m.toUpperCase();el.className='mode '+m;
-  document.getElementById('sig').textContent=m==='plan'?'◑':m==='ask'?'○':'›';
+  updateSig();
   if(m==='plan')addNotice('Plan mode — read-only. I will propose a plan and wait for approval.','warn');
   else if(m==='ask')addNotice('Ask mode — conversational, no file changes.','info');
-  else addNotice('Build mode active.','ok');
+  else addNotice('Build mode — I can read, edit, and run with approvals.','ok');
+}
+function updateSig(){
+  const shell=input.value.startsWith('!');
+  const s=document.getElementById('sig');
+  s.textContent=shell?'!':mode==='plan'?'◑':mode==='ask'?'○':'›';
+  s.className='sig'+(shell?' shell':'');
+}
+function renderQueue(){
+  const has=queue.length>0;
+  document.getElementById('f-qsep').style.display=has?'inline':'none';
+  const q=document.getElementById('f-queue');q.style.display=has?'inline':'none';
+  q.textContent=has?`${queue.length} queued`:'';
 }
 
 // ── command palette ──
 const CMDS=[
-  {c:'/help',d:'List commands'},{c:'/clear',d:'Clear the transcript'},
-  {c:'/model',d:'Switch model'},{c:'/context',d:'Show context breakdown'},
-  {c:'/engine',d:'Context engine status (auto/local/external)'},{c:'/index',d:'Build the workspace index'},
-  {c:'/compact',d:'Compact the conversation'},{c:'/plan',d:'Plan mode'},
-  {c:'/ask',d:'Ask mode'},{c:'/build',d:'Build mode'},
-  {c:'/init',d:'Generate CLAUDE.md / AGENTS.md'},{c:'/theme',d:'Cycle theme'},
-  {c:'/demo',d:'Run demo session'},{c:'/undo',d:'Rewind last checkpoint'},
+  {c:'/help',d:'Keyboard shortcuts & commands'},{c:'/clear',d:'Clear the transcript'},
+  {c:'/model',d:'Show / switch model routes'},{c:'/context',d:'Context window breakdown'},
+  {c:'/engine',d:'Context engine status'},{c:'/index',d:'Build the workspace index'},
+  {c:'/resources',d:'Tools, commands, agents, skills'},{c:'/compact',d:'Compact the conversation'},
+  {c:'/plan',d:'Plan mode (read-only)'},{c:'/ask',d:'Ask mode (chat)'},{c:'/build',d:'Build mode (edit + run)'},
+  {c:'/init',d:'Generate AGENTS.md'},{c:'/theme',d:'Cycle color theme'},
+  {c:'/demo',d:'Run a full demo session'},{c:'/undo',d:'Rewind last checkpoint'},
 ];
-let palItems=[],palIdx=0;
-function showPal(items){palItems=items;palIdx=0;const el=document.getElementById('palette');if(!items.length){el.style.display='none';return;}el.style.display='block';renderPal();}
-function renderPal(){document.getElementById('palette').innerHTML=palItems.map((it,i)=>`<div class="pi${i===palIdx?' active':''}" onclick="pickPal(${i})"><span class="c">${esc(it.c)}</span><span class="d">${esc(it.d)}</span></div>`).join('');}
+const MENTIONS=['src/mw/rate-limit.ts','src/mw/index.ts','bench/burst.js','src/server.ts','package.json','AGENTS.md','tests/rate-limit.test.ts'];
+let palItems=[],palIdx=0,palKind='cmd';
+function showPal(items,kind){palItems=items;palIdx=0;palKind=kind;const el=document.getElementById('palette');if(!items.length){el.style.display='none';return;}el.style.display='block';renderPal();}
+function renderPal(){document.getElementById('palette').innerHTML=palItems.map((it,i)=>`<div class="pi${i===palIdx?' active':''}" onclick="pickPal(${i})"><span class="c">${esc(it.c)}</span><span class="d">${esc(it.d||'')}</span></div>`).join('');}
 function hidePal(){document.getElementById('palette').style.display='none';palItems=[];}
-function pickPal(i){const it=palItems[i];if(!it)return;input.value=it.c+' ';hidePal();input.focus();}
+function pickPal(i){const it=palItems[i];if(!it)return;
+  if(palKind==='mention'){const v=input.value;const at=v.lastIndexOf('@');input.value=v.slice(0,at)+'@'+it.c+' ';}
+  else input.value=it.c+' ';
+  hidePal();input.focus();updateSig();
+}
 
 // ── input ──
 const input=document.getElementById('input'), pbox=document.getElementById('pbox');
 input.addEventListener('focus',()=>pbox.classList.add('focus'));
 input.addEventListener('blur',()=>pbox.classList.remove('focus'));
 input.addEventListener('input',()=>{
+  updateSig();
   const v=input.value;
-  const shell=v.startsWith('!');
-  pbox.classList.toggle('shell',shell);
-  document.getElementById('sig').textContent=shell?'!':mode==='plan'?'◑':mode==='ask'?'○':'›';
-  document.getElementById('sig').className='sig'+(shell?' shell':'');
-  if(v.startsWith('/'))showPal(CMDS.filter(c=>c.c.startsWith(v.split(' ')[0])));else hidePal();
+  const mAt=v.match(/@([^\s]*)$/);
+  if(v.startsWith('/')) showPal(CMDS.filter(c=>c.c.startsWith(v.split(' ')[0])),'cmd');
+  else if(mAt) showPal(MENTIONS.filter(p=>p.includes(mAt[1])).map(p=>({c:p,d:'attach file'})),'mention');
+  else hidePal();
 });
 input.addEventListener('keydown',e=>{
+  // reverse search
+  if(rsOn){
+    if(e.key==='Escape'){e.preventDefault();endReverseSearch(false);return;}
+    if(e.key==='Enter'){e.preventDefault();endReverseSearch(true);return;}
+    if(e.key==='Backspace'){e.preventDefault();rsQuery=rsQuery.slice(0,-1);renderReverseSearch();return;}
+    if(e.key.length===1&&!e.ctrlKey&&!e.metaKey){e.preventDefault();rsQuery+=e.key;renderReverseSearch();return;}
+  }
+  if((e.ctrlKey&&e.key==='r')){e.preventDefault();beginReverseSearch();return;}
+  // palette nav
   if(palItems.length){
     if(e.key==='ArrowDown'){e.preventDefault();palIdx=(palIdx+1)%palItems.length;renderPal();return;}
     if(e.key==='ArrowUp'){e.preventDefault();palIdx=(palIdx-1+palItems.length)%palItems.length;renderPal();return;}
-    if(e.key==='Tab'||e.key==='Enter'){e.preventDefault();pickPal(palIdx);return;}
+    if(e.key==='Tab'){e.preventDefault();pickPal(palIdx);return;}
+    if(e.key==='Enter'){e.preventDefault();pickPal(palIdx);return;}
     if(e.key==='Escape'){hidePal();return;}
   }
-  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();submit();}
-  if(e.key==='Escape'&&busy){stopSpin();if(streamTimer)clearTimeout(streamTimer);addNotice('⎿ Interrupted by user','err');}
+  // history
+  if(e.key==='ArrowUp'&&!input.value.includes('\n')){
+    if(histIdx===-1)draft=input.value;
+    if(histIdx<history.length-1){histIdx++;input.value=history[history.length-1-histIdx];e.preventDefault();updateSig();}
+    return;
+  }
+  if(e.key==='ArrowDown'&&histIdx>=0){
+    histIdx--;input.value=histIdx===-1?draft:history[history.length-1-histIdx];e.preventDefault();updateSig();return;
+  }
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();submit();return;}
+  if(e.key==='Escape'){
+    if(busy){stopSpin();if(streamTimer)clearTimeout(streamTimer);addNotice('⎿ Interrupted','err');}
+    return;
+  }
+  // tab cycles mode when empty
+  if(e.key==='Tab'&&!input.value){e.preventDefault();const order=['build','plan','ask'];setMode(order[(order.indexOf(mode)+1)%3]);}
 });
-function submit(){const v=input.value.trim();if(!v)return;input.value='';pbox.classList.remove('shell');hidePal();handle(v);}
 
+function submit(){
+  const v=input.value.trim();if(!v)return;
+  history.push(v);histIdx=-1;draft='';
+  input.value='';pbox.classList.remove('shell');hidePal();updateSig();
+  if(busy){queue.push(v);renderQueue();addNotice(`↳ queued: ${v}`,'info');return;}
+  handle(v);
+}
+
+// ── reverse search ──
+function beginReverseSearch(){rsOn=true;rsQuery='';document.getElementById('rsearch').classList.add('on');renderReverseSearch();}
+function endReverseSearch(accept){rsOn=false;document.getElementById('rsearch').classList.remove('on');const m=matchHistory();if(accept&&m){input.value=m;}rsQuery='';updateSig();input.focus();}
+function matchHistory(){for(let i=history.length-1;i>=0;i--){if(history[i].includes(rsQuery))return history[i];}return '';}
+function renderReverseSearch(){document.getElementById('rs-q').textContent=rsQuery;document.getElementById('rs-match').textContent=matchHistory()||'(no match)';}
+
+// ── help overlay ──
+function showHelp(){buildHelp();document.getElementById('overlay').classList.add('on');}
+function hideHelp(){document.getElementById('overlay').classList.remove('on');input.focus();}
+function buildHelp(){
+  const kb=[
+    ['⏎','send message'],['shift+⏎','newline'],['tab','cycle mode / accept suggestion'],
+    ['↑ ↓','prompt history'],['ctrl+R','reverse-search history'],['esc','interrupt the agent'],
+    ['/','command palette'],['@','attach a file'],['!','run a shell command'],
+  ];
+  const cm=CMDS.map(c=>[c.c,c.d]);
+  const row=(k,d)=>`<div class="krow"><span>${esc(d)}</span><kbd>${esc(k)}</kbd></div>`;
+  document.getElementById('help-body').innerHTML=
+    `<div class="grp">keyboard</div>${kb.map(([k,d])=>row(k,d)).join('')}`+
+    `<div class="grp">commands</div>${cm.map(([k,d])=>row(k,d)).join('')}`;
+}
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&document.getElementById('overlay').classList.contains('on'))hideHelp();});
+
+// ── copy on click of a user or assistant line ──
+function toast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('on');setTimeout(()=>el.classList.remove('on'),1100);}
+
+// ── command handling ──
 function cmd(c){handle(c);}
 function handle(v){
-  if(v.startsWith('!')){addUser(v);addTool('⚡','Bash',v.slice(1),'(shell output)',[ ],'ok','40ms');return;}
+  if(v.startsWith('!')){addUser(v);addTool('⚡','Bash',v.slice(1),'exit 0',['(shell output streamed here)'],'ok','40ms');drainQueue();return;}
   if(v.startsWith('/')){
     const c=v.split(' ')[0];
     switch(c){
-      case '/clear':T.innerHTML='';setCtx(0);banner();return;
-      case '/help':addNotice('Commands: '+CMDS.map(x=>x.c).join('  '),'info');return;
-      case '/plan':setMode('plan');return;
-      case '/ask':setMode('ask');return;
-      case '/build':setMode('build');return;
-      case '/theme':{const n=Object.keys(THEMES);setTheme(n[(n.indexOf(curTheme)+1)%n.length]);addNotice('Theme: '+curTheme,'ok');return;}
-      case '/context':addNotice('Context: 42% · 18k active · 4k tools · pinned: rate-limit.ts, index.ts (survives compaction)','info');addContext('contextengine',6,'2.1k',null);return;
-      case '/compact':addNotice('✓ Compacted — 8 older messages summarized into ~4k tokens.','ok');setCtx(Math.max(0,ctxPct-30));return;
-      case '/model':addNotice('Model routes → plan: claude-opus · edit: gpt-5-codex · embed: local-bge','info');return;
-      case '/index':addNotice('Indexing workspace… 42 files, 318 chunks written to .skein/index.json','ok');addContext('contextengine',0,'0',null);return;
-      case '/engine':addNotice('Context engine: auto · external ContextEngine v0.4.2 healthy, indexed · local fallback ready','info');return;
-      case '/init':addNotice('✓ Generated AGENTS.md from project structure (42 files scanned).','ok');return;
-      case '/undo':addNotice('↩ Rolled back to checkpoint #3 — 2 files restored.','warn');return;
+      case '/clear':T.innerHTML='';setCtx(0);banner();break;
+      case '/help':showHelp();break;
+      case '/plan':setMode('plan');break;
+      case '/ask':setMode('ask');break;
+      case '/build':setMode('build');break;
+      case '/theme':{const n=Object.keys(THEMES);setTheme(n[(n.indexOf(curTheme)+1)%n.length]);addNotice('Theme: '+curTheme,'ok');break;}
+      case '/context':panelContext();break;
+      case '/compact':addNotice('✓ Compacted — 8 older messages summarized into ~4k tokens. Pinned files kept.','ok');setCtx(Math.max(0,ctxPct-30));break;
+      case '/model':addNotice('Routes → plan: claude-opus · edit: gpt-5-codex · embed: local-bge','info');break;
+      case '/index':addNotice('Indexing…','info');startSpin('Indexing');setTimeout(()=>{stopSpin();addNotice('✓ Indexed 42 files · 318 chunks → .skein/index.json','ok');panelEngine();drainQueue();},1400);return;
+      case '/engine':panelEngine();break;
+      case '/resources':panelResources();break;
+      case '/init':addNotice('✓ Generated AGENTS.md from project structure (42 files scanned).','ok');break;
+      case '/undo':addNotice('↩ Rolled back to checkpoint #3 — 2 files restored.','warn');break;
       case '/demo':runDemo();return;
-      default:addNotice('Unknown command: '+c,'err');return;
+      default:addNotice('Unknown command: '+c,'err');
     }
+    drainQueue();return;
   }
   // normal turn
   addUser(v);
-  startSpin('Thinking');
+  startSpin('Retrieving context');
   setTimeout(()=>{
     stopSpin();
     addContext('contextengine',6,'2.0k',null);
-    addTool('⏺','Search',v.slice(0,32),'Found 6 matches across 4 files',['src/mw/rate-limit.ts:12','src/mw/index.ts:88','bench/burst.js:4'],'ok','120ms');
-    setCtx(28);
+    addTool('⌕','Search',v.slice(0,32),'Found 6 matches across 4 files',['src/mw/rate-limit.ts:12','src/mw/index.ts:88','bench/burst.js:4'],'ok','120ms');
+    setCtx(Math.min(90,ctxPct+28));
     startSpin('Responding');
     setTimeout(()=>{
       stopSpin();
       const a=addAsst();
-      streamInto(a,"I'll read the relevant code and trace this.\n\n- Inspect the failing path\n- Find the minimal fix\n- Verify with the project's tests",()=>setCtx(34));
-    },1200);
-  },1400);
+      streamInto(a,"I'll read the relevant code and trace this.\n\n- Inspect the failing path\n- Find the minimal fix\n- Verify with the project's tests",()=>{setCtx(Math.min(90,ctxPct+6));drainQueue();});
+    },1100);
+  },1200);
 }
+function drainQueue(){if(!queue.length)return;const next=queue.shift();renderQueue();setTimeout(()=>handle(next),350);}
 
-// ── welcome banner ──
+// ── banner ──
 function banner(){
   const d=blk('');
-  d.innerHTML=`<div class="banner"><div class="b1">◆ Skein</div><div class="b2">terminal coding agent · v0.4</div>
-cwd: ~/proj/api · model: anthropic/claude-opus · <a href="#" onclick="cmd('/help');return false">/help</a> for commands
-Try <b style="color:var(--accent)">▶ demo</b> above, or type a request below.</div>`;
+  const art=[
+    " ___ _         _      ",
+    "/ __| |_____ _(_)_ _  ",
+    "\\__ \\ / / -_) | | ' \\ ",
+    "|___/_\\_\\___|_|_|_||_|",
+  ].join('\n');
+  d.innerHTML=`<div class="banner">
+    <div class="logowrap">
+      <div class="glyphart">${art}</div>
+      <div class="tagline"><div class="t1">◆ Skein</div><div class="t2">a terminal coding agent you can see through</div></div>
+    </div>
+    <div class="meta">cwd <b onclick="return false" style="cursor:default;color:var(--dim)">~/proj/api</b> · model anthropic/claude-opus · engine auto (ContextEngine v0.4.2)
+<span class="kbd">Type a request · <b onclick="showHelp()">/help</b> for keys · <b onclick="runDemo()">▶ demo</b> for a full session</span></div>
+  </div>`;
 }
 
-// ── demo: the rate-limit bug, as a real CLI session ──
+// ── demo: multi-scenario ──
 function runDemo(){
-  T.innerHTML='';setCtx(0);cost=0;banner();
+  hideHelp();stopSpin();if(streamTimer)clearTimeout(streamTimer);
+  T.innerHTML='';setCtx(0);queue=[];renderQueue();banner();
   let t=0;const at=(ms,fn)=>{t+=ms;setTimeout(fn,t);};
 
   at(300,()=>addUser('the /limit endpoint returns 500 under load — find the root cause and fix it, keep it minimal'));
   at(400,()=>startSpin('Retrieving context'));
   at(900,()=>{stopSpin();addContext('auto',7,'2.4k','rerank channel unavailable');setCtx(14);});
   at(300,()=>startSpin('Thinking'));
-  at(1400,()=>{stopSpin();
-    const a=addAsst();
-    streamInto(a,"I'll reproduce it, trace the rate limiter, then patch the smallest thing that fixes it.");
-  });
-  at(1400,()=>addTodo([['done','Reproduce with a burst of 200 req/s'],['now','Inspect token-bucket refill math'],['','Patch + add a regression test']]));
-  at(600,()=>{startSpin('Reading');});
-  at(900,()=>{stopSpin();addTool('⏺','Read','src/mw/rate-limit.ts','Read 68 lines',['export function applyLimiter(req, res, next) {','  const now = Date.now();','  const elapsed = now - bucket.last;','  tokens += Math.floor(elapsed / refillMs);','  ...'],'ok','42ms');setCtx(22);});
-  at(500,()=>{startSpin('Running');});
+  at(1300,()=>{stopSpin();const a=addAsst();streamInto(a,"I'll reproduce it, trace the rate limiter, then patch the smallest thing that fixes it.");});
+  at(1300,()=>addTodo([['done','Reproduce with a burst of 200 req/s'],['now','Inspect token-bucket refill math'],['','Patch + add a regression test']]));
+  at(600,()=>startSpin('Reading'));
+  at(900,()=>{stopSpin();addTool('⏺','Read','src/mw/rate-limit.ts','Read 68 lines',['export function applyLimiter(req, res, next) {','  const now = Date.now();','  const elapsed = now - bucket.last;','  tokens += Math.floor(elapsed / refillMs);','  bucket.count = tokens;','}'],'ok','42ms');setCtx(22);});
+  at(500,()=>startSpin('Running'));
   at(1100,()=>{stopSpin();addTool('⚡','Bash','node bench/burst.js','500s begin at ~180 req/s — bucket count goes negative',['  100 req/s → 200 OK','  150 req/s → 200 OK','  180 req/s → 500 (bucket=-3)','  200 req/s → 500 (bucket=-11)'],'ok','1.8s');setCtx(31);});
-  at(700,()=>{startSpin('Thinking');});
-  at(1500,()=>{stopSpin();
-    const a=addAsst();
-    streamInto(a,"Root cause: refill uses `Math.floor` on elapsed ms, so sub-tick refills round to zero while the bucket keeps draining — it underflows and every request 500s. Fix: refill with fractional tokens and clamp at zero.",()=>setCtx(38));
-  });
-  at(1600,()=>{
-    addDiff('src/mw/rate-limit.ts',3,2,[
-      ['ctx','const elapsed = now - bucket.last;'],
-      ['del','tokens += Math.floor(elapsed / refillMs);'],
-      ['del','bucket.count = tokens;'],
-      ['add','tokens += (elapsed / refillMs) * rate;'],
-      ['add','bucket.count = Math.min(capacity, Math.max(0, tokens));'],
-      ['add','bucket.last = now;'],
-    ]);
-  });
-  at(300,()=>{
-    const p=addPerm('Apply this edit to src/mw/rate-limit.ts?',()=>{
-      startSpin('Verifying');
-      setTimeout(()=>{stopSpin();addTool('⚡','Bash','npm test -- rate-limit','14 passed, 0 failed',['✓ refills fractionally under load','✓ never goes negative','✓ caps at capacity'],'ok','2.1s');setCtx(41);
-        const a=addAsst();streamInto(a,"Done. The bucket now refills fractionally and clamps at zero — burst test holds 200 OK through 250 req/s. One-line-equivalent fix, regression test added.");
-      },2200);
-    });
-  });
+  at(700,()=>startSpin('Thinking'));
+  at(1500,()=>{stopSpin();const a=addAsst();streamInto(a,"Root cause: refill uses `Math.floor` on elapsed ms, so sub-tick refills round to zero while the bucket keeps draining — it underflows and every request 500s. Fix: refill with fractional tokens and clamp at zero.",()=>setCtx(38));});
+  at(1600,()=>addDiff('src/mw/rate-limit.ts',3,2,[
+    ['ctx','const elapsed = now - bucket.last;'],
+    ['del','tokens += Math.floor(elapsed / refillMs);'],
+    ['del','bucket.count = tokens;'],
+    ['add','tokens += (elapsed / refillMs) * rate;'],
+    ['add','bucket.count = Math.min(capacity, Math.max(0, tokens));'],
+    ['add','bucket.last = now;'],
+  ]));
+  at(300,()=>addPerm('Apply this edit to src/mw/rate-limit.ts?',()=>{
+    startSpin('Verifying');
+    setTimeout(()=>{stopSpin();
+      addTool('⚡','Bash','npm test -- rate-limit','14 passed, 0 failed',['✓ refills fractionally under load','✓ never goes negative','✓ caps at capacity'],'ok','2.1s');setCtx(41);
+      const a=addAsst();streamInto(a,"Done. The bucket now refills fractionally and clamps at zero — the burst test holds 200 OK through 250 req/s. Minimal fix, regression test added.\n\n- `src/mw/rate-limit.ts` +3 −2\n- `tests/rate-limit.test.ts` +1 case");
+    },2200);
+  }));
 }
 
 // ── init ──
 setTheme('graphite');
 banner();
-addNotice('Tip: press ▶ demo to watch a full session, or just start typing.','info');
+addNotice('Tip: ▶ demo watches a full session · /help for keys · ↑ recalls history · ctrl+R searches it.','info');
 input.focus();
 </script>
 </body>
