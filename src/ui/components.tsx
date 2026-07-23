@@ -29,7 +29,8 @@ export type TimelineItem =
   | {id: string; kind: 'context-inspector'; status: ContextInspectorStatus; working?: WorkingMemory; summary?: string; sources?: ContextSource[]}
   | {id: string; kind: 'theme'; name: string}
   | {id: string; kind: 'banner'; model: string; engine: string; workspace: string; version: string}
-  | {id: string; kind: 'notice'; text: string; tone?: 'info' | 'error' | 'success'};
+  | {id: string; kind: 'notice'; text: string; tone?: 'info' | 'error' | 'success'}
+  | {id: string; kind: 'update'; current: string; latest: string; command: string};
 
 export interface ListEntry {
   label: string;
@@ -420,6 +421,9 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
         if (item.kind === 'theme') return <ThemePreview key={item.id} name={item.name} width={width} glyphs={glyphs} />;
         if (item.kind === 'banner') {
           return <Banner key={item.id} model={item.model} engine={item.engine} workspace={item.workspace} version={item.version} width={width} glyphs={glyphs} />;
+        }
+        if (item.kind === 'update') {
+          return <UpdateNotice key={item.id} current={item.current} latest={item.latest} command={item.command} width={width} glyphs={glyphs} />;
         }
         const color = item.tone === 'error'
           ? theme.error
@@ -1262,6 +1266,40 @@ function Banner({model, engine, workspace, version, width, glyphs}: {
       <Text color={theme.muted}>{truncateDisplay(`v${version} ${glyphs.separator} ${tagline}`, innerWidth)}</Text>
       <Text color={theme.dim}>{truncateDisplay(meta, innerWidth)}</Text>
       <Text color={theme.dim}>{truncateDisplay(`type a request ${glyphs.separator} /help for commands ${glyphs.separator} @ to attach files`, innerWidth)}</Text>
+    </Box>
+  );
+}
+
+function UpdateNotice({current, latest, command, width, glyphs}: {
+  current: string;
+  latest: string;
+  command: string;
+  width: number;
+  glyphs: UiGlyphs;
+}) {
+  const theme = useTheme();
+  // A single restrained line: the arrow-up marker draws the eye, the version
+  // delta reads left-to-right (dim old → green new), and the copy-paste upgrade
+  // command trails in dim so it never competes with the transcript below.
+  const parts = [
+    {text: glyphs.up, color: theme.accent, bold: true},
+    {text: ' a new version is available  ', color: theme.text, bold: false},
+    {text: `v${current}`, color: theme.dim, bold: false},
+    {text: ` ${glyphs.arrow} `, color: theme.muted, bold: false},
+    {text: `v${latest}`, color: theme.success, bold: true},
+    {text: `   ${command}`, color: theme.dim, bold: false},
+  ];
+  const rendered = truncateDisplay(parts.map((part) => part.text).join(''), safeWidth(width));
+  // When the line fits, render the multi-colour spans; if truncation kicked in
+  // we fall back to a single dim line so no span is left dangling mid-word.
+  const truncated = rendered.length < parts.map((part) => part.text).join('').length;
+  return (
+    <Box marginBottom={1}>
+      {truncated
+        ? <Text color={theme.muted}>{rendered}</Text>
+        : parts.map((part, index) => (
+          <Text key={index} color={part.color} bold={part.bold}>{part.text}</Text>
+        ))}
     </Box>
   );
 }

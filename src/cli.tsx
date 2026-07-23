@@ -58,6 +58,7 @@ import {
   recoverProjectNamespace,
   resolveProjectNamespaceSync,
 } from './utils/namespace.js';
+import {refreshUpdateCache, updateNoticeText, upgradeCommand, type UpdateNotice} from './utils/update-check.js';
 import {PRODUCT_NAME, PRODUCT_COMMAND} from './brand.js';
 import {PLAN_MODE_INSTRUCTIONS} from './agent/prompt.js';
 import packageJson from '../package.json' with {type: 'json'};
@@ -239,10 +240,17 @@ program
     const engine = new ContextEngine(config);
     const status = await engine.status();
     const namespace = resolveProjectNamespaceSync(config.workspaceRoots[0] ?? process.cwd());
+    // status is a diagnostic surface and the only path that refreshes the update
+    // cache for pure-CLI users who never open the TUI. Bounded, interval-gated,
+    // and non-fatal; a null result just means "up to date or offline".
+    const update = await refreshUpdateCache(packageJson.version).catch(() => undefined);
     if (options.json === true) {
-      printObject({config: configSummary(config), context: status, namespace}, true);
+      const updateJson = update
+        ? {current: update.current, latest: update.latest, command: update.command}
+        : {current: packageJson.version, latest: null, command: upgradeCommand()};
+      printObject({config: configSummary(config), context: status, namespace, update: updateJson}, true);
     } else {
-      printStatusSummary(config, status, namespace);
+      printStatusSummary(config, status, namespace, update);
     }
   });
 
@@ -1230,6 +1238,7 @@ function printStatusSummary(
   config: MosaicConfig,
   context: Record<string, unknown>,
   namespace: {activeKind: 'canonical' | 'legacy'; phase: string; active: string},
+  update?: UpdateNotice,
 ): void {
   const glyphs = cliGlyphs;
   const dim = (text: string): string => chalk.dim(text);
@@ -1275,6 +1284,7 @@ function printStatusSummary(
       : `${namespaceName} (legacy; run ${PRODUCT_COMMAND} migrate --yes before removal)`;
   const storageReady = namespace.activeKind === 'canonical' || namespace.phase === 'active';
   line(storageReady ? 'ok' : 'warn', 'Storage', storageDetail);
+  line(update ? 'warn' : 'ok', 'Version', update ? updateNoticeText(update) : `v${packageJson.version} (up to date)`);
   process.stdout.write(`\n${dim(`Run ${PRODUCT_COMMAND} status --json for the full machine-readable record.`)}\n`);
 }
 

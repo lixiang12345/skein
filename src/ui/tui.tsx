@@ -48,6 +48,7 @@ import {
   type TimelineItem,
 } from './components.js';
 import {commandDefinitions, commandSuggestions} from './commands.js';
+import {refreshUpdateCache, resolveCachedUpdateNotice, type UpdateNotice} from '../utils/update-check.js';
 import {ComposerInput} from './composer.js';
 import {
   createHistorySearchState,
@@ -215,6 +216,37 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   useEffect(() => {
     setSuggestionIndex(0);
   }, [input]);
+
+  // Surface an "update available" line on fresh sessions only. A cached result
+  // paints on the first frame with zero latency; a background refresh (bounded,
+  // fire-and-forget) can upgrade the line mid-session if the registry answers
+  // while the TUI is open. The notice slots directly under the banner and is
+  // de-duplicated by target version, so neither path can double-insert.
+  useEffect(() => {
+    let cancelled = false;
+    const showNotice = (notice: UpdateNotice | undefined): void => {
+      if (cancelled || !notice) return;
+      setTimeline((items) => {
+        const bannerIndex = items.findIndex((item) => item.kind === 'banner');
+        if (bannerIndex === -1) return items; // resumed session: no banner, stay quiet
+        const existing = items.find((item) => item.kind === 'update');
+        if (existing) {
+          if (existing.kind === 'update' && existing.latest === notice.latest) return items;
+          return items.map((item) => (item === existing
+            ? {id: item.id, kind: 'update' as const, current: notice.current, latest: notice.latest, command: notice.command}
+            : item));
+        }
+        const next = items.slice();
+        next.splice(bannerIndex + 1, 0, {id: nextId(), kind: 'update', current: notice.current, latest: notice.latest, command: notice.command});
+        return next;
+      });
+    };
+    void resolveCachedUpdateNotice(packageJson.version).then(showNotice);
+    void refreshUpdateCache(packageJson.version).then(showNotice);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (suggestionMode !== 'mention' || !mentionToken) {
