@@ -8,6 +8,8 @@ import {
   inspectHomeNamespace,
   inspectHomeRecovery,
   inspectProjectRecovery,
+  legacyCompatibilityStatus,
+  LEGACY_COMPATIBILITY_POLICY,
   migrateHomeNamespace,
   migrateProjectNamespace,
   recoverHomeNamespace,
@@ -26,6 +28,33 @@ async function workspace(): Promise<string> {
 }
 
 describe('storage namespace migration', () => {
+  it('defines and measures the legacy alias compatibility window', async () => {
+    const root = await workspace();
+    await mkdir(join(root, '.mosaic'));
+    const projectNamespace = await inspectProjectNamespace(root);
+    const status = legacyCompatibilityStatus({
+      projectNamespace,
+      environment: {MOSAIC_MODEL: 'legacy-model'},
+    });
+    expect(LEGACY_COMPATIBILITY_POLICY).toEqual({
+      deprecatedIn: '0.3.0',
+      pendingRemovalIn: '0.4.0',
+      removedIn: '0.5.0',
+    });
+    expect(status).toMatchObject({
+      release: '0.2.0',
+      phase: 'active',
+      inUse: true,
+      legacyPaths: [{scope: 'project', path: join(root, '.mosaic')}],
+      legacyEnvironmentVariables: ['MOSAIC_MODEL'],
+    });
+    expect(legacyCompatibilityStatus({release: '0.3.0'}).phase).toBe('deprecated');
+    expect(legacyCompatibilityStatus({release: '0.4.0'}).phase).toBe('pending-removal');
+    expect(legacyCompatibilityStatus({
+      environment: {MOSAIC_MODEL: 'legacy', SKEIN_MODEL: 'canonical'},
+    }).legacyEnvironmentVariables).toEqual([]);
+  });
+
   it('reports an empty workspace as migration-complete without creating state', async () => {
     const root = await workspace();
     const status = await resolveProjectNamespace(root);

@@ -142,7 +142,9 @@ export class HeadlessReporter {
       case 'permission':
       case 'skill':
       case 'memory':
+      case 'agent_queued':
       case 'agent_start':
+      case 'agent_cancelled':
       case 'agent_done':
       case 'workflow':
       case 'context_compacted':

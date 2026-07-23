@@ -5,11 +5,33 @@ import {homedir} from 'node:os';
 import {basename, dirname, isAbsolute, join, relative, resolve} from 'node:path';
 import {isInside} from './path.js';
 import {withNamespaceLease} from './namespace-lease.js';
+import packageJson from '../../package.json' with {type: 'json'};
 
 export const CANONICAL_PROJECT_NAMESPACE = '.skein';
 export const LEGACY_PROJECT_NAMESPACE = '.mosaic';
 export const CANONICAL_HOME_NAMESPACE = '.skein';
 export const LEGACY_HOME_NAMESPACE = '.mosaic';
+/**
+ * Legacy `.mosaic` paths and `MOSAIC_*` environment variables remain supported
+ * through this release. Users must migrate to `.skein`/`SKEIN_*` after it.
+ */
+export const LEGACY_NAMESPACE_SUPPORTED_UNTIL = '0.4.0';
+export const LEGACY_COMPATIBILITY_POLICY = {
+  deprecatedIn: '0.3.0',
+  pendingRemovalIn: LEGACY_NAMESPACE_SUPPORTED_UNTIL,
+  removedIn: '0.5.0',
+} as const;
+export const LEGACY_ENV_ALIASES = {
+  MOSAIC_HOME: 'SKEIN_HOME',
+  MOSAIC_PROVIDER: 'SKEIN_PROVIDER',
+  MOSAIC_MODEL: 'SKEIN_MODEL',
+  MOSAIC_BASE_URL: 'SKEIN_BASE_URL',
+  MOSAIC_API_KEY: 'SKEIN_API_KEY',
+  MOSAIC_GLYPHS: 'SKEIN_GLYPHS',
+  MOSAIC_THEME_DIR: 'SKEIN_THEME_DIR',
+  MOSAIC_HOOK_STAGE: 'SKEIN_HOOK_STAGE',
+  MOSAIC_WORKSPACE: 'SKEIN_WORKSPACE',
+} as const;
 const MAX_MANIFEST_BYTES = 16 * 1024 * 1024;
 const MIGRATION_MANIFEST_NAME = 'migration-manifest.json';
 
@@ -81,6 +103,80 @@ export interface NamespaceRecoveryInspection {
   destination: string;
   status: 'clean' | 'ready' | 'blocked' | 'recovered';
   candidates: NamespaceRecoveryCandidate[];
+}
+
+export type LegacyCompatibilityPhase = 'active' | 'deprecated' | 'pending-removal';
+
+export interface LegacyCompatibilityStatus {
+  release: string;
+  phase: LegacyCompatibilityPhase;
+  supportedUntil: string;
+  deprecatedIn: string;
+  pendingRemovalIn: string;
+  removedIn: string;
+  inUse: boolean;
+  legacyPaths: Array<{scope: 'project' | 'home'; path: string}>;
+  legacyEnvironmentVariables: string[];
+}
+
+export interface LegacyCompatibilityInput {
+  projectNamespace?: Pick<NamespaceMigrationManifest, 'source' | 'sourceExists' | 'destinationExists' | 'status'>;
+  homeNamespace?: Pick<NamespaceMigrationManifest, 'source' | 'sourceExists' | 'destinationExists' | 'status'>;
+  environment?: NodeJS.ProcessEnv;
+  release?: string;
+}
+
+/** Reports use of supported legacy aliases without exposing environment values. */
+export function legacyCompatibilityStatus(input: LegacyCompatibilityInput = {}): LegacyCompatibilityStatus {
+  const release = input.release ?? packageJson.version;
+  const environment = input.environment ?? process.env;
+  const legacyPaths: LegacyCompatibilityStatus['legacyPaths'] = [];
+  if (legacyNamespaceIsActive(input.projectNamespace)) {
+    legacyPaths.push({scope: 'project', path: input.projectNamespace.source});
+  }
+  if (legacyNamespaceIsActive(input.homeNamespace)) {
+    legacyPaths.push({scope: 'home', path: input.homeNamespace.source});
+  }
+  const legacyEnvironmentVariables = Object.entries(LEGACY_ENV_ALIASES)
+    .filter(([legacy, canonical]) => Boolean(environment[legacy]?.trim()) && !environment[canonical]?.trim())
+    .map(([legacy]) => legacy)
+    .sort();
+  return {
+    release,
+    phase: compatibilityPhase(release),
+    supportedUntil: LEGACY_NAMESPACE_SUPPORTED_UNTIL,
+    ...LEGACY_COMPATIBILITY_POLICY,
+    inUse: legacyPaths.length > 0 || legacyEnvironmentVariables.length > 0,
+    legacyPaths,
+    legacyEnvironmentVariables,
+  };
+}
+
+function legacyNamespaceIsActive(
+  namespace: LegacyCompatibilityInput['projectNamespace'] | LegacyCompatibilityInput['homeNamespace'],
+): namespace is Pick<NamespaceMigrationManifest, 'source' | 'sourceExists' | 'destinationExists' | 'status'> {
+  return namespace?.status === 'ready';
+}
+
+function compatibilityPhase(release: string): LegacyCompatibilityPhase {
+  if (compareReleases(release, LEGACY_COMPATIBILITY_POLICY.pendingRemovalIn) >= 0) return 'pending-removal';
+  if (compareReleases(release, LEGACY_COMPATIBILITY_POLICY.deprecatedIn) >= 0) return 'deprecated';
+  return 'active';
+}
+
+function compareReleases(left: string, right: string): number {
+  const leftParts = releaseParts(left);
+  const rightParts = releaseParts(right);
+  for (let index = 0; index < 3; index += 1) {
+    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+function releaseParts(release: string): number[] {
+  const match = release.trim().replace(/^v/u, '').match(/^(\d+)\.(\d+)\.(\d+)/u);
+  return match ? match.slice(1).map(Number) : [0, 0, 0];
 }
 
 async function isDirectory(path: string): Promise<boolean> {

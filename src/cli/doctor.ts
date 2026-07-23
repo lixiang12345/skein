@@ -12,6 +12,7 @@ import {
   inspectHomeRecovery,
   inspectProjectNamespace,
   inspectProjectRecovery,
+  legacyCompatibilityStatus,
 } from '../utils/namespace.js';
 
 interface Check {
@@ -37,6 +38,7 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
   let homeNamespace: Awaited<ReturnType<typeof inspectHomeNamespace>> | undefined;
   let namespaceRecovery: Awaited<ReturnType<typeof inspectProjectRecovery>> | undefined;
   let homeRecovery: Awaited<ReturnType<typeof inspectHomeRecovery>> | undefined;
+  let legacyCompatibility: ReturnType<typeof legacyCompatibilityStatus>;
   try {
     namespace = await inspectProjectNamespace(root);
     checks.push({
@@ -48,7 +50,7 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
           ? `conflict in ${namespace.conflicts.length} path(s); migration paused`
           : !namespace.sourceExists && !namespace.destinationExists
             ? `no durable state yet; first write uses ${namespace.source}`
-            : `active ${namespace.destinationExists ? namespace.destination : namespace.source}; migration ${namespace.status}`,
+            : `canonical .skein namespace active at ${namespace.destination}`,
       required: false,
     });
   } catch (error) {
@@ -88,7 +90,7 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
           ? `conflict in ${homeNamespace.conflicts.length} path(s); migration paused`
           : !homeNamespace.sourceExists && !homeNamespace.destinationExists
             ? `no user state yet; first write uses ${homeNamespace.source}`
-            : `active ${homeNamespace.destinationExists ? homeNamespace.destination : homeNamespace.source}; migration ${homeNamespace.status}`,
+            : `canonical .skein namespace active at ${homeNamespace.destination}`,
       required: false,
     });
   } catch (error) {
@@ -114,6 +116,30 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
       name: 'User storage recovery',
       ok: false,
       detail: error instanceof Error ? error.message : String(error),
+      required: false,
+    });
+  }
+  legacyCompatibility = legacyCompatibilityStatus({
+    ...(namespace ? {projectNamespace: namespace} : {}),
+    ...(homeNamespace ? {homeNamespace} : {}),
+  });
+  if (legacyCompatibility.inUse) {
+    const migrationCommands = [
+      ...(legacyCompatibility.legacyPaths.some(({scope}) => scope === 'project')
+        ? [`${PRODUCT_COMMAND} migrate --yes`]
+        : []),
+      ...(legacyCompatibility.legacyPaths.some(({scope}) => scope === 'home')
+        ? [`${PRODUCT_COMMAND} migrate --home --yes`]
+        : []),
+    ];
+    const sources = [
+      ...legacyCompatibility.legacyPaths.map(({scope, path}) => `${scope} path ${path}`),
+      ...legacyCompatibility.legacyEnvironmentVariables.map((name) => `environment ${name}`),
+    ];
+    checks.push({
+      name: 'Legacy compatibility',
+      ok: false,
+      detail: `${sources.join(', ')}; legacy .mosaic paths and MOSAIC_* variables are supported through v${legacyCompatibility.supportedUntil}, deprecated in ${legacyCompatibility.deprecatedIn}, and removed in ${legacyCompatibility.removedIn}; ${migrationCommands.length ? `run ${migrationCommands.join(' and ')}; ` : ''}replace MOSAIC_* variables with SKEIN_*`,
       required: false,
     });
   }
@@ -238,6 +264,7 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
       ...(homeNamespace ? {homeNamespace} : {}),
       ...(namespaceRecovery ? {namespaceRecovery} : {}),
       ...(homeRecovery ? {homeRecovery} : {}),
+      legacyCompatibility,
     }, null, 2)}\n`);
   } else {
     process.stdout.write(`${chalk.hex('#A78BFA').bold(`${glyphs.brand} ${PRODUCT_NAME.toUpperCase()} DOCTOR`)}\n\n`);
