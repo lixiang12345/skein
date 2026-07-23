@@ -47,7 +47,7 @@ archive it describes.
 The final verification included a fresh install and real PTY interaction for
 all three executable aliases, `/about`, a permission prompt, denial, and clean
 Ctrl+C exit. PTY coverage included 20, 24 ASCII, 40, 80, 120 columns and a
-40x10 short-height case. The current suite contains 30 test files and 234 tests.
+40x10 short-height case. The current suite contains 31 test files and 243 tests.
 
 ## Recommended Order
 
