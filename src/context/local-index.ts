@@ -237,12 +237,14 @@ export class LocalContextIndex {
     if (!chunks.length) return [];
     const terms = tokenize(query);
     if (!terms.length) return [];
-    const documentFrequency = new Map<string, number>();
-    for (const term of new Set(terms)) {
-      documentFrequency.set(
-        term,
-        chunks.reduce((count, chunk) => count + (chunk.tokens.includes(term) ? 1 : 0), 0),
-      );
+    const queryTerms = new Set(terms);
+    const documentFrequency = new Map([...queryTerms].map((term) => [term, 0]));
+    for (const chunk of chunks) {
+      for (const term of new Set(chunk.tokens)) {
+        if (queryTerms.has(term)) {
+          documentFrequency.set(term, (documentFrequency.get(term) ?? 0) + 1);
+        }
+      }
     }
     const averageLength = chunks.reduce((sum, chunk) => sum + chunk.tokens.length, 0)
       / Math.max(chunks.length, 1);
@@ -290,28 +292,28 @@ export function packContextHits(
   maxTokens: number,
   engine: string,
 ): PackedContext {
-    let estimatedTokens = 0;
-    let truncated = false;
-    const selected: ContextHit[] = [];
-    for (const hit of hits) {
-      const tokens = Math.ceil(hit.content.length / 4);
-      if (estimatedTokens + tokens > maxTokens) {
-        const remainingChars = Math.max(0, (maxTokens - estimatedTokens) * 4);
-        if (remainingChars > 200) {
-          selected.push({...hit, content: hit.content.slice(0, remainingChars)});
-          estimatedTokens = maxTokens;
-        }
-        truncated = true;
-        break;
+  let estimatedTokens = 0;
+  let truncated = false;
+  const selected: ContextHit[] = [];
+  for (const hit of hits) {
+    const tokens = Math.ceil(hit.content.length / 4);
+    if (estimatedTokens + tokens > maxTokens) {
+      const remainingChars = Math.max(0, (maxTokens - estimatedTokens) * 4);
+      if (remainingChars > 200) {
+        selected.push({...hit, content: hit.content.slice(0, remainingChars)});
+        estimatedTokens = maxTokens;
       }
-      selected.push(hit);
-      estimatedTokens += tokens;
+      truncated = true;
+      break;
     }
-    const text = selected.map((hit) => {
-      const shownPath = workspaceAliasPath(hit.path, roots);
-      return `<code path="${escapeAttribute(shownPath)}" lines="${hit.startLine}-${hit.endLine}" score="${hit.score.toFixed(3)}">\n${hit.content}\n</code>`;
-    }).join('\n\n');
-    return {text, hits: selected, estimatedTokens, engine, truncated};
+    selected.push(hit);
+    estimatedTokens += tokens;
+  }
+  const text = selected.map((hit) => {
+    const shownPath = workspaceAliasPath(hit.path, roots);
+    return `<code path="${escapeAttribute(shownPath)}" lines="${hit.startLine}-${hit.endLine}" score="${hit.score.toFixed(3)}">\n${hit.content}\n</code>`;
+  }).join('\n\n');
+  return {text, hits: selected, estimatedTokens, engine, truncated};
 }
 
 function escapeAttribute(value: string): string {

@@ -26,7 +26,7 @@ export type TimelineItem =
   | {id: string; kind: 'workflow'; name: string; step: string; status: SessionTask['status']}
   | {id: string; kind: 'compaction'; messages: number; tokens: number}
   | {id: string; kind: 'list'; title: string; entries: ListEntry[]}
-  | {id: string; kind: 'context-inspector'; status: ContextInspectorStatus; working?: WorkingMemory; summary?: string}
+  | {id: string; kind: 'context-inspector'; status: ContextInspectorStatus; working?: WorkingMemory; summary?: string; sources?: ContextSource[]}
   | {id: string; kind: 'theme'; name: string}
   | {id: string; kind: 'notice'; text: string; tone?: 'info' | 'error' | 'success'};
 
@@ -1147,7 +1147,7 @@ export function ContextInspector({status, working, summary, width, memory, conne
     const pinnedTokens = pinned.reduce((sum, source) => sum + source.tokens, 0);
     const names = pinned.map((source) => compactDisplayPath(sanitizeInlineTerminalText(source.path), 28)).join(` ${glyphs.separator} `);
     entries.push({
-      label: `pinned ${pinned.length}${muted.length ? `${glyphs.separator}${muted.length} muted` : ''}`,
+      label: `pinned ${pinned.length}${muted.length ? ` ${glyphs.separator} ${muted.length} muted` : ''}`,
       detail: pinned.length
         ? `~${formatTokens(pinnedTokens)} tokens ${glyphs.separator} survives compaction ${glyphs.separator} ${names}`
         : `${muted.length} muted ${glyphs.separator} 0 tokens`,

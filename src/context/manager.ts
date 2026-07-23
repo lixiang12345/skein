@@ -59,9 +59,7 @@ export class ContextManager {
     const active = activeMessages(session);
     const activeTokens = estimateMessages(active);
     const summaryTokens = estimateTokens(session.contextSummary ?? '');
-    const toolTokens = active
-      .filter((message) => message.role === 'tool')
-      .reduce((sum, message) => sum + estimateTokens(message.content), 0);
+    const toolTokenCount = toolTokens(active);
     const contextLimit = Math.max(
       8_000,
       modelContextTokens ?? Math.min(100_000, this.config.context.maxTokens * 3),
@@ -73,7 +71,7 @@ export class ContextManager {
     return {
       activeTokens,
       summaryTokens,
-      toolTokens,
+      toolTokens: toolTokenCount,
       messageCount: active.length,
       compactedMessages,
       pressure: Math.min(1, (activeTokens + summaryTokens) / contextLimit),
@@ -84,11 +82,9 @@ export class ContextManager {
     const active = activeMessages(session);
     if (compactionCut(active) === 0) return false;
     const activeTokens = estimateMessages(active);
-    const toolTokens = active
-      .filter((message) => message.role === 'tool')
-      .reduce((sum, message) => sum + estimateTokens(message.content), 0);
+    const toolTokenCount = toolTokens(active);
     return activeTokens > tokenBudget * COMPACTION_HIGH_WATER ||
-      (activeTokens > tokenBudget * 0.6 && toolTokens > tokenBudget * TOOL_PRESSURE_WATER);
+      (activeTokens > tokenBudget * 0.6 && toolTokenCount > tokenBudget * TOOL_PRESSURE_WATER);
   }
 
   async compact(
@@ -278,6 +274,12 @@ function concise(value: string, max: number): string {
 function estimateMessages(messages: ChatMessage[]): number {
   return messages.reduce((sum, message) => sum + estimateTokens(message.content) +
     estimateTokens(JSON.stringify(message.toolCalls ?? [])), 0);
+}
+
+function toolTokens(messages: ChatMessage[]): number {
+  return messages
+    .filter((message) => message.role === 'tool')
+    .reduce((sum, message) => sum + estimateTokens(message.content), 0);
 }
 
 function estimateTokens(value: string): number {

@@ -128,7 +128,7 @@ export function estimateTimelineItemRows(
     const workingRows = item.working
       ? 2 + item.working.constraints.length + item.working.decisions.length + item.working.openQuestions.length
       : 0;
-    return 3 + workingRows + (item.summary ? wrappedRows(item.summary, Math.max(1, rowWidth - 2)) : 0);
+    return 3 + workingRows + (item.summary ? wrappedRows(item.summary, Math.max(1, rowWidth - 2)) : 0) + (item.sources?.length ? 2 : 0);
   }
   if (item.kind === 'theme') return 3;
   if (item.kind === 'context' || item.kind === 'prompt') {

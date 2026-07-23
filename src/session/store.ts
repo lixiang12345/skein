@@ -180,14 +180,16 @@ export class SessionStore {
     await this.writes;
     if (!(await this.directoryAvailable())) return [];
     const entries = await readdir(this.directory, {withFileTypes: true});
-    const summaries: SessionSummary[] = [];
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
-      const session = await tryReadSession(join(this.directory, entry.name));
-      if (!session || resolve(session.workspace) !== this.workspace) continue;
-      summaries.push(toSummary(session));
-    }
-    return summaries.sort((left, right) =>
+    const summaries = await Promise.all(
+      entries
+        .filter(entry => entry.isFile() && entry.name.endsWith('.json'))
+        .map(async entry => {
+          const session = await tryReadSession(join(this.directory, entry.name));
+          if (!session || resolve(session.workspace) !== this.workspace) return;
+          return toSummary(session);
+        }),
+    );
+    return summaries.filter(summary => summary !== undefined).sort((left, right) =>
       right.updatedAt.localeCompare(left.updatedAt),
     );
   }
