@@ -33,6 +33,7 @@ describe('storage namespace migration', () => {
     await mkdir(join(root, '.mosaic'));
     const projectNamespace = await inspectProjectNamespace(root);
     const status = legacyCompatibilityStatus({
+      release: '0.2.0',
       projectNamespace,
       environment: {MOSAIC_MODEL: 'legacy-model'},
     });
