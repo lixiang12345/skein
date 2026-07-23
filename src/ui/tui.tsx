@@ -59,6 +59,16 @@ import {
 import {displayWidth, sanitizeTerminalText, terminalEllipsis, truncateDisplay} from './text.js';
 import {nextTheme, reloadUserThemes, resolveThemeWithColor, ThemeProvider, themes} from './theme.js';
 import {fitTimelineToRows} from './viewport.js';
+import {
+  endStreamingAssistants,
+  finalizeAssistant,
+  firstLine,
+  nextId,
+  updateAgent,
+  updateAgentTelemetry,
+  updateAssistantDelta,
+  updateTool,
+} from './timeline-reducers.js';
 
 interface PermissionRequest {
   call: ToolCall;
@@ -91,8 +101,6 @@ export interface TuiOptions {
   planMode?: boolean;
 }
 
-let itemCounter = 0;
-const nextId = () => `ui-${Date.now()}-${itemCounter++}`;
 
 export function SkeinApp({runner, config, extensions, initialPrompt, askMode = false, planMode = false}: TuiOptions) {
   const {exit} = useApp();
@@ -1457,112 +1465,6 @@ function visibleMessage(message: ChatMessage): boolean {
     !message.content.startsWith('<retrieved-memory');
 }
 
-function updateTool(items: TimelineItem[], result: {toolCallId: string; name: string; ok: boolean; content: string}): TimelineItem[] {
-  const output = sanitizeTerminalText(result.content).slice(0, 100_000);
-  const found = items.some((item) => item.kind === 'tool' && item.id === result.toolCallId);
-  if (!found) {
-    return [...items, {
-      id: result.toolCallId,
-      kind: 'tool' as const,
-      name: result.name,
-      detail: result.ok ? '' : firstLine(result.content),
-      state: result.ok ? 'ok' as const : 'error' as const,
-      output,
-      ...(result.ok ? {} : {errorDetail: firstLine(result.content)}),
-    }].slice(-100);
-  }
-  return items.map((item) => {
-    if (item.kind !== 'tool' || item.id !== result.toolCallId) return item;
-    return {
-      ...item,
-      state: result.ok ? 'ok' as const : 'error' as const,
-      output,
-      ...(item.startedAt ? {durationMs: Date.now() - item.startedAt} : {}),
-      ...(result.ok ? {} : {errorDetail: firstLine(result.content)}),
-    };
-  });
-}
-
-function updateAssistantDelta(items: TimelineItem[], id: string, content: string): TimelineItem[] {
-  const found = items.some((item) => item.kind === 'assistant' && item.id === id);
-  if (!found) {
-    return [...items, {id, kind: 'assistant' as const, text: content, streaming: true}].slice(-500);
-  }
-  return items.map((item) => item.kind === 'assistant' && item.id === id
-    ? {...item, text: `${item.text}${content}`, streaming: true}
-    : item);
-}
-
-function finalizeAssistant(items: TimelineItem[], id: string | undefined, content: string): TimelineItem[] {
-  if (!id) return [...items, {id: nextId(), kind: 'assistant' as const, text: content}].slice(-500);
-  const found = items.some((item) => item.kind === 'assistant' && item.id === id);
-  if (!found) return [...items, {id, kind: 'assistant' as const, text: content}].slice(-500);
-  return items.map((item) => item.kind === 'assistant' && item.id === id
-    ? {...item, text: content, streaming: false}
-    : item);
-}
-
-function endStreamingAssistants(items: TimelineItem[]): TimelineItem[] {
-  return items.map((item) => item.kind === 'assistant' && item.streaming
-    ? {...item, streaming: false}
-    : item);
-}
-
-function updateAgent(items: TimelineItem[], event: Extract<AgentEvent, {type: 'agent_done'}>): TimelineItem[] {
-  const found = items.some((item) => item.kind === 'agent' && item.id === event.id);
-  if (!found) {
-    return [...items, {
-      id: event.id,
-      kind: 'agent' as const,
-      profile: event.profile,
-      task: 'delegated task',
-      summary: event.summary,
-      state: event.ok ? 'ok' as const : 'error' as const,
-      ...(event.provider ? {provider: event.provider} : {}),
-      ...(event.model ? {model: event.model} : {}),
-      ...(event.phase ? {phase: event.phase} : {}),
-      ...(event.durationMs !== undefined ? {durationMs: event.durationMs} : {}),
-      ...(event.toolCalls !== undefined ? {toolCalls: event.toolCalls} : {}),
-      ...(event.usage ? {inputTokens: event.usage.inputTokens, outputTokens: event.usage.outputTokens} : {}),
-    }].slice(-100);
-  }
-  return items.map((item) => item.kind === 'agent' && item.id === event.id
-    ? {
-      ...item,
-      state: event.ok ? 'ok' as const : 'error' as const,
-      summary: event.summary,
-      stage: 'response' as const,
-      activityDetail: event.ok ? 'final report ready' : 'worker failed',
-      ...(event.durationMs !== undefined ? {durationMs: event.durationMs} : item.startedAt ? {durationMs: Date.now() - item.startedAt} : {}),
-      ...(event.toolCalls !== undefined ? {toolCalls: event.toolCalls} : {}),
-      ...(event.usage ? {inputTokens: event.usage.inputTokens, outputTokens: event.usage.outputTokens} : {}),
-    }
-    : item);
-}
-
-function updateAgentTelemetry(items: TimelineItem[], event: Extract<AgentEvent, {type: 'agent_update'}>): TimelineItem[] {
-  return items.map((item) => {
-    if (item.kind !== 'agent' || item.id !== event.id) return item;
-    const {activeTool: previousTool, ...withoutTool} = item;
-    const newAlert = event.detail && /(?:soft .*threshold|soft budget exceeded)/iu.test(event.detail)
-      ? event.detail
-      : undefined;
-    const alerts = newAlert
-      ? [...new Set([...(item.alerts ?? []), newAlert])].slice(-3)
-      : item.alerts;
-    return {
-      ...(event.stage === 'tool' && event.tool === undefined ? item : withoutTool),
-      stage: event.stage,
-      ...(event.detail !== undefined ? {activityDetail: event.detail} : {}),
-      ...(event.tool !== undefined ? {activeTool: event.tool} : event.stage === 'tool' && previousTool ? {activeTool: previousTool} : {}),
-      ...(event.toolCalls !== undefined ? {toolCalls: event.toolCalls} : {}),
-      ...(event.inputTokens !== undefined ? {inputTokens: event.inputTokens} : {}),
-      ...(event.outputTokens !== undefined ? {outputTokens: event.outputTokens} : {}),
-      ...(alerts?.length ? {alerts} : {}),
-    };
-  });
-}
-
 function snapshotSession(source: Session): Session {
   return {
     ...source,
@@ -1673,10 +1575,6 @@ function contextInspectorStatus(status: ReturnType<AgentRunner['getContextStatus
     toolTokens: status.toolTokens,
     compactedMessages: status.compactedMessages,
   };
-}
-
-function firstLine(value: string): string {
-  return sanitizeTerminalText(value).split('\n').find((line) => line.trim())?.trim().slice(0, 180) ?? 'No details';
 }
 
 function toolDetail(call: ToolCall): string {
