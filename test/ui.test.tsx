@@ -205,6 +205,29 @@ describe('terminal presentation', () => {
     expect(output).toContain('architect→reviewer');
   });
 
+  it('surfaces queued and cancelled agent states in the team cockpit', () => {
+    const output = renderToString(<TeamCockpit width={48} items={[
+      {id: 'queued', kind: 'agent', profile: 'analyst', task: 'Await a scheduler slot', state: 'queued'},
+      {id: 'cancelled', kind: 'agent', profile: 'reviewer', phase: 'review', task: 'Review evidence', state: 'cancelled', cancelReason: 'Cleared from queue after an agent timeout: worker exceeded budget'},
+    ]} />, {columns: 48});
+    expect(output).toContain('analyst');
+    expect(output).toContain('reviewer');
+    expect(output).toContain('Cleared from queue');
+  });
+
+  it('surfaces queued and cancelled agents in the workbench without overflow', () => {
+    const items = [
+      {id: 'queued', kind: 'agent' as const, profile: 'analyst', task: 'Await a scheduler slot', state: 'queued' as const},
+      {id: 'cancelled', kind: 'agent' as const, profile: 'reviewer', phase: 'review' as const, task: 'Review evidence', state: 'cancelled' as const, cancelReason: 'Cleared from queue after parent cancellation: operator stopped the run'},
+    ];
+    const output = renderToString(<TeamWorkbench items={items} tasks={[]} width={60} selectedIndex={1} expanded view="agents" />, {columns: 60});
+    expect(output).toContain('analyst');
+    expect(output).toContain('Cleared from queue');
+    for (const line of output.split('\n')) {
+      expect(displayWidth(line), `workbench row overflowed: ${JSON.stringify(line)}`).toBeLessThanOrEqual(60);
+    }
+  });
+
   it.each([20, 40, 80])('renders a bounded interactive team workbench at %i columns', (columns) => {
     const items = [
       {id: 'worker', kind: 'agent' as const, profile: 'architect', provider: 'anthropic', model: 'claude', phase: 'work' as const, task: 'Map 跨模块 boundaries and verify ownership', state: 'ok' as const, durationMs: 42_000, inputTokens: 12_000, outputTokens: 2_000, toolCalls: 7, summary: 'Architecture report ready.', alerts: ['soft token threshold exceeded (10000); continuing']},

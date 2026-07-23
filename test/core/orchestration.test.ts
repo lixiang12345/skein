@@ -136,6 +136,85 @@ describe('bounded orchestration', () => {
     expect(events.some((event) => event.type === 'agent_update' && event.inputTokens === 100 && event.outputTokens === 20)).toBe(true);
   });
 
+  it('aggregates by dispatch order across completion orders and reports specialist conflicts', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-deterministic-team-'));
+    roots.push(root);
+    const cfg = config(root);
+    cfg.agents = {
+      ...cfg.agents!,
+      persistBoard: false,
+      reviewerProfile: 'reviewer',
+      maxReviewRounds: 0,
+      routes: {
+        architect: {runtime: 'codex', provider: 'openai', model: 'team-model'},
+        backend: {runtime: 'codex', provider: 'openai', model: 'team-model'},
+        reviewer: {runtime: 'codex', provider: 'openai', model: 'team-model'},
+      },
+    };
+    const profiles = new AgentProfileCatalog(root);
+    await profiles.discover();
+    const context: ContextProvider = {
+      async pack() { return {text: '', hits: [], estimatedTokens: 0, engine: 'test', truncated: false}; },
+      async search() { return []; },
+    };
+    const run = async (delays: Record<'architect' | 'backend', number>) => {
+      const completed: string[] = [];
+      const manager = new DelegationManager({
+        config: cfg,
+        provider: {name: 'parent', async complete() { return {content: 'parent', toolCalls: []}; }},
+        contextEngine: context,
+        parentTools: createDefaultToolRegistry(),
+        profiles,
+        externalRunner: async (request) => {
+          if (request.prompt.includes('Start the response with exactly VERDICT')) {
+            return {
+              content: 'VERDICT: REVISE\nCONFLICTS: architect recommends enabling the cache; backend recommends disabling it.\nResolve the configuration evidence.',
+              runtime: request.runtime,
+              model: request.model,
+              durationMs: 1,
+            };
+          }
+          const profile = request.prompt.includes('Assess the cache architecture.') ? 'architect' : 'backend';
+          await new Promise((resolve) => setTimeout(resolve, delays[profile]));
+          completed.push(profile);
+          return {
+            content: profile === 'architect' ? 'Enable the cache.' : 'Disable the cache.',
+            runtime: request.runtime,
+            model: request.model,
+            durationMs: delays[profile],
+          };
+        },
+      });
+      const result = await manager.teamTool().execute({
+        objective: 'Decide whether the cache should be enabled.',
+        tasks: [
+          {profile: 'architect', task: 'Assess the cache architecture.'},
+          {profile: 'backend', task: 'Assess the cache runtime behavior.'},
+        ],
+      }, {
+        config: cfg,
+        workspace: new WorkspaceAccess([root]),
+        session: createSession({workspace: root, provider: 'compatible', model: 'test'}),
+        contextEngine: context,
+      });
+      return {completed, content: result.content};
+    };
+
+    const backendFirst = await run({architect: 20, backend: 0});
+    const architectFirst = await run({architect: 0, backend: 20});
+
+    expect(backendFirst.completed).toEqual(['backend', 'architect']);
+    expect(architectFirst.completed).toEqual(['architect', 'backend']);
+    expect(backendFirst.content).toBe(architectFirst.content);
+    expect(backendFirst.content.indexOf('## architect completed')).toBeLessThan(
+      backendFirst.content.indexOf('## backend completed'),
+    );
+    expect(backendFirst.content).toContain(
+      '## Council conflict report\n1 explicit conflict(s) reported by the council reviewer.\n' +
+      '- architect recommends enabling the cache; backend recommends disabling it.',
+    );
+  });
+
   it('can run an installed CLI adapter behind the same delegation protocol', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-external-team-'));
     roots.push(root);
@@ -408,6 +487,126 @@ describe('bounded orchestration', () => {
     expect(result.ok).toBe(false);
     expect(result.content).toContain('Agent stopped by operator');
     expect(manager.cancelAgent(id)).toBe(false);
+  });
+
+  it('clears queued agents when the parent is cancelled', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-cancel-queue-'));
+    roots.push(root);
+    const cfg = config(root);
+    cfg.agents = {
+      ...cfg.agents!,
+      maxConcurrent: 1,
+      persistBoard: false,
+      routes: Object.fromEntries(['backend', 'security', 'tester'].map((profile) => [
+        profile,
+        {runtime: 'codex', provider: 'openai', model: 'gpt-external'},
+      ])),
+    };
+    const profiles = new AgentProfileCatalog(root);
+    await profiles.discover();
+    const context: ContextProvider = {
+      async pack() { return {text: '', hits: [], estimatedTokens: 0, engine: 'test', truncated: false}; },
+      async search() { return []; },
+    };
+    const events: AgentEvent[] = [];
+    const parent = new AbortController();
+    let started!: () => void;
+    const agentStarted = new Promise<void>((resolve) => { started = resolve; });
+    let calls = 0;
+    const manager = new DelegationManager({
+      config: cfg,
+      provider: {name: 'parent', async complete() { return {content: 'parent', toolCalls: []}; }},
+      contextEngine: context,
+      parentTools: createDefaultToolRegistry(),
+      profiles,
+      externalRunner: (request) => {
+        calls += 1;
+        return new Promise((_resolve, reject) => {
+          const cancel = () => reject(request.signal?.reason ?? new Error('cancelled'));
+          if (request.signal?.aborted) cancel();
+          else request.signal?.addEventListener('abort', cancel, {once: true});
+        });
+      },
+    });
+    const execution = manager.tool().execute({tasks: [
+      {profile: 'backend', task: 'First.'},
+      {profile: 'security', task: 'Second.'},
+      {profile: 'tester', task: 'Third.'},
+    ]}, {
+      config: cfg,
+      workspace: new WorkspaceAccess([root]),
+      session: createSession({workspace: root, provider: 'compatible', model: 'test'}),
+      contextEngine: context,
+      signal: parent.signal,
+      emit: (event) => {
+        events.push(event);
+        if (event.type === 'agent_start') started();
+      },
+    });
+    await agentStarted;
+    parent.abort(new Error('Parent interrupted.'));
+    const result = await execution;
+    expect(result.ok).toBe(false);
+    expect(calls).toBe(1);
+    expect(events.filter((event) => event.type === 'agent_queued')).toHaveLength(3);
+    expect(events.filter((event) => event.type === 'agent_start')).toHaveLength(1);
+    expect(events.filter((event) => event.type === 'agent_cancelled')).toMatchObject([
+      {profile: 'security', queued: true},
+      {profile: 'tester', queued: true},
+    ]);
+  });
+
+  it('clears queued agents after a strict per-agent timeout', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-timeout-queue-'));
+    roots.push(root);
+    const cfg = config(root);
+    cfg.agents = {
+      ...cfg.agents!,
+      maxConcurrent: 1,
+      persistBoard: false,
+      routes: Object.fromEntries(['backend', 'security', 'tester'].map((profile) => [
+        profile,
+        {runtime: 'codex', provider: 'openai', model: 'gpt-external', timeoutMs: 10, budgetMode: 'strict'},
+      ])),
+    };
+    const profiles = new AgentProfileCatalog(root);
+    await profiles.discover();
+    const context: ContextProvider = {
+      async pack() { return {text: '', hits: [], estimatedTokens: 0, engine: 'test', truncated: false}; },
+      async search() { return []; },
+    };
+    const events: AgentEvent[] = [];
+    let calls = 0;
+    const manager = new DelegationManager({
+      config: cfg,
+      provider: {name: 'parent', async complete() { return {content: 'parent', toolCalls: []}; }},
+      contextEngine: context,
+      parentTools: createDefaultToolRegistry(),
+      profiles,
+      async externalRunner() {
+        calls += 1;
+        throw new Error('codex agent failed (timeout)');
+      },
+    });
+    const result = await manager.tool().execute({tasks: [
+      {profile: 'backend', task: 'First.'},
+      {profile: 'security', task: 'Second.'},
+      {profile: 'tester', task: 'Third.'},
+    ]}, {
+      config: cfg,
+      workspace: new WorkspaceAccess([root]),
+      session: createSession({workspace: root, provider: 'compatible', model: 'test'}),
+      contextEngine: context,
+      emit: (event) => { events.push(event); },
+    });
+    expect(result.ok).toBe(false);
+    expect(calls).toBe(1);
+    expect(events.filter((event) => event.type === 'agent_cancelled')).toMatchObject([
+      {profile: 'security', queued: true},
+      {profile: 'tester', queued: true},
+    ]);
+    expect((result.metadata as {agents: Array<{termination?: string}>}).agents.map(({termination}) => termination))
+      .toEqual(['timeout', 'queue-cleared', 'queue-cleared']);
   });
 
   it('retries a running agent and returns the fresh attempt to its caller', async () => {

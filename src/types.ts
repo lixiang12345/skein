@@ -291,9 +291,11 @@ export type AgentEvent =
   | {type: 'tasks'; tasks: SessionTask[]}
   | {type: 'skill'; name: string; description: string}
   | {type: 'memory'; count: number; scope: string}
+  | {type: 'agent_queued'; id: string; profile: string; task: string; phase?: 'work' | 'review' | 'revision'}
   | {type: 'agent_start'; id: string; profile: string; task: string; provider?: string; model?: string; phase?: 'work' | 'review' | 'revision'; retryOf?: string}
   | {type: 'agent_message'; id: string; from: string; to: string; content: string}
   | {type: 'agent_update'; id: string; profile: string; stage: 'context' | 'thinking' | 'tool' | 'response' | 'review'; detail?: string; tool?: string; toolCalls?: number; inputTokens?: number; outputTokens?: number}
+  | {type: 'agent_cancelled'; id: string; profile: string; phase?: 'work' | 'review' | 'revision'; reason: string; queued: boolean}
   | {type: 'team_start'; id: string; objective: string}
   | {type: 'team_done'; id: string; accepted: boolean; reviewRounds: number}
   | {type: 'agent_done'; id: string; profile: string; ok: boolean; summary: string; provider?: string; model?: string; phase?: 'work' | 'review' | 'revision'; durationMs?: number; toolCalls?: number; usage?: {inputTokens: number; outputTokens: number}}

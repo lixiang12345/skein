@@ -128,6 +128,41 @@ export function updateAgent(items: TimelineItem[], event: Extract<AgentEvent, {t
     : item);
 }
 
+/** Enqueue a scheduled agent as a visible queued row before it starts running. */
+export function updateAgentQueued(items: TimelineItem[], event: Extract<AgentEvent, {type: 'agent_queued'}>): TimelineItem[] {
+  if (items.some((item) => item.kind === 'agent' && item.id === event.id)) return items;
+  return [...items, {
+    id: event.id,
+    kind: 'agent' as const,
+    profile: event.profile,
+    task: event.task,
+    state: 'queued' as const,
+    ...(event.phase ? {phase: event.phase} : {}),
+  }].slice(-500);
+}
+
+/**
+ * Mark a queued or running agent as cancelled — the scheduler cleared it after
+ * a parent cancellation or an upstream timeout — and record why.
+ */
+export function cancelAgent(items: TimelineItem[], event: Extract<AgentEvent, {type: 'agent_cancelled'}>): TimelineItem[] {
+  const found = items.some((item) => item.kind === 'agent' && item.id === event.id);
+  if (!found) {
+    return [...items, {
+      id: event.id,
+      kind: 'agent' as const,
+      profile: event.profile,
+      task: 'delegated task',
+      state: 'cancelled' as const,
+      cancelReason: event.reason,
+      ...(event.phase ? {phase: event.phase} : {}),
+    }].slice(-500);
+  }
+  return items.map((item) => item.kind === 'agent' && item.id === event.id
+    ? {...item, state: 'cancelled' as const, cancelReason: event.reason, stage: 'response' as const, activityDetail: event.reason}
+    : item);
+}
+
 export function updateAgentTelemetry(items: TimelineItem[], event: Extract<AgentEvent, {type: 'agent_update'}>): TimelineItem[] {
   return items.map((item) => {
     if (item.kind !== 'agent' || item.id !== event.id) return item;

@@ -65,7 +65,9 @@ import {
   finalizeAssistant,
   firstLine,
   nextId,
+  cancelAgent,
   updateAgent,
+  updateAgentQueued,
   updateAgentTelemetry,
   updateAssistantDelta,
   updateTool,
@@ -334,6 +336,12 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         break;
       case 'memory':
         append({id: nextId(), kind: 'memory', count: event.count, scope: event.scope});
+        break;
+      case 'agent_queued':
+        setTimeline((items) => updateAgentQueued(items, event));
+        break;
+      case 'agent_cancelled':
+        setTimeline((items) => cancelAgent(items, event));
         break;
       case 'agent_start':
         setTimeline((items) => [

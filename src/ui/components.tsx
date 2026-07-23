@@ -21,7 +21,7 @@ export type TimelineItem =
   | {id: string; kind: 'tool'; name: string; detail: string; state: 'running' | 'ok' | 'error'; startedAt?: number; durationMs?: number; errorDetail?: string; output?: string; meta?: string}
   | {id: string; kind: 'skill'; name: string; description: string}
   | {id: string; kind: 'memory'; count: number; scope: string}
-  | {id: string; kind: 'agent'; profile: string; task: string; provider?: string; model?: string; phase?: 'work' | 'review' | 'revision'; stage?: 'context' | 'thinking' | 'tool' | 'response' | 'review'; activityDetail?: string; activeTool?: string; toolCalls?: number; inputTokens?: number; outputTokens?: number; summary?: string; alerts?: string[]; retryOf?: string; superseded?: boolean; state: 'running' | 'ok' | 'error'; startedAt?: number; durationMs?: number}
+  | {id: string; kind: 'agent'; profile: string; task: string; provider?: string; model?: string; phase?: 'work' | 'review' | 'revision'; stage?: 'context' | 'thinking' | 'tool' | 'response' | 'review'; activityDetail?: string; activeTool?: string; toolCalls?: number; inputTokens?: number; outputTokens?: number; summary?: string; alerts?: string[]; retryOf?: string; superseded?: boolean; state: 'queued' | 'running' | 'ok' | 'error' | 'cancelled'; cancelReason?: string; startedAt?: number; durationMs?: number}
   | {id: string; kind: 'agent-message'; from: string; to: string; text: string}
   | {id: string; kind: 'workflow'; name: string; step: string; status: SessionTask['status']}
   | {id: string; kind: 'compaction'; messages: number; tokens: number}
@@ -204,10 +204,12 @@ export function Header({config, askMode, planMode = false, width = 80, glyphMode
   );
 }
 
-function ToolGlyph({state, glyphs}: {state: 'running' | 'ok' | 'error'; glyphs: UiGlyphs}) {
+function ToolGlyph({state, glyphs}: {state: 'queued' | 'running' | 'ok' | 'error' | 'cancelled'; glyphs: UiGlyphs}) {
   const theme = useTheme();
+  if (state === 'queued') return <Text color={theme.muted}>{glyphs.pending}</Text>;
   if (state === 'running') return <Text color={theme.accent}>{glyphs.running}</Text>;
   if (state === 'ok') return <Text color={theme.success}>{glyphs.success}</Text>;
+  if (state === 'cancelled') return <Text color={theme.warning}>{glyphs.warning}</Text>;
   return <Text color={theme.error}>{glyphs.error}</Text>;
 }
 
@@ -453,13 +455,15 @@ export function TeamCockpit({items, width = 36, glyphMode = 'auto'}: {
     <Box flexDirection="column" width={width} borderStyle={glyphs.borderStyle} borderColor={theme.border} paddingX={1}>
       <Text bold color={theme.accent}>{truncateDisplay(`${glyphs.agent} TEAM COCKPIT`, inner)}</Text>
       {agents.map((agent) => {
-        const status = agent.state === 'running' ? glyphs.running : agent.state === 'ok' ? glyphs.success : glyphs.error;
+        const status = agent.state === 'queued' ? glyphs.pending : agent.state === 'running' ? glyphs.running : agent.state === 'ok' ? glyphs.success : agent.state === 'cancelled' ? glyphs.warning : glyphs.error;
         const route = agent.provider && agent.model ? `${agent.provider}/${agent.model}` : 'inherited model';
-        const activity = agent.activeTool
-          ? `${agent.stage ?? 'tool'}: ${agent.activeTool}`
-          : agent.activityDetail
-            ? `${agent.stage ?? 'working'}: ${agent.activityDetail}`
-            : agent.stage ?? 'queued';
+        const activity = agent.state === 'cancelled' && agent.cancelReason
+          ? agent.cancelReason
+          : agent.activeTool
+            ? `${agent.stage ?? 'tool'}: ${agent.activeTool}`
+            : agent.activityDetail
+              ? `${agent.stage ?? 'working'}: ${agent.activityDetail}`
+              : agent.stage ?? 'queued';
         const telemetry = [
           agent.startedAt !== undefined || agent.durationMs !== undefined
             ? formatDuration(agent.durationMs ?? Math.max(0, Date.now() - (agent.startedAt ?? Date.now())))
@@ -471,7 +475,7 @@ export function TeamCockpit({items, width = 36, glyphMode = 'auto'}: {
         ].filter(Boolean).join(` ${glyphs.separator} `);
         return (
           <Box key={agent.id} flexDirection="column">
-            <Text color={agent.state === 'error' ? theme.error : agent.state === 'running' ? theme.accent : theme.text}>
+            <Text color={agent.state === 'error' ? theme.error : agent.state === 'cancelled' ? theme.muted : agent.state === 'running' ? theme.accent : theme.text}>
               {truncateDisplay(`${status} ${agent.profile}${agent.phase && agent.phase !== 'work' ? ` ${glyphs.separator} ${agent.phase}` : ''}`, inner)}
             </Text>
             <Text color={theme.dim}>{truncateDisplay(route, inner)}</Text>
@@ -519,12 +523,14 @@ export function TeamWorkbench({items, tasks, width = 80, glyphMode = 'auto', vie
   const visibleMessages = messages.slice(-12);
   const completed = agents.filter((agent) => agent.state === 'ok').length;
   const running = agents.filter((agent) => agent.state === 'running').length;
+  const cancelled = agents.filter((agent) => agent.state === 'cancelled').length;
   const totalTokens = agents.reduce((sum, agent) => sum + (agent.inputTokens ?? 0) + (agent.outputTokens ?? 0), 0);
   const totalTools = agents.reduce((sum, agent) => sum + (agent.toolCalls ?? 0), 0);
   const status = run?.accepted === true ? 'accepted' : run?.accepted === false ? 'rejected' : running ? 'running' : agents.length ? 'complete' : 'idle';
   const summary = [
     `${status}${run?.reviewRounds !== undefined ? ` ${glyphs.separator} review ${run.reviewRounds}` : ''}`,
     `${completed}/${agents.length} done`,
+    cancelled ? `${cancelled} cancelled` : '',
     `${formatTokens(totalTokens)} tok`,
     `${totalTools} tools`,
     run?.startedAt ? formatDuration(Date.now() - run.startedAt) : '',
@@ -542,9 +548,9 @@ export function TeamWorkbench({items, tasks, width = 80, glyphMode = 'auto', vie
       {view === 'agents' ? (
         agents.length ? agents.map((agent, index) => {
           const marker = index === selectedIndex ? glyphs.arrow : ' ';
-          const stateGlyph = agent.state === 'running' ? glyphs.running : agent.state === 'ok' ? glyphs.success : glyphs.error;
+          const stateGlyph = agent.state === 'queued' ? glyphs.pending : agent.state === 'running' ? glyphs.running : agent.state === 'ok' ? glyphs.success : agent.state === 'cancelled' ? glyphs.warning : glyphs.error;
           const route = agent.provider && agent.model ? `${agent.provider}/${agent.model}` : 'inherited model';
-          const activity = agent.activeTool ? `${agent.stage ?? 'tool'} ${agent.activeTool}` : agent.activityDetail ?? agent.stage ?? 'queued';
+          const activity = agent.state === 'cancelled' && agent.cancelReason ? agent.cancelReason : agent.activeTool ? `${agent.stage ?? 'tool'} ${agent.activeTool}` : agent.activityDetail ?? agent.stage ?? 'queued';
           const telemetry = `${formatTokens((agent.inputTokens ?? 0) + (agent.outputTokens ?? 0))} tok${glyphs.separator}${agent.toolCalls ?? 0} tools`;
           return (
             <Box key={agent.id} flexDirection="column">

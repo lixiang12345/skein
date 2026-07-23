@@ -41,9 +41,21 @@ interface DelegatedResult {
   usage: {inputTokens: number; outputTokens: number};
   toolCalls: number;
   durationMs: number;
+  termination?: 'cancelled' | 'timeout' | 'queue-cleared';
 }
 
 type AgentPhase = 'work' | 'review' | 'revision';
+
+interface ScheduledTask {
+  id: string;
+  task: DelegatedTask;
+}
+
+interface CouncilConflictReport {
+  status: 'none' | 'reported' | 'unknown';
+  items: string[];
+  detail: string;
+}
 
 export class DelegationManager {
   private readonly team: AgentTeamConfig;
@@ -114,8 +126,7 @@ export class DelegationManager {
           profile: task.profile ?? manager.team.defaultProfile,
           task: task.task,
         }));
-        const results = await mapConcurrent(tasks, manager.team.maxConcurrent, (task) =>
-          manager.runRecorded(undefined, task, 'work', context.emit, context.signal));
+        const results = await manager.runBatch(undefined, tasks, 'work', context.emit, context.signal);
         return {
           ok: results.every((result) => result.ok),
           content: formatResults(results),
@@ -185,8 +196,10 @@ export class DelegationManager {
     const runId = board?.id ?? randomUUID();
     await emit?.({type: 'team_start', id: runId, objective});
     try {
-      let results = await mapConcurrent(tasks, this.team.maxConcurrent, (task) =>
-        this.runRecorded(board?.id, task, 'work', emit, signal));
+      let results = await this.runBatch(board?.id, tasks, 'work', emit, signal);
+      if (councilWasStopped(results, signal)) {
+        return this.finishStoppedTeam(runId, board?.id, results, 0, emit, 'Council review did not run because the work phase was cancelled or timed out.');
+      }
       let review = await this.review(objective, results, reviewer, board?.id, emit, signal);
       let completedRounds = 0;
       while (review.ok && reviewVerdict(review.summary) === 'revise' && completedRounds < rounds) {
@@ -194,13 +207,17 @@ export class DelegationManager {
         for (const result of results) {
           await this.peerMessage(board?.id, reviewer, result.profile, review.summary.slice(0, 2_000), emit);
         }
-        results = await mapConcurrent(tasks, this.team.maxConcurrent, (task) => this.runRecorded(board?.id, {
+        results = await this.runBatch(board?.id, tasks.map((task) => ({
           ...task,
           task: `${task.task}\n\nA reviewer requested revision. Address this feedback with fresh evidence:\n${review.summary}`,
-        }, 'revision', emit, signal));
+        })), 'revision', emit, signal);
+        if (councilWasStopped(results, signal)) {
+          return this.finishStoppedTeam(runId, board?.id, results, completedRounds, emit, 'Council review did not run because the revision phase was cancelled or timed out.');
+        }
         review = await this.review(objective, results, reviewer, board?.id, emit, signal);
       }
       const accepted = review.ok && reviewVerdict(review.summary) === 'accept';
+      const conflictReport = councilConflictReport(review.summary);
       if (board) await this.teamStore?.complete(board.id, {
         accepted,
         reviewRounds: completedRounds,
@@ -209,10 +226,11 @@ export class DelegationManager {
       await emit?.({type: 'team_done', id: runId, accepted, reviewRounds: completedRounds});
       return {
         ok: accepted && results.every((result) => result.ok),
-        content: `${formatResults(results)}\n\n## ${review.profile} acceptance review\n${review.summary}`,
+        content: `${formatResults(results)}\n\n## Council conflict report\n${formatConflictReport(conflictReport)}\n\n## ${review.profile} acceptance review\n${review.summary}`,
         metadata: {
           accepted,
           reviewRounds: completedRounds,
+          conflictReport,
           ...(board ? {teamRunId: board.id} : {}),
           agents: resultMetadata([...results, review]),
         },
@@ -222,6 +240,88 @@ export class DelegationManager {
       await emit?.({type: 'team_done', id: runId, accepted: false, reviewRounds: 0});
       throw error;
     }
+  }
+
+  private async runBatch(
+    runId: string | undefined,
+    tasks: DelegatedTask[],
+    phase: AgentPhase,
+    emit?: (event: AgentEvent) => void | Promise<void>,
+    signal?: AbortSignal,
+  ): Promise<DelegatedResult[]> {
+    const scheduled = tasks.map((task) => ({id: randomUUID(), task}));
+    for (const item of scheduled) {
+      await emit?.({type: 'agent_queued', id: item.id, profile: item.task.profile, task: item.task.task, phase});
+    }
+    let haltReason: string | undefined;
+    return mapConcurrent(scheduled, this.team.maxConcurrent, async (item) => {
+      const parentReason = signal?.aborted ? abortDetail(signal.reason) : undefined;
+      if (parentReason || haltReason) {
+        const reason = parentReason
+          ? `Cleared from queue after parent cancellation: ${parentReason}`
+          : `Cleared from queue after an agent timeout: ${haltReason}`;
+        const result = this.queuedCancellation(item, reason);
+        await emit?.({type: 'agent_cancelled', id: result.id, profile: result.profile, phase, reason, queued: true});
+        await this.recordAgent(runId, result, phase);
+        return result;
+      }
+      const result = await this.runRecorded(runId, item.task, phase, emit, signal, item.id);
+      if (result.termination === 'timeout') haltReason = result.summary;
+      return result;
+    });
+  }
+
+  private queuedCancellation(item: ScheduledTask, summary: string): DelegatedResult {
+    let provider: string = this.options.config.model.provider;
+    let model = this.options.config.model.model;
+    try {
+      const route = this.modelRoute(item.task.profile);
+      provider = route.provider;
+      model = route.model;
+      const runtime = this.team.routes?.[item.task.profile]?.runtime;
+      if (runtime && runtime !== 'api') provider = runtime;
+    } catch {
+      // Preserve queue cleanup even when a route is invalid; normal validation
+      // will report the configuration error before a future run starts.
+    }
+    return {
+      id: item.id,
+      profile: item.task.profile,
+      ok: false,
+      summary,
+      provider,
+      model,
+      usage: {inputTokens: 0, outputTokens: 0},
+      toolCalls: 0,
+      durationMs: 0,
+      termination: 'queue-cleared',
+    };
+  }
+
+  private async finishStoppedTeam(
+    runId: string,
+    persistedRunId: string | undefined,
+    results: DelegatedResult[],
+    reviewRounds: number,
+    emit: ((event: AgentEvent) => void | Promise<void>) | undefined,
+    detail: string,
+  ) {
+    const conflictReport: CouncilConflictReport = {status: 'unknown', items: [], detail};
+    if (persistedRunId) {
+      await this.teamStore?.complete(persistedRunId, {accepted: false, reviewRounds, failed: true});
+    }
+    await emit?.({type: 'team_done', id: runId, accepted: false, reviewRounds});
+    return {
+      ok: false,
+      content: `${formatResults(results)}\n\n## Council conflict report\n${formatConflictReport(conflictReport)}`,
+      metadata: {
+        accepted: false,
+        reviewRounds,
+        conflictReport,
+        ...(persistedRunId ? {teamRunId: persistedRunId} : {}),
+        agents: resultMetadata(results),
+      },
+    };
   }
 
   private async review(
@@ -235,10 +335,12 @@ export class DelegationManager {
     for (const result of results) {
       await this.peerMessage(runId, result.profile, reviewer, result.summary.slice(0, 2_000), emit);
     }
-    return this.runRecorded(runId, {
+    const [review] = await this.runBatch(runId, [{
       profile: reviewer,
-      task: `Review a multi-agent council against the objective below. Challenge unsupported claims and identify missing evidence.\n\nObjective:\n${objective}\n\nWorker reports:\n${formatResults(results)}\n\nStart the response with exactly VERDICT: ACCEPT when the evidence is sufficient, or VERDICT: REVISE when another specialist pass is required. Then give concise reasons, conflicts, and the concrete acceptance checklist.`,
-    }, 'review', emit, signal);
+      task: `Review a multi-agent council against the objective below. Challenge unsupported claims and identify missing evidence.\n\nObjective:\n${objective}\n\nWorker reports:\n${formatResults(results)}\n\nStart the response with exactly VERDICT: ACCEPT when the evidence is sufficient, or VERDICT: REVISE when another specialist pass is required. Then include exactly one conflict field: CONFLICTS: NONE when the reports agree, or a CONFLICTS: line followed by one bullet per explicit disagreement. Finish with concise reasons and the concrete acceptance checklist.`,
+    }], 'review', emit, signal);
+    if (!review) throw new Error('Council reviewer did not return a result.');
+    return review;
   }
 
   private async runRecorded(
@@ -247,8 +349,9 @@ export class DelegationManager {
     phase: AgentPhase,
     emit?: (event: AgentEvent) => void | Promise<void>,
     signal?: AbortSignal,
+    id?: string,
   ): Promise<DelegatedResult> {
-    let result = await this.runOne(task, phase, emit, signal);
+    let result = await this.runOne(task, phase, emit, signal, undefined, id);
     await this.recordAgent(runId, result, phase);
     const retryRequested = this.retryRequests.delete(result.id);
     if (retryRequested && !signal?.aborted) {
@@ -292,8 +395,9 @@ export class DelegationManager {
     emit?: (event: AgentEvent) => void | Promise<void>,
     signal?: AbortSignal,
     retryOf?: string,
+    scheduledId?: string,
   ): Promise<DelegatedResult> {
-    const id = randomUUID();
+    const id = scheduledId ?? randomUUID();
     const profile = this.options.profiles.get(task.profile);
     const configuredRoute = this.team.routes?.[task.profile];
     const budgetMode = configuredRoute?.budgetMode ?? this.team.budgetMode ?? 'observe';
@@ -308,11 +412,15 @@ export class DelegationManager {
     let observedUsage = emptyUsage;
     let observedToolCalls = 0;
     let observedStopReason: string | undefined;
+    let termination: DelegatedResult['termination'];
     if (!profile) {
       return {id, profile: task.profile, ok: false, summary: `Unknown expert profile: ${task.profile}`, provider: providerName, model, usage: emptyUsage, toolCalls: 0, durationMs: 0};
     }
     const agentController = new AbortController();
-    const onParentAbort = () => agentController.abort(signal?.reason);
+    const onParentAbort = () => {
+      termination = 'cancelled';
+      agentController.abort(signal?.reason);
+    };
     if (signal?.aborted) onParentAbort();
     else signal?.addEventListener('abort', onParentAbort, {once: true});
     this.activeAgents.set(id, agentController);
@@ -378,6 +486,7 @@ export class DelegationManager {
         ? undefined
         : setTimeout(() => {
           if (budgetMode === 'strict') {
+            termination = 'timeout';
             agentController.abort(new Error(`Agent budget timeout after ${timeoutMs}ms`));
           } else if (budgetMode === 'guard') {
             void emit?.({type: 'agent_update', id, profile: profile.name, stage: 'thinking', detail: `soft time threshold exceeded (${timeoutMs}ms); continuing`});
@@ -477,7 +586,19 @@ export class DelegationManager {
       return result;
     } catch (error) {
       const summary = error instanceof Error ? error.message : String(error);
-      const result = {id, profile: profile.name, ok: false, summary, provider: providerName, model, usage: observedUsage, toolCalls: observedToolCalls, durationMs: Date.now() - startedAt};
+      if (!termination && budgetMode === 'strict' && /tim(?:ed out|eout)/iu.test(summary)) termination = 'timeout';
+      const result = {
+        id,
+        profile: profile.name,
+        ok: false,
+        summary,
+        provider: providerName,
+        model,
+        usage: observedUsage,
+        toolCalls: observedToolCalls,
+        durationMs: Date.now() - startedAt,
+        ...(termination ? {termination} : {}),
+      };
       await emit?.({type: 'agent_done', ...result, phase});
       return result;
     } finally {
@@ -573,7 +694,52 @@ function resultMetadata(results: DelegatedResult[]) {
     durationMs: result.durationMs,
     toolCalls: result.toolCalls,
     usage: result.usage,
+    ...(result.termination ? {termination: result.termination} : {}),
   }));
+}
+
+function councilWasStopped(results: DelegatedResult[], signal?: AbortSignal): boolean {
+  return Boolean(signal?.aborted || results.some((result) => result.termination === 'timeout'));
+}
+
+function abortDetail(reason: unknown): string {
+  return reason instanceof Error ? reason.message : typeof reason === 'string' ? reason : 'parent run stopped';
+}
+
+function councilConflictReport(summary: string): CouncilConflictReport {
+  const lines = summary.split(/\r?\n/u);
+  const conflictIndex = lines.findIndex((line) => /^\s*CONFLICTS\s*:/iu.test(line));
+  if (conflictIndex < 0) {
+    return {
+      status: 'unknown',
+      items: [],
+      detail: 'Conflict status unavailable: the reviewer omitted the required CONFLICTS field.',
+    };
+  }
+  const first = (lines[conflictIndex] ?? '').replace(/^\s*CONFLICTS\s*:\s*/iu, '').trim();
+  if (/^NONE\.?$/iu.test(first)) {
+    return {status: 'none', items: [], detail: 'No conflicts reported by the council reviewer.'};
+  }
+  const following: string[] = [];
+  for (const line of lines.slice(conflictIndex + 1)) {
+    if (!line.trim() && following.length === 0) continue;
+    if (!/^\s*[-*]\s+/u.test(line)) break;
+    following.push(line.replace(/^\s*[-*]\s+/u, '').trim());
+  }
+  const items = [first, ...following].filter(Boolean);
+  if (!items.length) {
+    return {
+      status: 'unknown',
+      items: [],
+      detail: 'Conflict status unavailable: the reviewer provided an empty CONFLICTS field.',
+    };
+  }
+  return {status: 'reported', items, detail: `${items.length} explicit conflict(s) reported by the council reviewer.`};
+}
+
+function formatConflictReport(report: CouncilConflictReport): string {
+  if (report.status !== 'reported') return report.detail;
+  return `${report.detail}\n${report.items.map((item) => `- ${item}`).join('\n')}`;
 }
 
 async function mapConcurrent<T, R>(
