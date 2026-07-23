@@ -16,7 +16,7 @@ import {formatPercent, formatTokens, useTheme} from './theme.js';
 export type TimelineItem =
   | {id: string; kind: 'user'; text: string; clipped?: boolean}
   | {id: string; kind: 'assistant'; text: string; streaming?: boolean; clipped?: boolean}
-  | {id: string; kind: 'context'; engine: string; hits: number; tokens: number; degradation?: ContextDegradation}
+  | {id: string; kind: 'context'; engine: string; hits: number; tokens: number; degradation?: ContextDegradation; truncated?: boolean; spans?: ContextSpan[]}
   | {id: string; kind: 'prompt'; intent: string; sections: string[]; tokens: number}
   | {id: string; kind: 'tool'; name: string; detail: string; state: 'running' | 'ok' | 'error'; startedAt?: number; durationMs?: number; errorDetail?: string; output?: string}
   | {id: string; kind: 'skill'; name: string; description: string}
@@ -34,6 +34,14 @@ export interface ListEntry {
   label: string;
   detail?: string;
   tone?: 'normal' | 'success' | 'warning' | 'error';
+}
+
+export interface ContextSpan {
+  path: string;
+  startLine: number;
+  endLine: number;
+  score: number;
+  symbol?: string;
 }
 
 export interface ContextInspectorStatus {
@@ -243,15 +251,32 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
           );
         }
         if (item.kind === 'context') {
+          const spans = item.spans ?? [];
+          const spanLimit = compact ? 2 : 3;
+          const innerWidth = Math.max(1, safeWidth(width) - 2);
           return (
             <Box key={item.id} flexDirection="column">
               <MetaRow
                 width={width}
                 glyph={glyphs.context}
                 label="context"
-                detail={`${sanitizeInlineTerminalText(item.engine)} ${glyphs.separator} ${item.hits} spans ${glyphs.separator} ~${formatTokens(item.tokens)}`}
+                detail={`${sanitizeInlineTerminalText(item.engine)} ${glyphs.separator} ${item.hits} spans ${glyphs.separator} ~${formatTokens(item.tokens)}${item.truncated ? ` ${glyphs.separator} truncated` : ''}`}
                 labelColor={theme.accent}
               />
+              {spans.slice(0, spanLimit).map((span, spanIndex) => {
+                const lines = span.startLine === span.endLine ? `${span.startLine}` : `${span.startLine}-${span.endLine}`;
+                const location = `${compactDisplayPath(sanitizeInlineTerminalText(span.path), 44)}:${lines}`;
+                const symbol = span.symbol ? ` ${glyphs.separator} ${sanitizeInlineTerminalText(span.symbol)}` : '';
+                const marker = spanIndex === spans.length - 1 || spanIndex === spanLimit - 1 ? glyphs.branchLast : glyphs.branch;
+                return (
+                  <Text key={`${item.id}-span-${spanIndex}`} color={theme.dim}>
+                    {truncateDisplay(`${marker} ${location}${symbol} ${glyphs.separator} ${span.score.toFixed(2)}`, innerWidth)}
+                  </Text>
+                );
+              })}
+              {spans.length > spanLimit ? (
+                <Text color={theme.dim}>{truncateDisplay(`${glyphs.branchLast} +${spans.length - spanLimit} more spans`, innerWidth)}</Text>
+              ) : null}
               {item.degradation ? (
                 <MetaRow
                   width={width}

@@ -278,6 +278,14 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
           engine: event.packed.engine,
           hits: event.packed.hits.length,
           tokens: event.packed.estimatedTokens,
+          truncated: event.packed.truncated,
+          spans: event.packed.hits.slice(0, 5).map((hit) => ({
+            path: relative(runner.workspace.primaryRoot, hit.path) || hit.path,
+            startLine: hit.startLine,
+            endLine: hit.endLine,
+            score: hit.score,
+            ...(hit.symbol ? {symbol: hit.symbol} : {}),
+          })),
           ...(event.packed.degradation ? {degradation: event.packed.degradation} : {}),
         });
         setActivity({label: 'Assembling relevant context', startedAt: Date.now()});

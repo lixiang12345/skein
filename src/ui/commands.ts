@@ -30,6 +30,8 @@ export const commandDefinitions: CommandDefinition[] = [
   command('changes', 'List files changed in the active session'),
   command('diff', 'Open the current workspace diff in the transcript'),
   command('checkpoints', 'List recoverable pre-mutation snapshots'),
+  command('audit', 'Review the hash-chained tool and permission timeline'),
+  command('rollback', 'Restore workspace files from a checkpoint', '/rollback [checkpoint-id]'),
   command('transcript', 'Expand or collapse complete tool output', '/transcript [on|off]'),
   command('hotkeys', 'Show terminal editing and run controls'),
   command('mode', 'Switch between read-only Ask, Plan, and action-capable Build modes', '/mode [ask|plan|build]'),

@@ -131,7 +131,15 @@ export function estimateTimelineItemRows(
     return 3 + workingRows + (item.summary ? wrappedRows(item.summary, Math.max(1, rowWidth - 2)) : 0) + (item.sources?.length ? 2 : 0);
   }
   if (item.kind === 'theme') return 3;
-  if (item.kind === 'context' || item.kind === 'prompt') {
+  if (item.kind === 'context') {
+    const metaRows = rowWidth < 64 ? 2 : 1;
+    const spanLimit = compact ? 2 : 3;
+    const spanCount = Math.min(item.spans?.length ?? 0, spanLimit);
+    const moreRow = (item.spans?.length ?? 0) > spanLimit ? 1 : 0;
+    const degradationRows = item.degradation ? metaRows : 0;
+    return metaRows + spanCount + moreRow + degradationRows;
+  }
+  if (item.kind === 'prompt') {
     return rowWidth < 64 ? 2 : 1;
   }
   if (item.kind === 'skill' || item.kind === 'memory' || item.kind === 'compaction') {
