@@ -4,7 +4,7 @@ import {join} from 'node:path';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {checkSqliteFts5, MINIMUM_NODE_VERSION, runDoctor, supportsNodeVersion} from '../../src/cli/doctor.js';
 import {defaultConfig} from '../../src/config.js';
-import {LEGACY_NAMESPACE_SUPPORTED_UNTIL} from '../../src/utils/namespace.js';
+import {legacyCompatibilityStatus, LEGACY_NAMESPACE_SUPPORTED_UNTIL} from '../../src/utils/namespace.js';
 
 const roots: string[] = [];
 
@@ -166,6 +166,26 @@ describe('doctor runtime checks', () => {
       if (previousMosaicHome === undefined) delete process.env.MOSAIC_HOME;
       else process.env.MOSAIC_HOME = previousMosaicHome;
     }
+  });
+
+  it('reports the phase-selected namespace for a fresh workspace', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-doctor-fresh-'));
+    roots.push(root);
+    const config = defaultConfig(root);
+    config.model = {provider: 'compatible', model: 'fixture', baseUrl: 'http://127.0.0.1:1/v1'};
+    config.context.engine = 'local';
+    config.context.contextEngineCommand = 'none';
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    await expect(runDoctor(config, {json: true})).resolves.toBe(true);
+    const report = JSON.parse(stdout.mock.calls.map(([chunk]) => String(chunk)).join('')) as {
+      checks: Array<{name: string; detail: string}>;
+    };
+    const phase = legacyCompatibilityStatus().phase;
+    const expectedNamespace = phase === 'active' ? '.mosaic' : '.skein';
+    expect(report.checks).toContainEqual(expect.objectContaining({
+      name: 'Storage namespace',
+      detail: `no durable state yet; first write uses ${join(root, expectedNamespace)}`,
+    }));
   });
 
   it('fails once, without duplicate probes, when an explicitly required external index is missing', async () => {

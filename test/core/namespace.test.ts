@@ -27,6 +27,10 @@ async function workspace(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'skein-namespace-'));
 }
 
+function expectedFreshProjectNamespaceKind(): 'canonical' | 'legacy' {
+  return legacyCompatibilityStatus().phase === 'active' ? 'legacy' : 'canonical';
+}
+
 describe('storage namespace migration', () => {
   it('defines and measures the legacy alias compatibility window', async () => {
     const root = await workspace();
@@ -59,9 +63,10 @@ describe('storage namespace migration', () => {
   it('reports an empty workspace as migration-complete without creating state', async () => {
     const root = await workspace();
     const status = await resolveProjectNamespace(root);
-    expect(status.activeKind).toBe('legacy');
+    expect(status.activeKind).toBe(expectedFreshProjectNamespaceKind());
+    expect(status.phase).toBe(legacyCompatibilityStatus().phase);
     expect(status.conflict).toBe(false);
-    await expect(access(join(root, '.mosaic'))).rejects.toMatchObject({code: 'ENOENT'});
+    await expect(access(status.active)).rejects.toMatchObject({code: 'ENOENT'});
     const manifest = await inspectProjectNamespace(root);
     expect(manifest.status).toBe('complete');
     expect(manifest.entries).toEqual([]);
@@ -217,12 +222,12 @@ describe('storage namespace migration', () => {
   it('does not activate file or symlink namespace paths in synchronous resolution', async () => {
     const root = await workspace();
     await writeFile(join(root, '.skein'), 'not-a-directory');
-    expect(resolveProjectNamespaceSync(root).activeKind).toBe('legacy');
+    expect(resolveProjectNamespaceSync(root).activeKind).toBe(expectedFreshProjectNamespaceKind());
     expect((await inspectProjectNamespace(root)).status).toBe('conflict');
     await rm(join(root, '.skein'));
     const outside = await workspace();
     await symlink(outside, join(root, '.skein'));
-    expect(resolveProjectNamespaceSync(root).activeKind).toBe('legacy');
+    expect(resolveProjectNamespaceSync(root).activeKind).toBe(expectedFreshProjectNamespaceKind());
     expect((await inspectProjectNamespace(root)).status).toBe('conflict');
   });
 

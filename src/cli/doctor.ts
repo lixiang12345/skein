@@ -13,6 +13,7 @@ import {
   inspectProjectNamespace,
   inspectProjectRecovery,
   legacyCompatibilityStatus,
+  resolveProjectNamespaceSync,
 } from '../utils/namespace.js';
 
 interface Check {
@@ -41,6 +42,7 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
   let legacyCompatibility: ReturnType<typeof legacyCompatibilityStatus>;
   try {
     namespace = await inspectProjectNamespace(root);
+    const activeNamespace = resolveProjectNamespaceSync(root);
     checks.push({
       name: 'Storage namespace',
       ok: namespace.status !== 'conflict',
@@ -49,7 +51,7 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
         : namespace.status === 'conflict'
           ? `conflict in ${namespace.conflicts.length} path(s); migration paused`
           : !namespace.sourceExists && !namespace.destinationExists
-            ? `no durable state yet; first write uses ${namespace.source}`
+            ? `no durable state yet; first write uses ${activeNamespace.active}`
             : `canonical .skein namespace active at ${namespace.destination}`,
       required: false,
     });

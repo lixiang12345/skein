@@ -35,14 +35,17 @@ export const LEGACY_ENV_ALIASES = {
 const MAX_MANIFEST_BYTES = 16 * 1024 * 1024;
 const MIGRATION_MANIFEST_NAME = 'migration-manifest.json';
 
-export type NamespaceKind = 'canonical' | 'legacy' | 'none';
+export type ActiveNamespaceKind = 'canonical' | 'legacy';
+export type NamespaceKind = ActiveNamespaceKind | 'none';
+export type LegacyCompatibilityPhase = 'active' | 'deprecated' | 'pending-removal';
 
 export interface NamespaceResolution {
   workspace: string;
   canonical: string;
   legacy: string;
   active: string;
-  activeKind: NamespaceKind;
+  activeKind: ActiveNamespaceKind;
+  phase: LegacyCompatibilityPhase;
   canonicalExists: boolean;
   legacyExists: boolean;
   conflict: boolean;
@@ -104,8 +107,6 @@ export interface NamespaceRecoveryInspection {
   status: 'clean' | 'ready' | 'blocked' | 'recovered';
   candidates: NamespaceRecoveryCandidate[];
 }
-
-export type LegacyCompatibilityPhase = 'active' | 'deprecated' | 'pending-removal';
 
 export interface LegacyCompatibilityStatus {
   release: string;
@@ -203,16 +204,15 @@ export async function resolveProjectNamespace(workspace: string): Promise<Namesp
   const {workspace: root, canonical, legacy} = projectNamespacePaths(workspace);
   await assertNamespacePathsSeparated(legacy, canonical);
   const [canonicalExists, legacyExists] = await Promise.all([isDirectory(canonical), isDirectory(legacy)]);
-  // Keep installations on the legacy location until the user opts in to
-  // migration. This compatibility release deliberately avoids silently
-  // creating a second namespace for a project with no durable state.
-  const activeKind: NamespaceKind = canonicalExists ? 'canonical' : legacyExists ? 'legacy' : 'legacy';
+  const phase = legacyCompatibilityStatus().phase;
+  const activeKind = activeProjectNamespaceKind(canonicalExists, legacyExists, phase);
   return {
     workspace: root,
     canonical,
     legacy,
     active: activeKind === 'canonical' ? canonical : legacy,
     activeKind,
+    phase,
     canonicalExists,
     legacyExists,
     conflict: canonicalExists && legacyExists,
@@ -223,17 +223,29 @@ export function resolveProjectNamespaceSync(workspace: string): NamespaceResolut
   const {workspace: root, canonical, legacy} = projectNamespacePaths(workspace);
   const canonicalExists = isDirectorySync(canonical);
   const legacyExists = isDirectorySync(legacy);
-  const activeKind: NamespaceKind = canonicalExists ? 'canonical' : 'legacy';
+  const phase = legacyCompatibilityStatus().phase;
+  const activeKind = activeProjectNamespaceKind(canonicalExists, legacyExists, phase);
   return {
     workspace: root,
     canonical,
     legacy,
     active: activeKind === 'canonical' ? canonical : legacy,
     activeKind,
+    phase,
     canonicalExists,
     legacyExists,
     conflict: canonicalExists && legacyExists,
   };
+}
+
+function activeProjectNamespaceKind(
+  canonicalExists: boolean,
+  legacyExists: boolean,
+  phase: LegacyCompatibilityPhase,
+): ActiveNamespaceKind {
+  if (canonicalExists) return 'canonical';
+  if (legacyExists) return 'legacy';
+  return phase === 'active' ? 'legacy' : 'canonical';
 }
 
 export function resolveHomeNamespace(environment: NodeJS.ProcessEnv = process.env): string {
@@ -250,13 +262,15 @@ export async function resolveHomeStorageNamespace(
   const {workspace: root, canonical, legacy} = homeNamespacePaths(environment);
   await assertNamespacePathsSeparated(legacy, canonical);
   const [canonicalExists, legacyExists] = await Promise.all([isDirectory(canonical), isDirectory(legacy)]);
-  const activeKind: NamespaceKind = canonicalExists ? 'canonical' : 'legacy';
+  const activeKind: ActiveNamespaceKind = canonicalExists ? 'canonical' : 'legacy';
+  const phase = legacyCompatibilityStatus({environment}).phase;
   return {
     workspace: root,
     canonical,
     legacy,
     active: activeKind === 'canonical' ? canonical : legacy,
     activeKind,
+    phase,
     canonicalExists,
     legacyExists,
     conflict: canonicalExists && legacyExists,
