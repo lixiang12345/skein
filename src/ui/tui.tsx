@@ -1353,6 +1353,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
             glyphMode={glyphMode}
             memory={memoryStats ? `${memoryStats.active} active${memoryStats.candidates ? `${separator}${memoryStats.candidates} pending` : ''}` : config.memory?.enabled ? 'enabled' : 'disabled'}
             connections={`${runner.tools.definitions().length} tools${separator}${mcpServers.filter((server) => server.state === 'connected').length}/${mcpServers.length} MCP connected`}
+            {...(session.contextSources?.length ? {sources: session.contextSources} : {})}
           />
         ) : null}
         <ActivityLine {...(showActivity && activity ? {activity} : {})} frame={frame} width={contentWidth} />

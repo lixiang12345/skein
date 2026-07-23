@@ -1,7 +1,7 @@
 import React from 'react';
 import {Box, Text} from 'ink';
 import {basename} from 'node:path';
-import type {ContextDegradation, MosaicConfig, SessionTask, ToolCall, ToolCategory, WorkingMemory} from '../types.js';
+import type {ContextDegradation, ContextSource, MosaicConfig, SessionTask, ToolCall, ToolCategory, WorkingMemory} from '../types.js';
 import {PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
 import {commandSuggestions, type CommandSuggestion} from './commands.js';
 import {
@@ -1098,13 +1098,14 @@ export function MeterBar({segments, total, width, glyphs}: {
   );
 }
 
-export function ContextInspector({status, working, summary, width, memory, connections, compact = false, minimal = false, glyphMode = 'auto'}: {
+export function ContextInspector({status, working, summary, width, memory, connections, sources, compact = false, minimal = false, glyphMode = 'auto'}: {
   status: ContextInspectorStatus;
   working: WorkingMemory | undefined;
   summary?: string | undefined;
   width: number;
   memory?: string;
   connections?: string;
+  sources?: ContextSource[];
   compact?: boolean;
   minimal?: boolean;
   glyphMode?: GlyphMode;
@@ -1140,6 +1141,19 @@ export function ContextInspector({status, working, summary, width, memory, conne
   if (!compact && working?.decisions.length) entries.push({label: `decisions ${working.decisions.length}`, detail: working.decisions.slice(0, 2).join(` ${glyphs.separator} `)});
   if (!compact && working?.openQuestions.length) entries.push({label: `open ${working.openQuestions.length}`, detail: working.openQuestions.slice(0, 2).join(` ${glyphs.separator} `), tone: 'warning'});
   if (!compact && working?.relevantFiles.length) entries.push({label: 'relevant files', detail: working.relevantFiles.map((file) => compactDisplayPath(sanitizeInlineTerminalText(file), 28)).join(` ${glyphs.separator} `)});
+  if (sources?.length) {
+    const pinned = sources.filter((source) => source.state === 'pinned');
+    const muted = sources.filter((source) => source.state === 'muted');
+    const pinnedTokens = pinned.reduce((sum, source) => sum + source.tokens, 0);
+    const names = pinned.map((source) => compactDisplayPath(sanitizeInlineTerminalText(source.path), 28)).join(` ${glyphs.separator} `);
+    entries.push({
+      label: `pinned ${pinned.length}${muted.length ? `${glyphs.separator}${muted.length} muted` : ''}`,
+      detail: pinned.length
+        ? `~${formatTokens(pinnedTokens)} tokens ${glyphs.separator} survives compaction ${glyphs.separator} ${names}`
+        : `${muted.length} muted ${glyphs.separator} 0 tokens`,
+      tone: 'success',
+    });
+  }
   if (connections) entries.push({label: 'connections', detail: connections});
   const rowWidth = safeWidth(width);
   const innerWidth = Math.max(1, rowWidth - 2);
