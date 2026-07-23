@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
