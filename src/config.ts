@@ -187,6 +187,11 @@ const envKeysForProvider: Record<ProviderName, readonly string[]> = {
   compatible: ['SKEIN_API_KEY', 'MOSAIC_API_KEY'],
 };
 
+/** Preferred environment variable a user should set to supply a provider's API key. */
+export function providerApiKeyEnv(provider: ProviderName): string {
+  return envKeysForProvider[provider][0] as string;
+}
+
 export const defaultPermissions: PermissionConfig = {
   read: 'allow',
   write: 'ask',

@@ -3,9 +3,21 @@ import stripAnsi from 'strip-ansi';
 
 const controlCharacters = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu;
 
+// Terminals answer capability probes (device attributes, cursor position, the
+// Kitty keyboard protocol) by writing CSI sequences back to stdin — e.g.
+// `[?0u`. Two things leak them into text: stripAnsi misses some private
+// `?...`-parameter responses, and Ink consumes the leading ESC as an Escape
+// key before delivering the `[?0u` tail to the composer. Strip both forms —
+// any ESC-introduced CSI sequence, and a stray CSI tail that kept a private
+// marker (`?`, `>`, `=`) after losing its ESC — before removing lone control
+// characters. The private-marker requirement keeps ordinary text like
+// `[note]` or `array[i]` intact.
+const escapeSequences = /[[\]][0-9;?=>!]*[ -/]*[@-~]|[[\]][?=>][0-9;?=>!]*[a-zA-Z~]/gu;
+
 /** Remove escape/control sequences before untrusted model or tool text reaches the terminal. */
 export function sanitizeTerminalText(value: string): string {
   return stripAnsi(value)
+    .replace(escapeSequences, '')
     .replace(/\r\n?/g, '\n')
     .replace(controlCharacters, '');
 }

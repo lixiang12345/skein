@@ -1246,14 +1246,10 @@ function Banner({model, engine, workspace, version, width, glyphs}: {
 }) {
   const theme = useTheme();
   const innerWidth = Math.max(1, safeWidth(width) - 2);
-  // A compact wordmark that survives narrow terminals: the full ASCII art on
-  // wide layouts, a single glyph+name line when there is not enough room.
-  const art = [
-    '░█▀▀░█░█░█▀▀░▀█▀░█▀█',
-    '░▀▀█░█▀▄░█▀▀░░█░░█░█',
-    '░▀▀▀░▀░▀░▀▀▀░▀▀▀░▀░▀',
-  ];
-  const wordmarkFits = safeWidth(width) >= 44 && glyphs.borderStyle !== 'classic';
+  // A single-line wordmark reads cleanly in every terminal font. Multi-line
+  // half-block art fractured badly across fonts, so the brand mark is one bold
+  // line: a leading glyph plus letter-spaced name that still looks like a logo.
+  const wordmark = `${glyphs.brand}  ${PRODUCT_NAME.toUpperCase().split('').join(' ')}`;
   const meta = [
     `model ${sanitizeInlineTerminalText(model)}`,
     `engine ${sanitizeInlineTerminalText(engine)}`,
@@ -1262,16 +1258,8 @@ function Banner({model, engine, workspace, version, width, glyphs}: {
   const tagline = 'a terminal coding agent you can see through';
   return (
     <Box marginBottom={1} flexDirection="column">
-      {wordmarkFits ? (
-        <Box flexDirection="column">
-          {art.map((line, index) => (
-            <Text key={index} bold color={theme.accent}>{line}</Text>
-          ))}
-        </Box>
-      ) : (
-        <Text bold color={theme.accent}>{`${glyphs.brand} ${PRODUCT_NAME.toUpperCase()}`}</Text>
-      )}
-      <Text color={theme.muted}>{truncateDisplay(`${glyphs.brand} ${PRODUCT_NAME} v${version} ${glyphs.separator} ${tagline}`, innerWidth)}</Text>
+      <Text bold color={theme.accent}>{truncateDisplay(wordmark, innerWidth)}</Text>
+      <Text color={theme.muted}>{truncateDisplay(`v${version} ${glyphs.separator} ${tagline}`, innerWidth)}</Text>
       <Text color={theme.dim}>{truncateDisplay(meta, innerWidth)}</Text>
       <Text color={theme.dim}>{truncateDisplay(`type a request ${glyphs.separator} /help for commands ${glyphs.separator} @ to attach files`, innerWidth)}</Text>
     </Box>

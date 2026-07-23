@@ -103,6 +103,17 @@ describe('terminal presentation', () => {
     expect(sanitizeTerminalText('\u001B[2Jclear\u0007')).toBe('clear');
   });
 
+  it("strips terminal capability-probe responses without eating normal bracketed text", () => {
+    // Kitty keyboard / device-attribute probes get echoed back to stdin; Ink swallows
+    // the ESC and leaks the tail (e.g. [?0u, [?62;c). Those must never reach output.
+    expect(sanitizeTerminalText("[?0uhello")).toBe("hello");
+    expect(sanitizeTerminalText("[?0uhello")).toBe("hello");
+    expect(sanitizeTerminalText("done[?62;1;6c")).toBe("done");
+    // Ordinary bracketed text must survive untouched.
+    expect(sanitizeTerminalText("array[i] = [note]")).toBe("array[i] = [note]");
+    expect(sanitizeTerminalText("[text](url) list[0].name")).toBe("[text](url) list[0].name");
+  });
+
   it('keeps the narrow layout legible without squeezing metadata together', () => {
     const output = renderToString(
       <>

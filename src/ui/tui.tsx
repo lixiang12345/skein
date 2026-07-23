@@ -4,7 +4,7 @@ import {relative} from 'node:path';
 import type {AgentRunner} from '../agent/index.js';
 import {PLAN_MODE_INSTRUCTIONS} from '../agent/prompt.js';
 import {resolveAgentModelRoute} from '../agent/model-route.js';
-import {redactEndpoint, saveUiPreference} from '../config.js';
+import {providerApiKeyEnv, redactEndpoint, saveUiPreference} from '../config.js';
 import {
   activeMentionToken,
   contextHitMentionSuggestions,
@@ -118,9 +118,9 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const ellipsis = terminalEllipsis();
   const initialSession = runner.getSession();
   const setupProblem = config.model.provider !== 'compatible' && !config.model.apiKey
-    ? `No ${config.model.provider} API key configured. Run ${PRODUCT_COMMAND} doctor for setup guidance.`
+    ? `No ${config.model.provider} API key found. Set it and restart: export ${providerApiKeyEnv(config.model.provider)}=<your-key>${separator}then run ${PRODUCT_COMMAND} again. Use ${PRODUCT_COMMAND} doctor to verify, or --model to switch provider.`
     : config.model.provider === 'compatible' && !config.model.baseUrl
-      ? 'No compatible model endpoint configured. Set model.baseUrl or pass --base-url.'
+      ? `No model endpoint configured. Set one and restart: export SKEIN_BASE_URL=<endpoint>${separator}or pass --base-url <endpoint>. Run ${PRODUCT_COMMAND} doctor to verify.`
       : undefined;
   const colorEnabled = config.ui.color && !process.env.NO_COLOR;
   const [theme, setTheme] = useState(() => resolveThemeWithColor(config.ui.theme, colorEnabled));
