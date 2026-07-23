@@ -58,7 +58,7 @@ import {
   recoverProjectNamespace,
   resolveProjectNamespaceSync,
 } from './utils/namespace.js';
-import {PRODUCT_COMMAND} from './brand.js';
+import {PRODUCT_NAME, PRODUCT_COMMAND} from './brand.js';
 import {PLAN_MODE_INSTRUCTIONS} from './agent/prompt.js';
 import packageJson from '../package.json' with {type: 'json'};
 
@@ -238,7 +238,11 @@ program
     const config = await runtimeConfig(workspaceOption(options.workspace), runtimeOptions(options));
     const engine = new ContextEngine(config);
     const status = await engine.status();
-    printObject({config: configSummary(config), context: status}, options.json === true);
+    if (options.json === true) {
+      printObject({config: configSummary(config), context: status}, true);
+    } else {
+      printStatusSummary(config, status);
+    }
   });
 
 program
@@ -1218,6 +1222,41 @@ function printObject(value: unknown, json: boolean): void {
   if (json) process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
   else if (typeof value === 'string') process.stdout.write(`${value}\n`);
   else process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+/** Render a human-readable status summary; the full record stays available via --json. */
+function printStatusSummary(config: MosaicConfig, context: Record<string, unknown>): void {
+  const glyphs = cliGlyphs;
+  const dim = (text: string): string => chalk.dim(text);
+  const line = (ok: boolean, name: string, detail: string): void => {
+    const icon = ok ? chalk.green(glyphs.success) : chalk.yellow('!');
+    process.stdout.write(`${icon} ${name.padEnd(16)} ${dim(detail)}\n`);
+  };
+  const keyReady = Boolean(config.model.apiKey) || config.model.provider === 'compatible';
+  const endpoint = redactEndpoint(config.model.baseUrl);
+  const local = (context.local ?? {}) as {available?: boolean; files?: number; chunks?: number};
+  const selected = String(context.selected ?? 'local');
+  const engineDetail = selected === 'contextengine'
+    ? 'ContextEngine (external)'
+    : selected === 'unindexed'
+      ? `ContextEngine available; index not built ${glyphs.separator} run ${PRODUCT_COMMAND} index`
+      : selected === 'unavailable'
+        ? `ContextEngine required but unavailable ${glyphs.separator} run ${PRODUCT_COMMAND} doctor`
+        : 'local index';
+  const indexDetail = local.available
+    ? `${local.files ?? 0} files ${glyphs.separator} ${local.chunks ?? 0} chunks`
+    : `not built ${glyphs.separator} run ${PRODUCT_COMMAND} index`;
+
+  process.stdout.write(`${chalk.hex('#A78BFA').bold(`${glyphs.brand} ${PRODUCT_NAME.toUpperCase()} STATUS`)}\n\n`);
+  line(true, 'Model', `${config.model.provider}/${config.model.model}`);
+  line(true, 'Endpoint', endpoint);
+  line(keyReady, 'API key', keyReady
+    ? 'configured'
+    : `missing ${glyphs.separator} set it, then run ${PRODUCT_COMMAND} doctor to verify`);
+  line(selected !== 'unavailable', 'Context engine', engineDetail);
+  line(Boolean(local.available), 'Code index', indexDetail);
+  line(true, 'Workspace', config.workspaceRoots.join(`  ${glyphs.separator}  `));
+  process.stdout.write(`\n${dim(`Run ${PRODUCT_COMMAND} status --json for the full machine-readable record.`)}\n`);
 }
 
 function printSessionList(sessions: SessionSummary[]): void {
