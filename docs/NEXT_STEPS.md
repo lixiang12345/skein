@@ -47,7 +47,7 @@ archive it describes.
 The final verification included a fresh install and real PTY interaction for
 all three executable aliases, `/about`, a permission prompt, denial, and clean
 Ctrl+C exit. PTY coverage included 20, 24 ASCII, 40, 80, 120 columns and a
-40x10 short-height case. The current suite contains 31 test files and 243 tests.
+40x10 short-height case. The current suite contains 31 test files and 252 tests.
 
 ## Recommended Order
 
@@ -129,8 +129,13 @@ Implementation progress:
   the operating system immediately after a crash. Cached legacy store paths are
   rejected after migration, and real child-process tests cover contention and
   `SIGKILL` cleanup. Overlapping custom source/destination paths are rejected
-  before copying. The next storage increment is to define and measure the
-  compatibility window for removing `.mosaic` aliases.
+  before copying.
+- The `.mosaic` compatibility window is now an explicit, versioned lifecycle:
+  `legacyCompatibilityStatus()` reports the phase (`active` in 0.2.0,
+  `deprecated` in 0.3.0, `pending-removal` in 0.4.0, `removed` in 0.5.0),
+  whether legacy paths and `MOSAIC_*` variables are still in use, and the
+  concrete paths involved. `skein doctor` surfaces this as `legacyCompatibility`
+  so users see the removal timeline before aliases disappear.
 
 ### P1: ContextEngine-Plugin Production Adapter
 
@@ -249,6 +254,13 @@ Implementation progress:
 - Task budget policy is separate from the provider context window and Skein's
   session compaction boundary. The latter remains a technical context limit,
   not a default product ceiling for large tasks.
+- The scheduler now emits `agent_queued` and `agent_cancelled` events so queued,
+  running, cancelled, and completed specialists are all observable. A parent
+  cancellation or upstream timeout clears queued work and records the reason on
+  each cleared agent. The council reviewer emits a required `CONFLICTS` field
+  that is parsed into a structured conflict report and surfaced in the returned
+  team summary. The TUI Team Cockpit and Workbench render the queued and
+  cancelled states with distinct glyphs, colors, and the cancellation reason.
 - See `docs/MULTI_MODEL_TEAMS.md`. Writer worktrees, persistent blackboard
   artifacts, cost controls, Gemini CLI, and optional tmux/iTerm pane hosts remain
   next.
