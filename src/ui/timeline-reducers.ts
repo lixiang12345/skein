@@ -12,8 +12,39 @@ export function firstLine(value: string): string {
   return sanitizeTerminalText(value).split('\n').find((line) => line.trim())?.trim().slice(0, 180) ?? 'No details';
 }
 
-export function updateTool(items: TimelineItem[], result: {toolCallId: string; name: string; ok: boolean; content: string}): TimelineItem[] {
+/**
+ * One-line receipt of the durable side effects the runner attached to a tool
+ * result — captured checkpoint, changed files, and hook counts — so the user
+ * can see what actually happened to the workspace without expanding output.
+ */
+export function toolMetaSummary(metadata?: Record<string, unknown>): string | undefined {
+  if (!metadata) return undefined;
+  const parts: string[] = [];
+  const changed = metadata.changedFiles;
+  if (Array.isArray(changed) && changed.length) {
+    parts.push(`${changed.length} file${changed.length === 1 ? '' : 's'} changed`);
+  }
+  if (typeof metadata.checkpointId === 'string' && metadata.checkpointId) {
+    parts.push(`checkpoint ${metadata.checkpointId.slice(0, 12)}`);
+  }
+  const hooks = metadata.hooks;
+  if (hooks && typeof hooks === 'object') {
+    const before = Number((hooks as {before?: unknown}).before ?? 0);
+    const after = Number((hooks as {after?: unknown}).after ?? 0);
+    if (before || after) parts.push(`hooks ${before}/${after}`);
+  }
+  if (metadata.hookError && typeof metadata.hookError === 'string') {
+    parts.push(`hook failed: ${sanitizeTerminalText(metadata.hookError).slice(0, 80)}`);
+  }
+  return parts.length ? parts.join(' · ') : undefined;
+}
+
+export function updateTool(
+  items: TimelineItem[],
+  result: {toolCallId: string; name: string; ok: boolean; content: string; metadata?: Record<string, unknown>},
+): TimelineItem[] {
   const output = sanitizeTerminalText(result.content).slice(0, 100_000);
+  const meta = toolMetaSummary(result.metadata);
   const found = items.some((item) => item.kind === 'tool' && item.id === result.toolCallId);
   if (!found) {
     return [...items, {
@@ -23,6 +54,7 @@ export function updateTool(items: TimelineItem[], result: {toolCallId: string; n
       detail: result.ok ? '' : firstLine(result.content),
       state: result.ok ? 'ok' as const : 'error' as const,
       output,
+      ...(meta ? {meta} : {}),
       ...(result.ok ? {} : {errorDetail: firstLine(result.content)}),
     }].slice(-100);
   }
@@ -32,6 +64,7 @@ export function updateTool(items: TimelineItem[], result: {toolCallId: string; n
       ...item,
       state: result.ok ? 'ok' as const : 'error' as const,
       output,
+      ...(meta ? {meta} : {}),
       ...(item.startedAt ? {durationMs: Date.now() - item.startedAt} : {}),
       ...(result.ok ? {} : {errorDetail: firstLine(result.content)}),
     };

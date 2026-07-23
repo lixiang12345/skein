@@ -18,7 +18,7 @@ export type TimelineItem =
   | {id: string; kind: 'assistant'; text: string; streaming?: boolean; clipped?: boolean}
   | {id: string; kind: 'context'; engine: string; hits: number; tokens: number; degradation?: ContextDegradation; truncated?: boolean; spans?: ContextSpan[]}
   | {id: string; kind: 'prompt'; intent: string; sections: string[]; tokens: number}
-  | {id: string; kind: 'tool'; name: string; detail: string; state: 'running' | 'ok' | 'error'; startedAt?: number; durationMs?: number; errorDetail?: string; output?: string}
+  | {id: string; kind: 'tool'; name: string; detail: string; state: 'running' | 'ok' | 'error'; startedAt?: number; durationMs?: number; errorDetail?: string; output?: string; meta?: string}
   | {id: string; kind: 'skill'; name: string; description: string}
   | {id: string; kind: 'memory'; count: number; scope: string}
   | {id: string; kind: 'agent'; profile: string; task: string; provider?: string; model?: string; phase?: 'work' | 'review' | 'revision'; stage?: 'context' | 'thinking' | 'tool' | 'response' | 'review'; activityDetail?: string; activeTool?: string; toolCalls?: number; inputTokens?: number; outputTokens?: number; summary?: string; alerts?: string[]; retryOf?: string; superseded?: boolean; state: 'running' | 'ok' | 'error'; startedAt?: number; durationMs?: number}
@@ -330,6 +330,7 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
                   {disclosure ? <Text color={theme.dim}> {disclosure}</Text> : null}
                 </Box>
                 {detailText ? <Text color={item.state === 'error' ? theme.error : theme.muted}>{`  ${truncateDisplay(detailText, Math.max(1, rowWidth - 2))}`}</Text> : null}
+                {item.meta ? <Text color={theme.dim}>{`  ${glyphs.branchLast} ${truncateDisplay(sanitizeInlineTerminalText(item.meta), Math.max(1, rowWidth - 4))}`}</Text> : null}
                 {output}
               </Box>
             );
@@ -346,6 +347,7 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
                 {suffix ? <Text color={theme.dim}>{suffix}</Text> : null}
                 {disclosure ? <Text color={theme.dim}> {disclosure}</Text> : null}
               </Box>
+              {item.meta ? <Text color={theme.dim}>{`  ${glyphs.branchLast} ${truncateDisplay(sanitizeInlineTerminalText(item.meta), Math.max(1, rowWidth - 4))}`}</Text> : null}
               {output}
             </Box>
           );

@@ -115,10 +115,11 @@ export function estimateTimelineItemRows(
     const narrow = rowWidth < 64;
     const detail = item.errorDetail || item.detail;
     const detailRows = narrow && detail ? 1 : 0;
+    const metaRows = item.meta ? 1 : 0;
     const outputRows = (showToolOutput || item.id === expandedToolId) && item.output
       ? Math.min(compact ? 25 : 81, richTextRows(item.output, Math.max(1, rowWidth - 2)))
       : 0;
-    return 1 + detailRows + outputRows;
+    return 1 + detailRows + metaRows + outputRows;
   }
   if (item.kind === 'list') {
     const entryRows = item.entries.reduce((total, entry) => total + 1 + (entry.detail ? 1 : 0), 0);
