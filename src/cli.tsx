@@ -238,10 +238,11 @@ program
     const config = await runtimeConfig(workspaceOption(options.workspace), runtimeOptions(options));
     const engine = new ContextEngine(config);
     const status = await engine.status();
+    const namespace = resolveProjectNamespaceSync(config.workspaceRoots[0] ?? process.cwd());
     if (options.json === true) {
-      printObject({config: configSummary(config), context: status}, true);
+      printObject({config: configSummary(config), context: status, namespace}, true);
     } else {
-      printStatusSummary(config, status);
+      printStatusSummary(config, status, namespace);
     }
   });
 
@@ -1225,7 +1226,11 @@ function printObject(value: unknown, json: boolean): void {
 }
 
 /** Render a human-readable status summary; the full record stays available via --json. */
-function printStatusSummary(config: MosaicConfig, context: Record<string, unknown>): void {
+function printStatusSummary(
+  config: MosaicConfig,
+  context: Record<string, unknown>,
+  namespace: {activeKind: 'canonical' | 'legacy'; phase: string; active: string},
+): void {
   const glyphs = cliGlyphs;
   const dim = (text: string): string => chalk.dim(text);
   const line = (level: 'ok' | 'warn' | 'error', name: string, detail: string): void => {
@@ -1262,6 +1267,14 @@ function printStatusSummary(config: MosaicConfig, context: Record<string, unknow
   line(selected === 'unavailable' ? 'error' : 'ok', 'Context engine', engineDetail);
   line(indexReady ? 'ok' : 'warn', 'Code index', indexDetail);
   line('ok', 'Workspace', config.workspaceRoots.join(`  ${glyphs.separator}  `));
+  const namespaceName = namespace.activeKind === 'canonical' ? '.skein' : '.mosaic';
+  const storageDetail = namespace.activeKind === 'canonical'
+    ? `${namespaceName} (canonical)`
+    : namespace.phase === 'active'
+      ? `${namespaceName} (legacy; new projects switch to .skein from 0.3.0)`
+      : `${namespaceName} (legacy; run ${PRODUCT_COMMAND} migrate --yes before removal)`;
+  const storageReady = namespace.activeKind === 'canonical' || namespace.phase === 'active';
+  line(storageReady ? 'ok' : 'warn', 'Storage', storageDetail);
   process.stdout.write(`\n${dim(`Run ${PRODUCT_COMMAND} status --json for the full machine-readable record.`)}\n`);
 }
 
