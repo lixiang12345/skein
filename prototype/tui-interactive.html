@@ -261,6 +261,21 @@ function cycleTodo(el){
   el.querySelector('.mark').textContent=nx==='done'?'☒':nx==='now'?'▸':'☐';
 }
 
+// ── context retrieval line: shows engine tier, hits, tokens, degradation ──
+// Mirrors ContextEngine.pack() in src/context/context-engine.ts — auto tier
+// prefers the external ContextEngine (semantic + rerank) and falls back to the
+// local BM25 index, surfacing a ContextDegradation when a channel is missing.
+function addContext(engine,hits,tokens,degrade){
+  const d=blk('tool');
+  const label=engine==='contextengine'?'ContextEngine · semantic+rerank'
+    :engine==='local'?'local · bm25+path+symbol':'auto';
+  const gc=degrade?'var(--warn)':'var(--info)';
+  let deg='';
+  if(degrade) deg=`<div class="result" style="color:var(--warn)"><span class="lead">⎿ </span>! ${esc(degrade)} — fell back to local index</div>`;
+  d.innerHTML=`<div class="call"><span class="g" style="color:${gc}">◇</span><span class="name">Context</span><span class="args">(${esc(label)})</span><span class="dur">${hits} spans · ~${tokens}</span></div>${deg}`;
+  return d;
+}
+
 function addPerm(question,onApply){
   const d=blk('');
   d.innerHTML=`<div class="perm"><div class="q">${esc(question)}</div><div class="opts"><b onclick="permYes(this)"><span class="k">⏎</span> yes</b><b><span class="k">a</span> yes, and don't ask again</b><b onclick="permNo(this)"><span class="k">esc</span> no</b><b><span class="k">e</span> edit</b></div></div>`;
@@ -301,6 +316,7 @@ function setMode(m){
 const CMDS=[
   {c:'/help',d:'List commands'},{c:'/clear',d:'Clear the transcript'},
   {c:'/model',d:'Switch model'},{c:'/context',d:'Show context breakdown'},
+  {c:'/engine',d:'Context engine status (auto/local/external)'},{c:'/index',d:'Build the workspace index'},
   {c:'/compact',d:'Compact the conversation'},{c:'/plan',d:'Plan mode'},
   {c:'/ask',d:'Ask mode'},{c:'/build',d:'Build mode'},
   {c:'/init',d:'Generate CLAUDE.md / AGENTS.md'},{c:'/theme',d:'Cycle theme'},
@@ -348,9 +364,11 @@ function handle(v){
       case '/ask':setMode('ask');return;
       case '/build':setMode('build');return;
       case '/theme':{const n=Object.keys(THEMES);setTheme(n[(n.indexOf(curTheme)+1)%n.length]);addNotice('Theme: '+curTheme,'ok');return;}
-      case '/context':addNotice('Context: 42% · 18k active · 4k tools · pinned: rate-limit.ts, index.ts (survives compaction)','info');return;
+      case '/context':addNotice('Context: 42% · 18k active · 4k tools · pinned: rate-limit.ts, index.ts (survives compaction)','info');addContext('contextengine',6,'2.1k',null);return;
       case '/compact':addNotice('✓ Compacted — 8 older messages summarized into ~4k tokens.','ok');setCtx(Math.max(0,ctxPct-30));return;
       case '/model':addNotice('Model routes → plan: claude-opus · edit: gpt-5-codex · embed: local-bge','info');return;
+      case '/index':addNotice('Indexing workspace… 42 files, 318 chunks written to .skein/index.json','ok');addContext('contextengine',0,'0',null);return;
+      case '/engine':addNotice('Context engine: auto · external ContextEngine v0.4.2 healthy, indexed · local fallback ready','info');return;
       case '/init':addNotice('✓ Generated AGENTS.md from project structure (42 files scanned).','ok');return;
       case '/undo':addNotice('↩ Rolled back to checkpoint #3 — 2 files restored.','warn');return;
       case '/demo':runDemo();return;
@@ -362,6 +380,7 @@ function handle(v){
   startSpin('Thinking');
   setTimeout(()=>{
     stopSpin();
+    addContext('contextengine',6,'2.0k',null);
     addTool('⏺','Search',v.slice(0,32),'Found 6 matches across 4 files',['src/mw/rate-limit.ts:12','src/mw/index.ts:88','bench/burst.js:4'],'ok','120ms');
     setCtx(28);
     startSpin('Responding');
@@ -387,7 +406,9 @@ function runDemo(){
   let t=0;const at=(ms,fn)=>{t+=ms;setTimeout(fn,t);};
 
   at(300,()=>addUser('the /limit endpoint returns 500 under load — find the root cause and fix it, keep it minimal'));
-  at(400,()=>startSpin('Thinking'));
+  at(400,()=>startSpin('Retrieving context'));
+  at(900,()=>{stopSpin();addContext('auto',7,'2.4k','rerank channel unavailable');setCtx(14);});
+  at(300,()=>startSpin('Thinking'));
   at(1400,()=>{stopSpin();
     const a=addAsst();
     streamInto(a,"I'll reproduce it, trace the rate limiter, then patch the smallest thing that fixes it.");
