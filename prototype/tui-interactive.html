@@ -577,7 +577,7 @@ function handle(v){
       case '/theme':{const n=Object.keys(THEMES);setTheme(n[(n.indexOf(curTheme)+1)%n.length]);addNotice('Theme: '+curTheme,'ok');break;}
       case '/context':panelContext();break;
       case '/compact':addNotice('✓ Compacted — 8 older messages summarized into ~4k tokens. Pinned files kept.','ok');setCtx(Math.max(0,ctxPct-30));break;
-      case '/model':addNotice('Routes → plan: claude-opus · edit: gpt-5-codex · embed: local-bge','info');break;
+      case '/model':addNotice('Routes → plan: claude-opus · edit: gpt-5.6-sol · embed: local-bge','info');break;
       case '/index':addNotice('Indexing…','info');startSpin('Indexing');setTimeout(()=>{stopSpin();addNotice('✓ Indexed 42 files · 318 chunks → .skein/index.json','ok');panelEngine();drainQueue();},1400);return;
       case '/engine':panelEngine();break;
       case '/resources':panelResources();break;

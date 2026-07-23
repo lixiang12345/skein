@@ -625,19 +625,21 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     }
     if (command === 'skills') {
       const skills = extensions?.listSkills() ?? [];
-      appendList('Skills', skills.map((skill) => ({
-        label: `${skill.name}  ${skill.scope}${skill.trusted ? '' : `${separator}untrusted`}`,
-        detail: skill.description,
-        tone: skill.trusted ? 'normal' : 'warning',
-      })));
+      appendList('Skills', skills.length
+        ? skills.map((skill) => ({
+          label: `${skill.name}  ${skill.scope}${skill.trusted ? '' : `${separator}untrusted`}`,
+          detail: `${skill.description}${separator}${relative(runner.workspace.primaryRoot, skill.path) || skill.path}`,
+          tone: skill.trusted ? 'normal' as const : 'warning' as const,
+        }))
+        : [{label: 'No skills discovered.', detail: 'Add SKILL.md playbooks under .agents/skills, .claude/skills, or a configured directory.'}]);
       return true;
     }
     if (command === 'mcp') {
       const servers = extensions?.mcpStatus() ?? [];
       appendList('MCP', servers.length
         ? servers.map((server) => ({
-          label: `${server.name}  ${server.state}`,
-          detail: `${server.transport}${separator}${server.toolCount} tools${server.error ? `${separator}${server.error}` : ''}`,
+          label: `${server.name}  ${server.state}${server.serverVersion ? `${separator}v${server.serverVersion}` : ''}`,
+          detail: `${server.transport}${separator}${server.toolCount} tools${server.connectedAt ? `${separator}connected ${server.connectedAt.slice(11, 19)}` : ''}${server.error ? `${separator}${server.error}` : ''}`,
           tone: server.state === 'connected' ? 'success' : server.state === 'error' ? 'error' : 'warning',
         }))
         : [{label: 'No MCP servers configured.'}]);
@@ -673,8 +675,9 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         const routeLabel = route
           ? `${route.runtime ?? 'api'}:${route.connection ? `@${route.connection}` : route.provider ?? connection?.provider}/${route.model ?? config.model.model} (${resolved.source})`
           : `${config.model.provider}/${config.model.model} (parent)`;
+        const limits = `${profile.readOnly ? 'read-only' : 'writer'}${separator}${profile.maxTurns} turns${profile.tools?.length ? `${separator}${profile.tools.length} tools` : ''}`;
         return {
-          label: `${profile.name}  ${profile.readOnly ? 'read-only' : 'writer'}`,
+          label: `${profile.name}  ${limits}`,
           detail: `${profile.description}${separator}${profile.source}${separator}${routeLabel}`,
         };
       }));
@@ -809,12 +812,22 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       return true;
     }
     if (command === 'about') {
+      const usage = runner.getSession().usage;
+      const status = runner.getContextStatus();
       appendList('Skein', [
         {label: `${config.model.provider}/${config.model.model}`, detail: 'model'},
         {label: config.context.engine, detail: 'context engine'},
         {label: theme.name, detail: 'terminal theme'},
         {label: config.memory?.enabled ? 'enabled' : 'disabled', detail: 'durable memory'},
         {label: config.agents?.enabled ? `${config.agents.maxConcurrent} concurrent` : 'disabled', detail: 'expert delegation'},
+        {
+          label: `${usage.inputTokens.toLocaleString()} in ${separator} ${usage.outputTokens.toLocaleString()} out`,
+          detail: `session tokens${separator}${(usage.inputTokens + usage.outputTokens).toLocaleString()} total`,
+        },
+        {
+          label: `${Math.round(status.pressure * 100)}% context pressure`,
+          detail: `${status.messageCount} active messages${separator}~${status.activeTokens.toLocaleString()} tokens${status.compactedMessages ? `${separator}${status.compactedMessages} compacted` : ''}`,
+        },
       ]);
       return true;
     }
@@ -842,7 +855,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         const records = extensions.searchMemory('', runner.getSession(), 12);
         appendList('Durable memory', records.map((record) => ({
           label: `${record.id.slice(0, 8)}  ${record.scope}/${record.kind}`,
-          detail: `${record.content.replace(/\s+/g, ' ').slice(0, 180)}${record.content.length > 180 ? ellipsis : ''}${separator}confidence ${Math.round(record.confidence * 100)}%`,
+          detail: `${record.content.replace(/\s+/g, ' ').slice(0, 140)}${record.content.length > 140 ? ellipsis : ''}${separator}confidence ${Math.round(record.confidence * 100)}%${record.tags.length ? `${separator}${record.tags.slice(0, 4).join(', ')}` : ''}${separator}${record.source}`,
         })));
         return true;
       }
