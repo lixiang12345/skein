@@ -148,6 +148,12 @@ export function estimateTimelineItemRows(
   }
   if (item.kind === 'agent' || item.kind === 'agent-message') return rowWidth < 64 ? 2 : 1;
   if (item.kind === 'workflow') return rowWidth < 64 ? 2 : 1;
+  if (item.kind === 'banner') {
+    // Wordmark art (3 rows) on wide layouts, a single line when narrow, plus
+    // three metadata/help lines and the trailing margin row.
+    const wordmarkRows = rowWidth >= 44 ? 3 : 1;
+    return wordmarkRows + 3 + 1;
+  }
   return 1;
 }
 

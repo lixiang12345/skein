@@ -28,6 +28,7 @@ export type TimelineItem =
   | {id: string; kind: 'list'; title: string; entries: ListEntry[]}
   | {id: string; kind: 'context-inspector'; status: ContextInspectorStatus; working?: WorkingMemory; summary?: string; sources?: ContextSource[]}
   | {id: string; kind: 'theme'; name: string}
+  | {id: string; kind: 'banner'; model: string; engine: string; workspace: string; version: string}
   | {id: string; kind: 'notice'; text: string; tone?: 'info' | 'error' | 'success'};
 
 export interface ListEntry {
@@ -415,6 +416,9 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
           return <ContextInspector key={item.id} status={item.status} working={item.working} summary={item.summary} width={width} compact={compact} glyphMode={glyphMode} />;
         }
         if (item.kind === 'theme') return <ThemePreview key={item.id} name={item.name} width={width} glyphs={glyphs} />;
+        if (item.kind === 'banner') {
+          return <Banner key={item.id} model={item.model} engine={item.engine} workspace={item.workspace} version={item.version} width={width} glyphs={glyphs} />;
+        }
         const color = item.tone === 'error'
           ? theme.error
           : item.tone === 'success'
@@ -1222,6 +1226,48 @@ function ThemePreview({name, width, glyphs}: {name: string; width: number; glyph
           <Text color={theme.success}> {glyphs.swatch}</Text><Text color={theme.warning}> {glyphs.swatch}</Text><Text color={theme.error}> {glyphs.swatch}</Text>
         </Box>
       ) : <Text>text {glyphs.separator} accent {glyphs.separator} success {glyphs.separator} warning {glyphs.separator} error</Text>}
+    </Box>
+  );
+}
+
+function Banner({model, engine, workspace, version, width, glyphs}: {
+  model: string;
+  engine: string;
+  workspace: string;
+  version: string;
+  width: number;
+  glyphs: UiGlyphs;
+}) {
+  const theme = useTheme();
+  const innerWidth = Math.max(1, safeWidth(width) - 2);
+  // A compact wordmark that survives narrow terminals: the full ASCII art on
+  // wide layouts, a single glyph+name line when there is not enough room.
+  const art = [
+    '░█▀▀░█░█░█▀▀░▀█▀░█▀█',
+    '░▀▀█░█▀▄░█▀▀░░█░░█░█',
+    '░▀▀▀░▀░▀░▀▀▀░▀▀▀░▀░▀',
+  ];
+  const wordmarkFits = safeWidth(width) >= 44 && glyphs.borderStyle !== 'classic';
+  const meta = [
+    `model ${sanitizeInlineTerminalText(model)}`,
+    `engine ${sanitizeInlineTerminalText(engine)}`,
+    `cwd ${compactDisplayPath(sanitizeInlineTerminalText(workspace), 32)}`,
+  ].join(` ${glyphs.separator} `);
+  const tagline = 'a terminal coding agent you can see through';
+  return (
+    <Box marginBottom={1} flexDirection="column">
+      {wordmarkFits ? (
+        <Box flexDirection="column">
+          {art.map((line, index) => (
+            <Text key={index} bold color={theme.accent}>{line}</Text>
+          ))}
+        </Box>
+      ) : (
+        <Text bold color={theme.accent}>{`${glyphs.brand} ${PRODUCT_NAME.toUpperCase()}`}</Text>
+      )}
+      <Text color={theme.muted}>{truncateDisplay(`${glyphs.brand} ${PRODUCT_NAME} v${version} ${glyphs.separator} ${tagline}`, innerWidth)}</Text>
+      <Text color={theme.dim}>{truncateDisplay(meta, innerWidth)}</Text>
+      <Text color={theme.dim}>{truncateDisplay(`type a request ${glyphs.separator} /help for commands ${glyphs.separator} @ to attach files`, innerWidth)}</Text>
     </Box>
   );
 }

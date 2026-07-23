@@ -26,6 +26,7 @@ import type {
   ToolCategory,
 } from '../types.js';
 import {PRODUCT_COMMAND, PRODUCT_NAME} from '../brand.js';
+import packageJson from '../../package.json' with {type: 'json'};
 import {
   ActivityLine,
   CommandPalette,
@@ -126,7 +127,12 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const [interactionMode, setInteractionMode] = useState<'ask' | 'plan' | 'build'>(planMode ? 'plan' : askMode ? 'ask' : 'build');
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
-  const [timeline, setTimeline] = useState<TimelineItem[]>(() => initialTimeline(initialSession, setupProblem));
+  const [timeline, setTimeline] = useState<TimelineItem[]>(() => initialTimeline(initialSession, {
+    model: `${config.model.provider}/${config.model.model}`,
+    engine: config.context.engine,
+    workspace: runner.workspace.primaryRoot ?? process.cwd(),
+    version: packageJson.version,
+  }, setupProblem));
   const [tasks, setTasks] = useState<SessionTask[]>(initialSession.tasks.map((task) => ({...task})));
   const [session, setSession] = useState<Session>(() => snapshotSession(initialSession));
   const [permission, setPermission] = useState<PermissionRequest>();
@@ -1463,13 +1469,25 @@ export async function runInteractiveTui(options: TuiOptions): Promise<void> {
   await instance.waitUntilExit();
 }
 
-function initialTimeline(session: Session, setupProblem?: string): TimelineItem[] {
+function initialTimeline(session: Session, banner: BannerInfo, setupProblem?: string): TimelineItem[] {
   const items: TimelineItem[] = session.messages
     .filter((message) => (message.role === 'user' || message.role === 'assistant') && visibleMessage(message))
     .slice(-20)
     .map((message) => ({id: message.id, kind: message.role as 'user' | 'assistant', text: message.content}));
-  if (setupProblem && !items.length) items.push({id: nextId(), kind: 'notice', tone: 'error', text: setupProblem});
+  // A fresh session opens on the product banner instead of an empty screen; a
+  // resumed session keeps its transcript and skips the banner.
+  if (!items.length) {
+    items.push({id: nextId(), kind: 'banner', model: banner.model, engine: banner.engine, workspace: banner.workspace, version: banner.version});
+  }
+  if (setupProblem && items.length <= 1) items.push({id: nextId(), kind: 'notice', tone: 'error', text: setupProblem});
   return items;
+}
+
+interface BannerInfo {
+  model: string;
+  engine: string;
+  workspace: string;
+  version: string;
 }
 
 function initialHistory(session: Session): string[] {
