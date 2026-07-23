@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Skein TUI — Interactive Prototype</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:       #0E1117;
+  --accent:   #6EE7D0;
+  --text:     #C3CCDD;
+  --strong:   #EEF2FB;
+  --muted:    #8794AB;
+  --dim:      #5A6478;
+  --border:   #273045;
+  --success:  #4ADE80;
+  --warning:  #FBBF24;
+  --error:    #FB7185;
+  --sel:      #212A3F;
+  --assistant:#6EE7D0;
+  --diff-add: #4ADE80;
+  --diff-rem: #FB7185;
+  --font: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Menlo', monospace;
+}
+body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; line-height: 1.5; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+/* ── layout ── */
+#app { display: flex; flex-direction: column; height: 100vh; }
+#header { padding: 6px 12px 0; flex-shrink: 0; }
+#body { display: flex; flex: 1; overflow: hidden; }
+#main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+#timeline { flex: 1; overflow-y: auto; padding: 8px 12px; scroll-behavior: smooth; }
+#timeline::-webkit-scrollbar { width: 4px; } #timeline::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+#sidebar { width: 220px; border-left: 1px solid var(--border); padding: 8px; overflow-y: auto; flex-shrink: 0; display: none; }
+#sidebar.open { display: block; }
+#footer { flex-shrink: 0; padding: 0 12px 8px; }
+
+/* ── header ── */
+.header-row { display: flex; align-items: center; gap: 0; padding-bottom: 6px; }
+.brand { color: var(--accent); font-weight: 700; }
+.sep { color: var(--border); margin: 0 6px; }
+.repo { color: var(--muted); }
+.mode-badge { font-weight: 700; }
+.mode-build { color: var(--accent); }
+.mode-ask   { color: var(--muted); }
+.mode-plan  { color: var(--warning); }
+.model-info { margin-left: auto; color: var(--dim); font-size: 11px; }
+
+/* ── timeline items ── */
+.tl-item { margin-bottom: 12px; }
+.tl-item.compact { margin-bottom: 4px; }
+
+.tl-user { display: flex; gap: 8px; }
+.tl-user .glyph { color: var(--accent); font-weight: 700; flex-shrink: 0; }
+.tl-user .body  { color: var(--strong); font-weight: 700; word-break: break-word; }
+
+.tl-assistant .brand-line { color: var(--accent); font-weight: 700; margin-bottom: 2px; }
+.tl-assistant .body { padding-left: 16px; color: var(--text); white-space: pre-wrap; word-break: break-word; }
+.tl-assistant .cursor { display: inline-block; width: 7px; height: 13px; background: var(--accent); animation: blink .9s step-end infinite; vertical-align: text-bottom; }
+@keyframes blink { 50% { opacity: 0; } }
+
+.tl-tool { display: flex; align-items: flex-start; gap: 6px; font-size: 12px; }
+.tl-tool .glyph { flex-shrink: 0; }
+.tl-tool .name  { color: var(--text); font-weight: 600; }
+.tl-tool .detail { color: var(--muted); margin-left: 6px; }
+.tl-tool .dur   { color: var(--dim); margin-left: 6px; }
+.tl-tool .output { padding-left: 20px; margin-top: 2px; color: var(--dim); font-size: 11px; white-space: pre-wrap; max-height: 120px; overflow: hidden; }
+.tl-tool .output.expanded { max-height: none; }
+.tl-tool .toggle { color: var(--muted); cursor: pointer; margin-left: 4px; user-select: none; }
+.tl-tool .toggle:hover { color: var(--accent); }
+
+.tl-meta { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); }
+.tl-meta .glyph { color: var(--accent); }
+
+.tl-notice { color: var(--muted); font-size: 11px; }
+.tl-notice.error   { color: var(--error); }
+.tl-notice.success { color: var(--success); }
+
+.tl-context-inspector { padding-left: 16px; }
+.tl-context-inspector .title { color: var(--strong); font-weight: 700; }
+.tl-context-inspector .pressure { }
+.tl-context-inspector .meter { display: inline-flex; gap: 0; margin-left: 6px; }
+.tl-context-inspector .kv { display: flex; gap: 8px; font-size: 11px; margin-top: 1px; }
+.tl-context-inspector .kv .k { color: var(--muted); min-width: 80px; }
+.tl-context-inspector .kv .v { color: var(--text); }
+
+/* rich text */
+.rich-code-block { color: var(--accent); }
+.rich-code-line  { color: var(--accent); padding-left: 12px; }
+.rich-code-line.add { color: var(--diff-add); }
+.rich-code-line.rem { color: var(--diff-rem); }
+.rich-heading { color: var(--strong); font-weight: 700; }
+.rich-bullet  { }
+.rich-bullet .b { color: var(--accent); }
+.rich-quote   { color: var(--muted); }
+.rich-inline-code { background: var(--sel); padding: 0 3px; border-radius: 2px; color: var(--accent); }
+
+/* ── rule line ── */
+.rule { border: none; border-top: 1px solid var(--border); margin: 0 0 6px; }
+
+/* ── prompt bar ── */
+#prompt-area { }
+.prompt-row { display: flex; align-items: center; gap: 6px; }
+.prompt-glyph { color: var(--accent); font-weight: 700; flex-shrink: 0; }
+.prompt-glyph.shell { color: var(--warning); }
+#input { background: transparent; border: none; outline: none; color: var(--strong); font-family: var(--font); font-size: 13px; flex: 1; caret-color: var(--accent); }
+.prompt-hint { padding-left: 20px; color: var(--muted); font-size: 11px; margin-top: 1px; }
+
+/* ── command palette ── */
+#palette { background: var(--sel); border: 1px solid var(--border); border-radius: 4px; margin-bottom: 4px; overflow: hidden; }
+.palette-item { padding: 4px 10px; display: flex; gap: 10px; cursor: pointer; }
+.palette-item:hover, .palette-item.active { background: var(--border); }
+.palette-item .cmd { color: var(--accent); font-weight: 600; min-width: 120px; }
+.palette-item .desc { color: var(--muted); font-size: 11px; }
+
+/* ── task rail ── */
+.task-rail-title { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 4px; }
+.task-item { display: flex; gap: 6px; font-size: 11px; padding: 2px 0; }
+.task-item .status { flex-shrink: 0; }
+.task-item .title  { color: var(--text); }
+.task-item.done .title { color: var(--dim); }
+.task-item.active .title { color: var(--strong); }
+
+/* ── toolbar ── */
+#toolbar { display: flex; gap: 8px; padding: 4px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.tb-btn { background: none; border: 1px solid var(--border); color: var(--muted); font-family: var(--font); font-size: 11px; padding: 2px 8px; border-radius: 3px; cursor: pointer; }
+.tb-btn:hover { border-color: var(--accent); color: var(--accent); }
+.tb-btn.active { border-color: var(--accent); color: var(--accent); background: var(--sel); }
+.tb-sep { color: var(--border); line-height: 22px; }
+
+/* ── theme picker ── */
+#theme-bar { display: flex; gap: 6px; padding: 4px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; align-items: center; }
+.theme-label { color: var(--dim); font-size: 10px; margin-right: 4px; }
+.theme-swatch { width: 14px; height: 14px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; }
+.theme-swatch.active { border-color: var(--strong); }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="toolbar">
+    <button class="tb-btn active" id="btn-build" onclick="setMode('build')">● BUILD</button>
+    <button class="tb-btn" id="btn-ask"   onclick="setMode('ask')">● ASK</button>
+    <button class="tb-btn" id="btn-plan"  onclick="setMode('plan')">● PLAN</button>
+    <span class="tb-sep">|</span>
+    <button class="tb-btn" id="btn-ctx"   onclick="toggleSidebar()">context</button>
+    <button class="tb-btn" id="btn-tool"  onclick="toggleToolOutput()">tool output</button>
+    <button class="tb-btn" id="btn-demo"  onclick="runDemo()">▶ demo</button>
+    <button class="tb-btn" id="btn-clear" onclick="clearTimeline()">clear</button>
+  </div>
+  <div id="theme-bar">
+    <span class="theme-label">theme</span>
+    <div class="theme-swatch active" style="background:#6EE7D0" title="graphite" onclick="setTheme('graphite')"></div>
+    <div class="theme-swatch" style="background:#D6AD72" title="cinder"   onclick="setTheme('cinder')"></div>
+    <div class="theme-swatch" style="background:#E7E7E7" title="mono"     onclick="setTheme('mono')"></div>
+    <div class="theme-swatch" style="background:#B2B9F0" title="midnight" onclick="setTheme('midnight')"></div>
+    <div class="theme-swatch" style="background:#236B8E" title="paper"    onclick="setTheme('paper')"></div>
+  </div>
+  <div id="header">
+    <div class="header-row">
+      <span class="brand">◆ SKEIN</span>
+      <span class="sep">·</span>
+      <span class="repo">codeagentcli</span>
+      <span class="sep">·</span>
+      <span class="mode-badge mode-build" id="mode-label">● BUILD</span>
+      <span class="model-info" id="model-info">anthropic/[REDACTED]</span>
+    </div>
+  </div>
+  <div id="body">
+    <div id="main">
+      <div id="timeline"></div>
+      <div id="footer">
+        <hr class="rule">
+        <div id="palette" style="display:none"></div>
+        <div id="prompt-area">
+          <div class="prompt-row">
+            <span class="prompt-glyph" id="prompt-glyph">›</span>
+            <input id="input" placeholder="Start with a request, @file, or /help" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="prompt-hint" id="prompt-hint">enter send · ctrl+j newline · /help commands</div>
+        </div>
+      </div>
+    </div>
+    <div id="sidebar">
+      <div class="task-rail-title">tasks</div>
+      <div id="task-list"></div>
+    </div>
+  </div>
+</div>
+<script>
+const THEMES = {
+  graphite: { bg:'#0E1117', accent:'#6EE7D0', text:'#C3CCDD', strong:'#EEF2FB', muted:'#8794AB', dim:'#5A6478', border:'#273045', success:'#4ADE80', warning:'#FBBF24', error:'#FB7185', sel:'#212A3F', assistant:'#6EE7D0', diffAdd:'#4ADE80', diffRem:'#FB7185' },
+  cinder:   { bg:'#1A1510', accent:'#D6AD72', text:'#DBD7D1', strong:'#F6F2EC', muted:'#AAA39A', dim:'#837D76', border:'#4A4540', success:'#8FC38A', warning:'#E0A35E', error:'#DF7D82', sel:'#3A3128', assistant:'#D6AD72', diffAdd:'#8FC38A', diffRem:'#DF7D82' },
+  mono:     { bg:'#111111', accent:'#E7E7E7', text:'#D2D2D2', strong:'#FFFFFF', muted:'#A5A5A5', dim:'#7D7D7D', border:'#484848', success:'#E1E1E1', warning:'#C5C5C5', error:'#F0F0F0', sel:'#343434', assistant:'#E7E7E7', diffAdd:'#E1E1E1', diffRem:'#F0F0F0' },
+  midnight: { bg:'#0F0F18', accent:'#B2B9F0', text:'#DDDDE5', strong:'#F6F5F8', muted:'#A09FAA', dim:'#7E7D8B', border:'#42414B', success:'#82C79B', warning:'#D8B773', error:'#E18A91', sel:'#2D2D3D', assistant:'#B2B9F0', diffAdd:'#82C79B', diffRem:'#E18A91' },
+  paper:    { bg:'#F4F1EC', accent:'#236B8E', text:'#30343A', strong:'#15181C', muted:'#626A73', dim:'#69727C', border:'#C8CDD3', success:'#287A46', warning:'#8A621B', error:'#AD3942', sel:'#DCEAF1', assistant:'#236B8E', diffAdd:'#287A46', diffRem:'#AD3942' },
+};
+
+let currentTheme = 'graphite';
+let currentMode = 'build';
+let showToolOutput = false;
+let sidebarOpen = false;
+let streaming = false;
+let streamTimer = null;
+let tasks = [];
+
+const COMMANDS = [
+  { cmd: '/help',     desc: 'Show available commands' },
+  { cmd: '/clear',    desc: 'Clear the timeline' },
+  { cmd: '/context',  desc: 'Show context inspector' },
+  { cmd: '/compact',  desc: 'Compact context' },
+  { cmd: '/plan',     desc: 'Switch to plan mode' },
+  { cmd: '/ask',      desc: 'Switch to ask mode' },
+  { cmd: '/build',    desc: 'Switch to build mode' },
+  { cmd: '/theme',    desc: 'Cycle theme' },
+  { cmd: '/tasks',    desc: 'Toggle task rail' },
+  { cmd: '/demo',     desc: 'Run demo sequence' },
+];
+
+function applyTheme(name) {
+  const t = THEMES[name] || THEMES.graphite;
+  const r = document.documentElement.style;
+  r.setProperty('--bg',       t.bg);
+  r.setProperty('--accent',   t.accent);
+  r.setProperty('--text',     t.text);
+  r.setProperty('--strong',   t.strong);
+  r.setProperty('--muted',    t.muted);
+  r.setProperty('--dim',      t.dim);
+  r.setProperty('--border',   t.border);
+  r.setProperty('--success',  t.success);
+  r.setProperty('--warning',  t.warning);
+  r.setProperty('--error',    t.error);
+  r.setProperty('--sel',      t.sel);
+  r.setProperty('--assistant',t.assistant);
+  r.setProperty('--diff-add', t.diffAdd);
+  r.setProperty('--diff-rem', t.diffRem);
+  document.querySelectorAll('.theme-swatch').forEach(s => s.classList.toggle('active', s.title === name));
+}
+
+function setTheme(name) {
+  currentTheme = name;
+  applyTheme(name);
+  appendNotice(`Theme: ${name}`, 'success');
+}
+
+function setMode(mode) {
+  currentMode = mode;
+  const labels = { build: '● BUILD', ask: '● ASK', plan: '● PLAN' };
+  const classes = { build: 'mode-build', ask: 'mode-ask', plan: 'mode-plan' };
+  const el = document.getElementById('mode-label');
+  el.textContent = labels[mode];
+  el.className = 'mode-badge ' + classes[mode];
+  ['build','ask','plan'].forEach(m => document.getElementById('btn-'+m).classList.toggle('active', m === mode));
+  const glyph = document.getElementById('prompt-glyph');
+  glyph.className = 'prompt-glyph' + (mode === 'plan' ? ' shell' : '');
+}
+
+function toggleSidebar() {
+  sidebarOpen = !sidebarOpen;
+  document.getElementById('sidebar').classList.toggle('open', sidebarOpen);
+  document.getElementById('btn-ctx').classList.toggle('active', sidebarOpen);
+}
+
+function toggleToolOutput() {
+  showToolOutput = !showToolOutput;
+  document.getElementById('btn-tool').classList.toggle('active', showToolOutput);
+  document.querySelectorAll('.tl-tool .output').forEach(el => el.classList.toggle('expanded', showToolOutput));
+}
+
+function clearTimeline() {
+  document.getElementById('timeline').innerHTML = '';
+  tasks = [];
+  renderTasks();
+}
+
+// ── timeline renderers ──────────────────────────────────────────────────────
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function renderRichText(text) {
+  let inCode = false;
+  return text.split('\n').map(line => {
+    if (/^```/.test(line.trim())) {
+      inCode = !inCode;
+      return `<div class="rich-code-block">${inCode ? '◇ code' : '~'}</div>`;
+    }
+    if (inCode) {
+      const cls = line.startsWith('+') ? 'add' : line.startsWith('-') ? 'rem' : '';
+      return `<div class="rich-code-line ${cls}">· ${escHtml(line||' ')}</div>`;
+    }
+    const heading = line.match(/^#{1,4}\s+(.+)$/);
+    if (heading) return `<div class="rich-heading">${escHtml(heading[1])}</div>`;
+    const bullet = line.match(/^\s*([-*]|\d+\.)\s+(.+)$/);
+    if (bullet) return `<div class="rich-bullet"><span class="b">${escHtml(bullet[1])} </span>${escHtml(bullet[2])}</div>`;
+    if (line.startsWith('> ')) return `<div class="rich-quote">· ${escHtml(line.slice(2))}</div>`;
+    const inlined = escHtml(line||' ').replace(/`([^`]+)`/g, '<span class="rich-inline-code">$1</span>');
+    return `<div>${inlined}</div>`;
+  }).join('');
+}
+
+function appendUser(text) {
+  const tl = document.getElementById('timeline');
+  const div = document.createElement('div');
+  div.className = 'tl-item tl-user';
+  div.innerHTML = `<span class="glyph">›</span><span class="body">${escHtml(text)}</span>`;
+  tl.appendChild(div);
+  scrollBottom();
+}
+
+function appendAssistant(text, streaming = false) {
+  const tl = document.getElementById('timeline');
+  const div = document.createElement('div');
+  div.className = 'tl-item tl-assistant';
+  div.id = 'asst-' + Date.now();
+  const streamingBadge = streaming ? ` <span style="color:var(--muted)">· streaming</span>` : '';
+  div.innerHTML = `<div class="brand-line">◆ SKEIN${streamingBadge}</div><div class="body">${renderRichText(text)}${streaming ? '<span class="cursor"></span>' : ''}</div>`;
+  tl.appendChild(div);
+  scrollBottom();
+  return div;
+}
+
+function appendTool(name, detail, state, output, durationMs) {
+  const tl = document.getElementById('timeline');
+  const div = document.createElement('div');
+  div.className = 'tl-item tl-tool';
+  const glyphColor = state === 'running' ? 'var(--accent)' : state === 'ok' ? 'var(--success)' : 'var(--error)';
+  const glyph = state === 'running' ? '◌' : state === 'ok' ? '✓' : '×';
+  const dur = durationMs !== undefined ? `<span class="dur">${durationMs}ms</span>` : '';
+  const hasOutput = Boolean(output);
+  const toggle = hasOutput ? `<span class="toggle" onclick="this.closest('.tl-tool').querySelector('.output').classList.toggle('expanded');this.textContent=this.textContent==='›'?'⌄':'›'">›</span>` : '';
+  const outputHtml = hasOutput ? `<div class="output${showToolOutput?' expanded':''}">${escHtml(output)}</div>` : '';
+  div.innerHTML = `<span class="glyph" style="color:${glyphColor}">${glyph}</span><span class="name">${escHtml(name)}</span>${toggle}<span class="detail">${escHtml(detail)}</span>${dur}${outputHtml}`;
+  tl.appendChild(div);
+  scrollBottom();
+  return div;
+}
+
+function appendMeta(glyph, label, detail) {
+  const tl = document.getElementById('timeline');
+  const div = document.createElement('div');
+  div.className = 'tl-item tl-meta';
+  div.innerHTML = `<span class="glyph">${glyph}</span><span>${escHtml(label)}</span><span style="color:var(--border)">·</span><span>${escHtml(detail)}</span>`;
+  tl.appendChild(div);
+  scrollBottom();
+}
+
+function appendNotice(text, tone) {
+  const tl = document.getElementById('timeline');
+  const div = document.createElement('div');
+  div.className = 'tl-item tl-notice' + (tone ? ' ' + tone : '');
+  div.textContent = text;
+  tl.appendChild(div);
+  scrollBottom();
+}
+
+function appendContextInspector() {
+  const tl = document.getElementById('timeline');
+  const div = document.createElement('div');
+  div.className = 'tl-item tl-context-inspector';
+  div.innerHTML = `
+    <div class="title">Context <span style="color:var(--accent)">42%</span>
+      <span class="meter">${'█'.repeat(8)}<span style="color:var(--border)">${'░'.repeat(11)}</span></span>
+    </div>
+    <div class="kv"><span class="k">active</span><span class="v">14 messages · ~18k tokens · tools ~4k</span></div>
+    <div class="kv"><span class="k">short-term</span><span class="v">refactor session store · 2m ago</span></div>
+    <div class="kv"><span class="k">summary</span><span class="v">not created</span></div>
+    <div class="kv"><span class="k">long-term</span><span class="v">retrieved by relevance · untrusted context</span></div>
+    <div class="kv"><span class="k">pinned 2</span><span class="v" style="color:var(--success)">~3k tokens · survives compaction · store.ts · manager.ts</span></div>
+  `;
+  tl.appendChild(div);
+  scrollBottom();
+}
+
+function scrollBottom() {
+  const tl = document.getElementById('timeline');
+  tl.scrollTop = tl.scrollHeight;
+}
+
+// ── task rail ───────────────────────────────────────────────────────────────
+
+function renderTasks() {
+  const el = document.getElementById('task-list');
+  if (!tasks.length) { el.innerHTML = '<div style="color:var(--dim);font-size:11px">No active plan.</div>'; return; }
+  el.innerHTML = tasks.map(t => {
+    const icon = t.status === 'completed' ? `<span style="color:var(--success)">✓</span>` : t.status === 'in_progress' ? `<span style="color:var(--accent)">◌</span>` : `<span style="color:var(--dim)">·</span>`;
+    const cls = t.status === 'completed' ? 'done' : t.status === 'in_progress' ? 'active' : '';
+    return `<div class="task-item ${cls}">${icon}<span class="title">${escHtml(t.title)}</span></div>`;
+  }).join('');
+}
+
+function addTask(title, status = 'pending') {
+  tasks.push({ title, status });
+  renderTasks();
+  if (!sidebarOpen) toggleSidebar();
+}
+
+function updateTask(title, status) {
+  const t = tasks.find(x => x.title === title);
+  if (t) { t.status = status; renderTasks(); }
+}
+
+// ── command palette ─────────────────────────────────────────────────────────
+
+let paletteIndex = 0;
+let paletteItems = [];
+
+function showPalette(matches) {
+  const el = document.getElementById('palette');
+  if (!matches.length) { el.style.display = 'none'; return; }
+  paletteItems = matches;
+  paletteIndex = 0;
+  el.style.display = 'block';
+  renderPalette();
+}
+
+function renderPalette() {
+  const el = document.getElementById('palette');
+  el.innerHTML = paletteItems.map((item, i) =>
+    `<div class="palette-item${i===paletteIndex?' active':''}" onclick="selectPaletteItem(${i})">
+      <span class="cmd">${escHtml(item.cmd)}</span><span class="desc">${escHtml(item.desc)}</span>
+    </div>`
+  ).join('');
+}
+
+function hidePalette() {
+  document.getElementById('palette').style.display = 'none';
+  paletteItems = [];
+}
+
+function selectPaletteItem(i) {
+  const item = paletteItems[i];
+  if (!item) return;
+  document.getElementById('input').value = item.cmd + ' ';
+  hidePalette();
+  document.getElementById('input').focus();
+}
+
+// ── streaming simulation ────────────────────────────────────────────────────
+
+function streamText(text, onDone) {
+  streaming = true;
+  const div = appendAssistant('', true);
+  const body = div.querySelector('.body');
+  let i = 0;
+  const words = text.split(' ');
+  function tick() {
+    if (i >= words.length) {
+      body.innerHTML = renderRichText(text);
+      streaming = false;
+      if (onDone) onDone();
+      return;
+    }
+    const partial = words.slice(0, i + 1).join(' ');
+    body.innerHTML = renderRichText(partial) + '<span class="cursor"></span>';
+    scrollBottom();
+    i++;
+    streamTimer = setTimeout(tick, 30 + Math.random() * 40);
+  }
+  tick();
+}
+
+// ── demo sequence ───────────────────────────────────────────────────────────
+
+function runDemo() {
+  clearTimeline();
+  tasks = [];
+  renderTasks();
+
+  let t = 0;
+  function at(ms, fn) { setTimeout(fn, t += ms); }
+
+  at(0,   () => appendUser('refactor SessionStore.list() to read files concurrently'));
+  at(400, () => appendMeta('◇', 'context', 'local-bm25+path · 6 spans · ~2k tokens'));
+  at(700, () => {
+    addTask('Read session store', 'in_progress');
+    addTask('Parallelize list()', 'pending');
+    addTask('Verify types', 'pending');
+  });
+  at(900, () => appendTool('read_file', 'src/session/store.ts', 'ok', 'import {randomUUID} from \'node:crypto\';\n// ... 406 lines', 38));
+  at(1300, () => {
+    updateTask('Read session store', 'completed');
+    updateTask('Parallelize list()', 'in_progress');
+  });
+  at(1500, () => appendTool('apply_patch', 'src/session/store.ts:183', 'ok', '- for (const entry of entries) {\n+   const summaries = await Promise.all(\n+     entries.filter(...).map(async entry => { ... })', 12));
+  at(2000, () => updateTask('Parallelize list()', 'completed'));
+  at(2100, () => updateTask('Verify types', 'in_progress'));
+  at(2200, () => appendTool('run_command', 'npx tsc --noEmit', 'ok', 'No errors found.', 1840));
+  at(2600, () => updateTask('Verify types', 'completed'));
+  at(2800, () => streamText(
+    'Done. `SessionStore.list()` now reads all session files concurrently with `Promise.all`.\n\n' +
+    '- Workspace filter and `updatedAt` descending sort are preserved\n' +
+    '- TypeScript passes with no errors\n' +
+    '- No behavior change for callers',
+    null
+  ));
+}
+
+// ── input handling ──────────────────────────────────────────────────────────
+
+const input = document.getElementById('input');
+const hint  = document.getElementById('prompt-hint');
+
+input.addEventListener('input', () => {
+  const val = input.value;
+  if (val.startsWith('/')) {
+    const matches = COMMANDS.filter(c => c.cmd.startsWith(val.split(' ')[0]));
+    showPalette(matches);
+  } else {
+    hidePalette();
+  }
+  hint.textContent = val
+    ? 'enter send · ctrl+j newline · esc cancel'
+    : 'enter send · ctrl+j newline · /help commands';
+});
+
+input.addEventListener('keydown', e => {
+  if (paletteItems.length) {
+    if (e.key === 'ArrowDown') { e.preventDefault(); paletteIndex = (paletteIndex+1)%paletteItems.length; renderPalette(); return; }
+    if (e.key === 'ArrowUp')   { e.preventDefault(); paletteIndex = (paletteIndex-1+paletteItems.length)%paletteItems.length; renderPalette(); return; }
+    if (e.key === 'Tab' || e.key === 'Enter') { e.preventDefault(); selectPaletteItem(paletteIndex); return; }
+    if (e.key === 'Escape') { hidePalette(); return; }
+  }
+  if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey) {
+    e.preventDefault();
+    submit();
+  }
+  if (e.key === 'Escape' && streaming) {
+    clearTimeout(streamTimer);
+    streaming = false;
+    appendNotice('· interrupted', 'error');
+  }
+});
+
+function submit() {
+  const val = input.value.trim();
+  if (!val) return;
+  input.value = '';
+  hidePalette();
+  handleInput(val);
+}
+
+function handleInput(val) {
+  if (val.startsWith('/')) {
+    const [cmd, ...rest] = val.split(' ');
+    switch (cmd) {
+      case '/clear':   clearTimeline(); return;
+      case '/context': appendContextInspector(); return;
+      case '/plan':    setMode('plan'); appendNotice('Plan mode active — read-only, no mutations.', 'info'); return;
+      case '/ask':     setMode('ask');  appendNotice('Ask mode active.', 'info'); return;
+      case '/build':   setMode('build'); appendNotice('Build mode active.', 'info'); return;
+      case '/theme':   { const names = Object.keys(THEMES); const i = names.indexOf(currentTheme); setTheme(names[(i+1)%names.length]); return; }
+      case '/tasks':   toggleSidebar(); return;
+      case '/demo':    runDemo(); return;
+      case '/compact': appendNotice('Context compacted — summary created.', 'success'); return;
+      case '/help':
+        appendNotice('Commands: ' + COMMANDS.map(c => c.cmd).join('  '), 'info');
+        return;
+      default:
+        appendNotice(`Unknown command: ${cmd}`, 'error');
+        return;
+    }
+  }
+  appendUser(val);
+  setTimeout(() => {
+    appendTool('context_search', val.slice(0, 40), 'ok', '', 120);
+    setTimeout(() => streamText(
+      `I'll look into that.\n\n` +
+      `- Read the relevant files\n` +
+      `- Identify the minimal change\n` +
+      `- Apply and verify\n\n` +
+      `Let me start by reading the code.`,
+      null
+    ), 300);
+  }, 200);
+}
+
+// ── init ────────────────────────────────────────────────────────────────────
+
+applyTheme('graphite');
+renderTasks();
+appendNotice('Start with a request, @file, or /help. Try /demo to see a full sequence.', 'info');
+input.focus();
+</script>
+</body>
+</html>
