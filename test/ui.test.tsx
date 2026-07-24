@@ -1,7 +1,7 @@
 import React from 'react';
 import {renderToString} from 'ink';
 import {describe, expect, it} from 'vitest';
-import {CommandPalette, ContextInspector, Footer, Header, PermissionCard, PromptBar, TaskRail, TeamCockpit, TeamWorkbench, Timeline} from '../src/ui/components.js';
+import {CommandPalette, ContextInspector, Footer, Header, PermissionCard, PromptBar, TaskRail, TeamCockpit, TeamWorkbench, Timeline, WorkspacePanel} from '../src/ui/components.js';
 import {displayWidth, sanitizeTerminalText} from '../src/ui/text.js';
 import {detectTerminalAppearance, resolveTheme, resolveThemeWithColor} from '../src/ui/theme.js';
 import {resolveKittyKeyboardConfig} from '../src/ui/terminal-capabilities.js';
@@ -62,6 +62,46 @@ describe('terminal presentation', () => {
     expect(output).toContain('✓ read_file');
     expect(output).toContain('Fix the queue');
     expect(output).toContain('Run tests');
+  });
+
+  it('renders a factual workspace side panel without overflowing', () => {
+    for (const width of [32, 38]) {
+      const output = renderToString(<WorkspacePanel width={width} glyphMode="ascii" status={{
+        model: 'compatible/a-medium-model',
+        mode: 'build',
+        context: 'ready',
+        files: 142,
+        chunks: 381,
+        permissions: 'guarded',
+        tools: 11,
+        skills: 3,
+        mcpConnected: 1,
+        mcpTotal: 2,
+        memory: 'on',
+      }} />, {columns: width});
+      expect(output).toContain('WORKSPACE');
+      expect(output).toContain('context ready');
+      expect(output).toContain('guarded');
+      for (const line of output.split('\n')) expect(displayWidth(line)).toBeLessThanOrEqual(width);
+    }
+  });
+
+  it.each([20, 40, 80])('keeps completion evidence within %i columns', (columns) => {
+    const output = renderToString(
+      <Timeline
+        width={columns}
+        glyphMode="ascii"
+        items={[
+          {id: 'verified', kind: 'notice', tone: 'success', wrapWidth: columns, text: 'Verified | 2 current verification checks passed for 3 workspace files | npm run check'},
+          {id: 'unverified', kind: 'notice', tone: 'warning', wrapWidth: columns, text: 'Unverified | No successful verification was recorded after the last change to 1 workspace file.'},
+          {id: 'failed', kind: 'notice', tone: 'error', wrapWidth: columns, text: 'Verification failed | 1 of 2 current verification checks failed | npm test'},
+        ]}
+      />,
+    );
+    for (const line of output.split('\n')) {
+      expect(displayWidth(line), `${columns}-column completion row overflowed: ${JSON.stringify(line)}`)
+        .toBeLessThanOrEqual(columns);
+    }
   });
 
   it('keeps context fallback reason and remediation visible at narrow widths', () => {
@@ -461,10 +501,11 @@ describe('terminal presentation', () => {
       version: '0.3.5',
     }]} />, {columns});
 
-    expect(output).toContain(columns < 28 ? 'New ' : 'New session');
+    expect(output).toContain(columns >= 48 ? 'Ready' : columns < 28 ? 'New ' : 'New session');
     expect(output).toContain('v0.3.5');
     expect(output).toContain('cwd ');
-    expect(output.trimEnd().split('\n')).toHaveLength(2);
+    expect(output.trimEnd().split('\n')).toHaveLength(columns >= 48 ? 3 : 2);
+    if (columns >= 48) expect(output).toContain('context runs automatically');
     expect(output).not.toMatch(/[┌┐└┘╭╮╰╯│█]/u);
     for (const line of output.split('\n')) {
       expect(displayWidth(line), `${columns}-column session summary overflowed: ${JSON.stringify(line)}`).toBeLessThanOrEqual(columns);

@@ -31,7 +31,7 @@ export type TimelineItem =
   | {id: string; kind: 'context-inspector'; status: ContextInspectorStatus; working?: WorkingMemory; summary?: string; sources?: ContextSource[]}
   | {id: string; kind: 'theme'; name: string}
   | {id: string; kind: 'banner'; model: string; engine: string; workspace: string; version: string}
-  | {id: string; kind: 'notice'; text: string; tone?: 'info' | 'error' | 'success'}
+  | {id: string; kind: 'notice'; text: string; tone?: 'info' | 'error' | 'success' | 'warning'; wrapWidth?: number}
   | {id: string; kind: 'update'; current: string; latest: string; command: string; highlights?: string[]};
 
 export interface ListEntry {
@@ -55,6 +55,20 @@ export interface ContextInspectorStatus {
   summaryTokens: number;
   toolTokens: number;
   compactedMessages: number;
+}
+
+export interface WorkspacePanelStatus {
+  model: string;
+  mode: 'ask' | 'plan' | 'build';
+  context: 'ready' | 'empty';
+  files: number;
+  chunks: number;
+  permissions: string;
+  tools: number;
+  skills: number;
+  mcpConnected: number;
+  mcpTotal: number;
+  memory: 'on' | 'off';
 }
 
 export interface ActivityState {
@@ -429,22 +443,40 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
         }
         const color = item.tone === 'error'
           ? theme.error
+          : item.tone === 'warning'
+            ? theme.warning
           : item.tone === 'success'
             ? theme.success
             : theme.muted;
         const noticeGlyph = item.tone === 'error'
           ? glyphs.error
+          : item.tone === 'warning'
+            ? glyphs.warning
           : item.tone === 'success'
             ? glyphs.success
             : glyphs.info;
         return (
           <Box key={item.id}>
-            <Text color={color} wrap="wrap">{`${noticeGlyph} ${sanitizeTerminalText(item.text)}`}</Text>
+            <Text color={color} wrap="wrap">{
+              item.wrapWidth
+                ? wrapCompletionNotice(`${noticeGlyph} ${sanitizeTerminalText(item.text)}`, item.wrapWidth)
+                : `${noticeGlyph} ${sanitizeTerminalText(item.text)}`
+            }</Text>
           </Box>
         );
       })}
     </Box>
   );
+}
+
+function wrapCompletionNotice(value: string, width: number): string {
+  const safe = Math.max(4, width);
+  return value.split(/\s+/u).reduce<string[]>((lines, word) => {
+    const current = lines.at(-1) ?? '';
+    if (!current || displayWidth(`${current} ${word}`) > safe) lines.push(word);
+    else lines[lines.length - 1] = `${current} ${word}`;
+    return lines;
+  }, []).join('\n');
 }
 
 export function TeamCockpit({items, width = 36, glyphMode = 'auto'}: {
@@ -495,6 +527,30 @@ export function TeamCockpit({items, width = 36, glyphMode = 'auto'}: {
       {messages.map((message) => (
         <Text key={message.id} color={theme.muted}>{truncateDisplay(`${message.from}${glyphs.arrow}${message.to}: ${message.text}`, inner)}</Text>
       ))}
+    </Box>
+  );
+}
+
+export function WorkspacePanel({status, width = 36, glyphMode = 'auto'}: {
+  status: WorkspacePanelStatus;
+  width?: number;
+  glyphMode?: GlyphMode;
+}) {
+  const theme = useTheme();
+  const glyphs = resolveGlyphs(glyphMode);
+  const inner = Math.max(8, safeWidth(width) - 4);
+  const contextLabel = status.context === 'empty' ? 'ready · empty workspace' : 'ready';
+  const mcpLabel = status.mcpTotal ? `${status.mcpConnected}/${status.mcpTotal} connected` : 'off';
+  return (
+    <Box flexDirection="column" width={width} borderStyle={glyphs.borderStyle} borderColor={theme.border} paddingX={1}>
+      <Text bold color={theme.accent}>{truncateDisplay(`${glyphs.context} WORKSPACE`, inner)}</Text>
+      <Text color={status.context === 'empty' ? theme.warning : theme.success}>{truncateDisplay(`${glyphs.success} context ${contextLabel}`, inner)}</Text>
+      {status.context === 'ready' ? <Text color={theme.muted}>{truncateDisplay(`${status.files} files ${glyphs.separator} ${status.chunks} chunks`, inner)}</Text> : null}
+      <Text color={theme.text}>{truncateDisplay(status.model, inner)}</Text>
+      <Text color={theme.muted}>{truncateDisplay(`mode ${status.mode.toUpperCase()} ${glyphs.separator} ${status.permissions}`, inner)}</Text>
+      <Text color={theme.muted}>{truncateDisplay(`${status.tools} tools ${glyphs.separator} ${status.skills} skills`, inner)}</Text>
+      <Text color={theme.muted}>{truncateDisplay(`MCP ${mcpLabel} ${glyphs.separator} memory ${status.memory}`, inner)}</Text>
+      <Text color={theme.dim}>{truncateDisplay('@file pin  ·  /status inspect', inner)}</Text>
     </Box>
   );
 }
@@ -1267,7 +1323,7 @@ function ThemePreview({name, width, glyphs}: {name: string; width: number; glyph
   );
 }
 
-function Banner({engine, workspace, version, width, glyphs}: {
+function Banner({model, engine, workspace, version, width, glyphs}: {
   model: string;
   engine: string;
   workspace: string;
@@ -1281,11 +1337,14 @@ function Banner({engine, workspace, version, width, glyphs}: {
   const innerWidth = Math.max(1, rowWidth - padding);
   const safeEngine = sanitizeInlineTerminalText(engine);
   const meta = rowWidth >= 48
-    ? `New session ${glyphs.separator} ${safeEngine} index ${glyphs.separator} v${version}`
+    ? `${PRODUCT_NAME.toUpperCase()}  ${glyphs.separator}  local-first coding workspace`
     : rowWidth >= 28
       ? `New session ${glyphs.separator} v${version}`
       : `New ${glyphs.separator} v${version}`;
-  const cwd = `cwd ${compactDisplayPath(sanitizeInlineTerminalText(workspace), Math.max(1, innerWidth - 4))}`;
+  const cwd = rowWidth >= 48
+    ? `${glyphs.success} Ready ${glyphs.separator} ${safeEngine} context ${glyphs.separator} ${sanitizeInlineTerminalText(model)} ${glyphs.separator} v${version}`
+    : `cwd ${compactDisplayPath(sanitizeInlineTerminalText(workspace), Math.max(1, innerWidth - 4))}`;
+  const hint = `context runs automatically ${glyphs.separator} @file pins ${glyphs.separator} /help commands`;
   const statusWidth = displayWidth(glyphs.success) + 1;
 
   return (
@@ -1295,10 +1354,11 @@ function Banner({engine, workspace, version, width, glyphs}: {
       paddingLeft={padding}
     >
       <Box height={1} overflowY="hidden">
-        <Text bold color={theme.success}>{glyphs.success} </Text>
+        <Text bold color={theme.accent}>{glyphs.brand} </Text>
         <Text bold color={theme.textStrong} wrap="truncate">{truncateDisplay(meta, Math.max(1, innerWidth - statusWidth))}</Text>
       </Box>
-      <Text color={theme.muted}>{truncateDisplay(cwd, innerWidth)}</Text>
+      <Text color={rowWidth >= 48 ? theme.success : theme.muted}>{truncateDisplay(cwd, innerWidth)}</Text>
+      {rowWidth >= 48 ? <Text color={theme.dim}>{truncateDisplay(`${hint} ${glyphs.separator} cwd ${compactDisplayPath(sanitizeInlineTerminalText(workspace), 24)}`, innerWidth)}</Text> : null}
     </Box>
   );
 }

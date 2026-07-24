@@ -1,5 +1,12 @@
 export {runInteractiveTui, type TuiOptions} from './tui.js';
 export {
+  prepareWorkspace,
+  runWorkspacePreparation,
+  WorkspacePreparationView,
+  type WorkspacePreparationResult,
+  type WorkspaceReadiness,
+} from './workspace-preparation.js';
+export {
   buildOnboardingConfig,
   createOnboardingState,
   needsFirstRunOnboarding,

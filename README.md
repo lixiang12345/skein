@@ -32,6 +32,11 @@ inspectable index for code retrieval and no retrieval service dependency.
 
 - **Open automation:** text, quiet, JSON, and JSONL event modes are core
   features, suitable for local scripts and CI.
+- **Evidence-gated completion:** after a workspace edit, Skein only reports a
+  verified outcome when a current successful test, typecheck, lint, build,
+  configured check, or `git diff --check` tool result exists. Otherwise the
+  TUI and machine output say `unverified` or `verification_failed`, regardless
+  of what the model claims in prose.
 - **Model ownership:** use four provider families without changing the agent or
   session format.
 - **Retrieval you control:** run the local BM25/path/symbol index, inspect its
@@ -73,7 +78,7 @@ To build, verify, and install a local package artifact from this checkout:
 
 ```bash
 npm run verify:package -- --output-dir artifacts/package
-npm install -g ./artifacts/package/skein-code-cli-0.3.0.tgz
+npm install -g ./artifacts/package/skein-code-cli-0.3.8.tgz
 ```
 
 To install the published package from npm:
@@ -98,6 +103,13 @@ key or an explicitly configured compatible endpoint; Skein never guesses the
 protocol or destination. OpenAI, Anthropic, and Gemini subscription logins are
 not API credentials. Signed-in coding CLIs remain delegated tools rather than
 primary model connections.
+
+Before a new interactive session, Skein prepares the workspace before opening the composer. It
+shows the real local index phases, reloads the persisted artifact, verifies its
+generation and file/chunk counts, and only then enables chat. Later interactive
+new sessions validate and reuse a current index or incrementally rebuild a stale one;
+an empty workspace is a valid zero-file index, while failed validation offers
+retry or exit instead of silently continuing.
 
 For non-interactive setup, set credentials for one provider:
 
@@ -170,6 +182,13 @@ toggles one live inspector for the active transcript, mutable working memory,
 compacted session summary, and durable retrieval layer separately. Model-
 suggested durable memories can be reviewed with `/memory candidates` and then
 approved or rejected.
+
+At 96 columns and wider, a fresh session uses a two-column welcome surface. The
+left side keeps Skein's brand, workspace path, and next actions close to the
+composer; the right side reports the actual model, mode, local index file/chunk
+counts, permission posture, built-in tool count, Skills, MCP connections, and
+memory state. Narrow terminals collapse to the same compact single-column flow,
+and active team runs replace the workspace rail with Team Cockpit.
 
 The default `/theme auto` follows
 `SKEIN_APPEARANCE=light|dark` or a terminal `COLORFGBG` hint and otherwise uses
@@ -356,6 +375,11 @@ namespace. The index combines BM25 term scoring with path, symbol, phrase, and
 CJK token signals, then repacks verified spans under the configured token cap.
 `skein index` is explicit and repeatable; `search`, `context`, and the agent
 automatically load the local index and never start an external process.
+
+Interactive startup additionally runs an explicit preparation gate: it checks
+manifest freshness, performs an incremental build only when needed, reloads the
+on-disk index, and verifies its generation and counts before the TUI accepts a
+request. This is real progress rather than a decorative loading animation.
 
 Index entries are constrained to configured workspace roots. Before a result is
 packed into a prompt, Skein rechecks the current file and rejects entries that

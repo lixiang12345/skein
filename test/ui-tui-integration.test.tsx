@@ -4,6 +4,7 @@ import {join} from 'node:path';
 import {PassThrough} from 'node:stream';
 import React from 'react';
 import {render, type Instance} from 'ink';
+import stripAnsi from 'strip-ansi';
 import {describe, expect, it, vi} from 'vitest';
 import type {AgentRunner} from '../src/agent/index.js';
 import {defaultConfig} from '../src/config.js';
@@ -13,6 +14,64 @@ import {SkeinApp} from '../src/ui/tui.js';
 import type {AgentEvent, ChatMessage, ContextHit, Session} from '../src/types.js';
 
 describe('SkeinApp completion flows', () => {
+  it('keeps a fresh-session composer next to an actionable local-context summary', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-fresh-session-ui-'));
+    const session = testSession(root);
+    const {runner} = mockRunner(root, session);
+    const harness = await mountApp(runner, root);
+
+    try {
+      const frame = harness.lastFrame();
+      const lines = frame.split('\n');
+      const summaryRow = lines.findIndex((line) => line.includes('context runs automatically'));
+      const composerRow = lines.findIndex((line) => line.includes('Type a request'));
+      expect(summaryRow).toBeGreaterThanOrEqual(0);
+      expect(composerRow).toBeGreaterThan(summaryRow);
+      expect(composerRow - summaryRow).toBeLessThanOrEqual(4);
+      expect(composerRow).toBeLessThan(10);
+      expect(lines.length).toBeLessThan(16);
+      expect(frame).toContain('@file pins');
+      expect(frame).toContain('/help commands');
+    } finally {
+      await harness.cleanup();
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
+  it('shows a branded factual workspace rail on wide fresh sessions', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-workspace-panel-ui-'));
+    const session = testSession(root);
+    const {runner} = mockRunner(root, session, [], {toolCount: 9});
+    const readiness = {
+      engine: 'local' as const,
+      rebuilt: true,
+      validated: true as const,
+      files: 28,
+      chunks: 71,
+      reused: 8,
+      durationMs: 42,
+      generation: 'test-generation',
+      path: join(root, '.skein', 'index.json'),
+      preparedAt: new Date().toISOString(),
+    };
+    const harness = await mountApp(runner, root, undefined, readiness);
+
+    try {
+      const frame = harness.lastFrame();
+      expect(frame).toContain('SKEIN');
+      expect(frame).toContain('WORKSPACE');
+      expect(frame).toContain('context ready');
+      expect(frame).toContain('28 files');
+      expect(frame).toContain('71 chunks');
+      expect(frame).toContain('9 tools');
+      expect(frame).toContain('guarded');
+      expect(frame).toContain('Type a request');
+    } finally {
+      await harness.cleanup();
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
   it('switches between Ask and Build mode without restarting the TUI', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-mode-ui-'));
     const session = testSession(root);
@@ -429,10 +488,16 @@ function mockOutput(): MockOutput {
   return stream;
 }
 
-async function mountApp(runner: AgentRunner, root: string, extensions?: ExtensionRuntime): Promise<{
+async function mountApp(
+  runner: AgentRunner,
+  root: string,
+  extensions?: ExtensionRuntime,
+  workspaceReadiness?: import('../src/ui/workspace-preparation.js').WorkspaceReadiness,
+): Promise<{
   stdin: MockInput;
   instance: Instance;
   output(): string;
+  lastFrame(): string;
   cleanup(): Promise<void>;
 }> {
   const stdin = mockInput();
@@ -445,7 +510,12 @@ async function mountApp(runner: AgentRunner, root: string, extensions?: Extensio
     context: {...base.context},
     ui: {...base.ui, color: false, compact: true},
   };
-  const instance = render(<SkeinApp runner={runner} config={config} {...(extensions ? {extensions} : {})} />, {
+  const instance = render(<SkeinApp
+    runner={runner}
+    config={config}
+    {...(extensions ? {extensions} : {})}
+    {...(workspaceReadiness ? {workspaceReadiness} : {})}
+  />, {
     stdin: stdin as unknown as NodeJS.ReadStream,
     stdout: stdout as unknown as NodeJS.WriteStream,
     stderr: stderr as unknown as NodeJS.WriteStream,
@@ -458,6 +528,7 @@ async function mountApp(runner: AgentRunner, root: string, extensions?: Extensio
     stdin,
     instance,
     output: () => stdout.captured,
+    lastFrame: () => lastSynchronizedFrame(stdout.captured),
     async cleanup() {
       instance.unmount();
       await instance.waitUntilExit();
@@ -465,9 +536,19 @@ async function mountApp(runner: AgentRunner, root: string, extensions?: Extensio
   };
 }
 
+function lastSynchronizedFrame(output: string): string {
+  const start = output.lastIndexOf('\u001B[?2026h');
+  const end = output.indexOf('\u001B[?2026l', Math.max(0, start));
+  const frame = start >= 0 && end > start
+    ? output.slice(start + '\u001B[?2026h'.length, end)
+    : output;
+  return stripAnsi(frame).replace(/\r/g, '');
+}
+
 interface MockRunnerOptions {
   run?: (input: string, options?: {onEvent?: (event: AgentEvent) => void; turnInstructions?: string; askMode?: boolean; signal?: AbortSignal}) => Promise<Session>;
   compactContext?: (instructions?: string) => Promise<{omittedMessages: number; summaryTokens: number}>;
+  toolCount?: number;
 }
 
 function mockRunner(root: string, session: Session, hits: ContextHit[] = [], options: MockRunnerOptions = {}) {
@@ -477,7 +558,7 @@ function mockRunner(root: string, session: Session, hits: ContextHit[] = [], opt
   const runner = {
     workspace: {roots: [root]},
     contextEngine: {search},
-    tools: {definitions: () => []},
+    tools: {definitions: () => Array.from({length: options.toolCount ?? 0}, (_, index) => ({name: `tool_${index}`}))},
     getSession: () => session,
     getContextStatus: () => ({
       activeTokens: 0,

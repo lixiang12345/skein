@@ -34,7 +34,12 @@ import {
 } from './cli/output.js';
 import {resolveCliGlyphs} from './cli/glyphs.js';
 import {acquireCliNamespaceLeases, releaseCliNamespaceLeases} from './cli/namespace-leases.js';
-import {needsFirstRunOnboarding, runFirstRunOnboarding, runInteractiveTui} from './ui/index.js';
+import {
+  needsFirstRunOnboarding,
+  runFirstRunOnboarding,
+  runInteractiveTui,
+  runWorkspacePreparation,
+} from './ui/index.js';
 import {ExtensionRuntime} from './runtime/index.js';
 import {SkillCatalog} from './skills/index.js';
 import {MemoryStore, type MemoryCandidate} from './memory/index.js';
@@ -1011,6 +1016,7 @@ async function runChat(prompts: string[], options: RootOptions): Promise<void> {
   if (shouldPrint && !firstPrompt) throw new Error('Provide a prompt argument or pipe input on stdin.');
   const workspace = resolve(options.workspace);
   let config = await runtimeConfig(workspace, options);
+  let completedOnboarding = false;
   if (!shouldPrint && needsFirstRunOnboarding(config)) {
     // An explicit config is caller-owned and may intentionally be incomplete;
     // do not silently write a separate user config that the explicit path would
@@ -1018,6 +1024,7 @@ async function runChat(prompts: string[], options: RootOptions): Promise<void> {
     if (!options.config) {
       const onboarding = await runFirstRunOnboarding(config);
       if (onboarding.status === 'cancelled') return;
+      completedOnboarding = true;
       config = await runtimeConfig(workspace, options);
     }
   }
@@ -1036,6 +1043,13 @@ async function runChat(prompts: string[], options: RootOptions): Promise<void> {
   }
   const provider = createProvider(config.model);
   const contextEngine = new ContextEngine(config);
+  const preparation = !shouldPrint && !selectedSession
+    ? await runWorkspacePreparation(contextEngine, config, {
+      workspace,
+      forceBuild: completedOnboarding,
+    })
+    : undefined;
+  if (preparation?.status === 'cancelled') return;
   const toolRegistry = createDefaultToolRegistry({contextEngine});
   const extensions = await ExtensionRuntime.create(config, toolRegistry, {provider, contextEngine});
   const runner = new AgentRunner({
@@ -1054,6 +1068,7 @@ async function runChat(prompts: string[], options: RootOptions): Promise<void> {
         runner,
         config,
         extensions,
+        ...(preparation?.status === 'ready' ? {workspaceReadiness: preparation.readiness} : {}),
         ...(firstPrompt ? {initialPrompt: firstPrompt} : {}),
         askMode: options.ask === true || options.plan === true,
         planMode: options.plan === true,

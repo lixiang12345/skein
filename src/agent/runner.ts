@@ -21,6 +21,7 @@ import type {
 import type {
   AgentEvent,
   ChatMessage,
+  RunCompletion,
   ContextSource,
   MosaicConfig,
   ModelResponse,
@@ -39,6 +40,12 @@ import {
   buildTurnDirective,
   isTrivialTurn,
 } from './prompt.js';
+import {
+  buildRunCompletion,
+  captureVerification,
+  completionRecoveryDirective,
+  type CapturedVerification,
+} from './completion-gate.js';
 import type {PromptContextProvider} from './prompt-context.js';
 import {discoverWorkspaceRules, formatWorkspaceRules} from './rules.js';
 import {
@@ -132,6 +139,43 @@ export class AgentRunner {
     const emit = async (event: AgentEvent): Promise<void> => {
       await options.onEvent?.(event);
     };
+    const changeSequenceAtStart = this.changeSequence;
+    const runChangedFiles = new Set<string>();
+    const verificationEvidence: CapturedVerification[] = [];
+    let mutationTracking: 'complete' | 'unknown' = 'complete';
+    let completionRecoveryAttempted = false;
+    const recordExecution = (call: ToolCall, result: ToolResult): void => {
+      const changedFiles = result.metadata?.changedFiles;
+      if (Array.isArray(changedFiles)) {
+        for (const path of changedFiles) {
+          if (typeof path === 'string') runChangedFiles.add(path);
+        }
+      }
+      if (result.metadata?.changeTracking === 'unresolved') mutationTracking = 'unknown';
+      const evidence = captureVerification(
+        call,
+        result,
+        this.changeSequence,
+        this.config.agent.verifyCommands,
+      );
+      if (evidence) verificationEvidence.push(evidence);
+    };
+    const completionReport = (): RunCompletion => buildRunCompletion(
+      runChangedFiles,
+      verificationEvidence,
+      this.changeSequence,
+      mutationTracking,
+    );
+    const finishRun = async (reason: string, completion = completionReport()): Promise<Session> => {
+      this.session.lastRun = {
+        ...completion,
+        reason,
+        finishedAt: new Date().toISOString(),
+      };
+      await this.persist();
+      await emit({type: 'done', reason, completion});
+      return this.session;
+    };
     try {
       throwIfAborted(options.signal);
       if (this.session.messages.length === 0 && this.session.title === 'New session') {
@@ -184,7 +228,8 @@ export class AgentRunner {
         ...(workspaceRules ? ['rules'] : []),
         ...(this.session.workingMemory ? ['working-memory'] : []),
         ...(this.session.contextSummary ? ['session-summary'] : []),
-        ...(retrievedContext ? [`code:${packed.engine}`] : []),
+        ...(!trivialTurn ? [`context:${packed.engine}`] : []),
+        ...(packed.text ? [`code:${packed.engine}`] : []),
         ...(options.turnInstructions ? ['workflow'] : []),
         ...(augmentation.skills?.length ? [`skills:${augmentation.skills.length}`] : []),
         ...(augmentation.memoryCount ? [`memory:${augmentation.memoryCount}`] : []),
@@ -204,7 +249,6 @@ export class AgentRunner {
           workspaceRules,
         ].join('\n').length / 4),
       });
-      const changeSequenceAtStart = this.changeSequence;
       let verificationAttempted = false;
       const maxTurns = options.maxTurns ?? this.config.agent.maxTurns;
 
@@ -218,9 +262,7 @@ export class AgentRunner {
         throwIfAborted(options.signal);
         if (this.session.usage.inputTokens + this.session.usage.outputTokens >=
           this.config.agent.maxSessionTokens) {
-          await this.persist();
-          await emit({type: 'done', reason: 'token_budget'});
-          return this.session;
+          return finishRun('token_budget');
         }
         this.applySteering();
         await emit({type: 'thinking', turn});
@@ -247,9 +289,7 @@ export class AgentRunner {
             : this.tools.definitions(),
         );
         if (availableTokens <= 0 || estimatedInputTokens >= availableTokens) {
-          await this.persist();
-          await emit({type: 'done', reason: 'token_budget'});
-          return this.session;
+          return finishRun('token_budget');
         }
         const maxOutputTokens = Math.max(1, Math.min(
           this.config.model.maxTokens ?? 8_192,
@@ -298,15 +338,14 @@ export class AgentRunner {
             this.recordToolResult(skipped);
             await emit({type: 'tool_result', result: skipped});
           }
-          await this.persist();
-          await emit({type: 'done', reason: 'token_budget'});
-          return this.session;
+          return finishRun('token_budget');
         }
 
         if (response.toolCalls.length) {
           for (const call of response.toolCalls) {
             throwIfAborted(options.signal);
             const result = await this.executeTool(call, options, emit);
+            recordExecution(call, result);
             this.session.messages.push(message('tool', result.content, {
               toolCallId: result.toolCallId,
               name: result.name,
@@ -327,8 +366,9 @@ export class AgentRunner {
           this.config.agent.verifyCommands.length) {
           verificationAttempted = true;
           const verification = await this.runVerification(options, emit);
+          for (const {call, result} of verification) recordExecution(call, result);
           this.session.messages.push(message('user',
-            `<automatic-verification>\n${verification}\n</automatic-verification>\n` +
+            `<automatic-verification>\n${verification.map(({result}) => result.content).join('\n\n')}\n</automatic-verification>\n` +
             'Review these results, correct any failures if needed, then provide the final answer.',
           ));
           await this.persist();
@@ -336,21 +376,46 @@ export class AgentRunner {
           continue;
         }
 
+        const completion = completionReport();
+        if (this.config.agent.autoVerify &&
+          (completion.status === 'unverified' || completion.status === 'verification_failed') &&
+          !completionRecoveryAttempted && turn < maxTurns) {
+          completionRecoveryAttempted = true;
+          this.session.messages.push(message('user', completionRecoveryDirective(completion)));
+          await this.persist();
+          await this.runAfterTurnHook(turn, [], options.signal);
+          continue;
+        }
+
         await this.runAfterTurnHook(turn, [], options.signal);
-        await this.persist();
-        await emit({type: 'done', reason: 'completed'});
-        return this.session;
+        const reason = completion.status === 'unverified'
+          ? 'unverified'
+          : completion.status === 'verification_failed'
+            ? 'verification_failed'
+            : 'completed';
+        return finishRun(reason, completion);
       }
-      await this.persist();
-      await emit({type: 'done', reason: 'max_turns'});
-      return this.session;
+      return finishRun('max_turns');
     } catch (error) {
       const normalized = toError(error);
       if (isAbortError(normalized) || options.signal?.aborted) {
+        const completion = completionReport();
+        this.session.lastRun = {
+          ...completion,
+          reason: 'aborted',
+          finishedAt: new Date().toISOString(),
+        };
         await this.persist().catch(() => undefined);
-        await safeEmit(emit, {type: 'done', reason: 'aborted'});
+        await safeEmit(emit, {type: 'done', reason: 'aborted', completion});
         return this.session;
       }
+      const completion = completionReport();
+      this.session.lastRun = {
+        ...completion,
+        reason: 'error',
+        finishedAt: new Date().toISOString(),
+      };
+      await this.persist().catch(() => undefined);
       await safeEmit(emit, {type: 'error', error: normalized});
       throw normalized;
     } finally {
@@ -599,20 +664,20 @@ export class AgentRunner {
       try {
         const safe = await this.workspace.resolvePath(path, {allowMissing: true});
         accepted.push(safe);
-        this.changeSequence += 1;
         if (!this.session.changedFiles.includes(safe)) this.session.changedFiles.push(safe);
       } catch {
         throw new Error(`Tool reported an out-of-workspace changed file: ${path}`);
       }
     }
+    if (accepted.length) this.changeSequence += 1;
     return accepted;
   }
 
   private async runVerification(
     options: RunOptions,
     emit: (event: AgentEvent) => Promise<void>,
-  ): Promise<string> {
-    const results: string[] = [];
+  ): Promise<Array<{call: ToolCall; result: ToolResult}>> {
+    const results: Array<{call: ToolCall; result: ToolResult}> = [];
     for (const command of this.config.agent.verifyCommands) {
       const call: ToolCall = {
         id: `verify-${randomUUID()}`,
@@ -620,9 +685,9 @@ export class AgentRunner {
         arguments: {command, cwd: this.workspace.primaryRoot},
       };
       const result = await this.executeTool(call, options, emit);
-      results.push(result.content);
+      results.push({call, result});
     }
-    return results.join('\n\n');
+    return results;
   }
 
   private async runAfterTurnHook(

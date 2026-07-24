@@ -86,6 +86,108 @@ describe('local context engine', () => {
     }
   });
 
+  it('prepares, reloads, and validates a new multilingual workspace index', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-local-prepare-'));
+    try {
+      await mkdir(join(root, 'src'), {recursive: true});
+      await writeFile(join(root, 'src', 'greeting.ts'), 'export const greeting = "hello";\n');
+      await writeFile(join(root, 'src', '问候.py'), '问候 = "你好"\n');
+      const engine = new ContextEngine(defaultConfig(root));
+      const phases: string[] = [];
+
+      const result = await engine.prepare((progress) => phases.push(progress.phase));
+
+      expect(result).toMatchObject({rebuilt: true, validated: true, files: 2, reused: 0});
+      expect(result.chunks).toBeGreaterThanOrEqual(2);
+      expect(phases[0]).toBe('inspect');
+      expect(phases).toContain('scan');
+      expect(phases).toContain('index');
+      expect(phases).toContain('write');
+      expect(phases).toContain('validate');
+      expect(phases.at(-1)).toBe('done');
+      await expect(engine.status()).resolves.toMatchObject({
+        selected: 'local',
+        local: {available: true, files: 2, chunks: result.chunks, generation: result.generation},
+      });
+    } finally {
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
+  it('validates and reuses an existing current index without rebuilding it', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-local-prepare-existing-'));
+    try {
+      await writeFile(join(root, 'existing.ts'), 'export const existing = true;\n');
+      const first = new ContextEngine(defaultConfig(root));
+      const built = await first.prepare();
+      const second = new ContextEngine(defaultConfig(root));
+      const phases: string[] = [];
+
+      const verified = await second.prepare((progress) => phases.push(progress.phase));
+
+      expect(verified).toMatchObject({
+        rebuilt: false,
+        validated: true,
+        reused: 1,
+        generation: built.generation,
+      });
+      expect(phases[0]).toBe('inspect');
+      expect(phases).not.toContain('scan');
+      expect(phases.filter((phase) => phase === 'validate').length).toBeGreaterThanOrEqual(2);
+      expect(phases.at(-1)).toBe('done');
+    } finally {
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
+  it('treats an empty workspace as a valid prepared index', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-local-prepare-empty-'));
+    try {
+      const engine = new ContextEngine(defaultConfig(root));
+      await expect(engine.prepare()).resolves.toMatchObject({
+        rebuilt: true,
+        validated: true,
+        files: 0,
+        chunks: 0,
+        generation: expect.any(String),
+      });
+      await expect(engine.search('anything')).resolves.toEqual([]);
+    } finally {
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
+  it('rebuilds an index whose persisted chunks were tampered with', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-local-prepare-tampered-'));
+    try {
+      await writeFile(join(root, 'safe.ts'), 'export const safe = true;\n');
+      const first = new ContextEngine(defaultConfig(root));
+      await first.prepare();
+      const parsed = JSON.parse(await readFile(first.local.indexPath, 'utf8')) as {
+        files: Array<{chunks: Array<{content: string; tokens: string[]}>}>;
+      };
+      const chunk = parsed.files[0]?.chunks[0];
+      expect(chunk).toBeDefined();
+      if (!chunk) throw new Error('Expected fixture chunk');
+      chunk.content = 'fabricated';
+      chunk.tokens = ['fabricated'];
+      await writeFile(first.local.indexPath, `${JSON.stringify(parsed)}\n`);
+
+      const second = new ContextEngine(defaultConfig(root));
+      const phases: string[] = [];
+      const result = await second.prepare((progress) => phases.push(progress.phase));
+
+      expect(result.rebuilt).toBe(true);
+      expect(phases).toContain('scan');
+      await expect(second.search('fabricated')).resolves.toEqual([]);
+      await expect(second.search('safe')).resolves.toEqual([
+        expect.objectContaining({content: 'export const safe = true;\n'}),
+      ]);
+    } finally {
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
   it('invalidates cached hits when same-size content changes', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-local-freshness-'));
     try {

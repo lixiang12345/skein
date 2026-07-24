@@ -3,6 +3,7 @@ import chalk, {Chalk} from 'chalk';
 import type {
   AgentEvent,
   PackedContext,
+  RunCompletion,
   Session,
   ToolCall,
   ToolCategory,
@@ -26,6 +27,8 @@ export class HeadlessReporter {
   private eventError?: string;
   private context: Omit<PackedContext, 'text' | 'hits'> & {hits: number} | undefined;
   private streamedAssistant = false;
+  private completion: RunCompletion | undefined;
+  private doneReason: string | undefined;
   private readonly paint: typeof chalk;
   private readonly glyphs: CliGlyphs;
 
@@ -38,6 +41,10 @@ export class HeadlessReporter {
     if (event.type === 'assistant') this.finalResponse = event.content;
     if (event.type === 'tool_result') this.tools.push(event.result);
     if (event.type === 'error') this.eventError = event.error.message;
+    if (event.type === 'done') {
+      this.doneReason = event.reason;
+      this.completion = event.completion;
+    }
     if (event.type === 'context') {
       const {text: _text, hits, ...context} = event.packed;
       this.context = {...context, hits: hits.length};
@@ -60,9 +67,12 @@ export class HeadlessReporter {
     }
     if (this.options.format === 'json') {
       process.stdout.write(`${JSON.stringify({
-        ok: true,
+        ok: this.doneReason === undefined ||
+          (this.doneReason === 'completed' && this.completion?.status !== 'verification_failed'),
         response: this.finalResponse,
         session: sessionSummary(session),
+        ...(this.doneReason ? {reason: this.doneReason} : {}),
+        ...(this.completion ? {completion: this.completion} : {}),
         ...(this.context ? {context: this.context} : {}),
         tools: this.tools,
       }, null, 2)}\n`);
@@ -153,13 +163,36 @@ export class HeadlessReporter {
       case 'agent_done':
       case 'workflow':
       case 'context_compacted':
+        break;
       case 'done':
+        this.printCompletion(event.completion);
         break;
       case 'error':
         // The caller prints the terminal error after the runner unwinds. This
         // avoids duplicate text while stream-json still receives the event.
         break;
     }
+  }
+
+  private printCompletion(completion?: RunCompletion): void {
+    if (!completion || completion.status === 'no_changes') return;
+    const checks = completion.checks.map((check) => check.command).join(', ');
+    const suffix = checks ? ` ${this.glyphs.separator} ${checks}` : '';
+    if (completion.status === 'verified') {
+      process.stderr.write(this.paint.green(
+        `${this.glyphs.success} verified ${this.glyphs.separator} ${completion.detail}${suffix}\n`,
+      ));
+      return;
+    }
+    if (completion.status === 'verification_failed') {
+      process.stderr.write(this.paint.red(
+        `${this.glyphs.error} verification failed ${this.glyphs.separator} ${completion.detail}${suffix}\n`,
+      ));
+      return;
+    }
+    process.stderr.write(this.paint.yellow(
+      `${this.glyphs.warning} unverified ${this.glyphs.separator} ${completion.detail}\n`,
+    ));
   }
 }
 
@@ -207,6 +240,7 @@ function sessionSummary(session: Session): Record<string, unknown> {
     updatedAt: session.updatedAt,
     tasks: session.tasks,
     changedFiles: session.changedFiles,
+    ...(session.lastRun ? {lastRun: session.lastRun} : {}),
     usage: session.usage,
   };
 }

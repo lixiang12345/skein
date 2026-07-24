@@ -44,7 +44,34 @@
 7. Execute tools, emit events, and append their grounded results to the model
    conversation.
 8. Continue until the model returns a final response or the turn limit is hit.
-9. Run configured verification commands after changes and persist the session.
+9. Run configured verification commands after changes. The completion gate accepts
+   only current successful test, typecheck, lint, build, check, or `git diff
+   --check` evidence recorded after the last mutation. An early final response
+   receives one bounded recovery turn; the runtime persists `verified`,
+   `unverified`, or `verification_failed` instead of trusting completion claims
+   in model text.
+10. Persist the outcome and expose the same status through the TUI, text, JSON,
+    and JSONL surfaces.
+
+## Interactive startup gate
+
+New interactive sessions establish local context readiness before creating or
+saving a session. Resumed sessions keep their existing transcript-first startup
+and rely on the same per-turn retrieval freshness checks:
+
+1. Inspect and schema-check the persisted local index.
+2. Compare its manifest with the current workspace.
+3. Incrementally scan, chunk, and write only when the index is missing, stale,
+   or first-run setup explicitly requests a visible build.
+4. Reload the written artifact from disk and match generation, file count,
+   chunk count, and manifest freshness.
+5. Pass the immutable readiness snapshot to the TUI; only then enable the
+   composer and initialize session extensions.
+
+An empty workspace produces a valid zero-file generation. Validation failures
+stay in a retry/exit state and occur before an empty session is persisted.
+Headless runs retain non-animated lazy indexing so structured automation does
+not acquire terminal-only behavior.
 
 ### Prompt layers
 
@@ -81,6 +108,12 @@ untrusted evidence block for the model
 Index state is persisted in the active project namespace. Search results are
 revalidated against current files before packing, so a stale index reduces
 recall rather than silently injecting old code.
+
+The fresh-session TUI consumes the same verified readiness snapshot. Wide
+terminals expose it in a factual workspace rail alongside the selected model,
+mode, permission posture, tool/Skill/MCP counts, and memory state. Narrow
+terminals collapse to one column, and team activity takes precedence over this
+welcome-only rail.
 
 ## Storage
 
@@ -122,6 +155,10 @@ useful without silently accumulating guesses.
   Plan mode additionally injects a read-only, approval-oriented planning
   directive; Build mode is required before workspace mutation is possible.
 - Hooks are bounded subprocesses and receive structured environment metadata.
+- Dynamic shell commands with no statically resolvable target use bounded
+  before/after content-fingerprint snapshots across workspace files. Incomplete
+  observation is persisted as unknown mutation tracking and forces an
+  unverified completion rather than a false no-change result.
 - Checkpoint restore validates paths before writing snapshots back.
 - Session and checkpoint directories reject symlinked `.mosaic` storage paths;
   local index files are schema-checked and out-of-root entries are discarded.

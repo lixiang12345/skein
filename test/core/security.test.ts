@@ -1,4 +1,4 @@
-import {access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile} from 'node:fs/promises';
+import {access, chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {delimiter, join} from 'node:path';
 import {afterEach, describe, expect, it} from 'vitest';
@@ -378,5 +378,27 @@ describe('workspace and permission boundaries', () => {
       .resolves.toEqual([join(root, 'removed.txt')]);
     const removed = await shellTool.execute(absoluteRm, context);
     expect(removed.changedFiles).toEqual([join(root, 'removed.txt')]);
+  });
+
+  it('tracks dynamic interpreter changes with content fingerprints', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-shell-dynamic-tracking-'));
+    roots.push(root);
+    const path = join(root, 'already-dirty.txt');
+    await writeFile(path, 'first value\n');
+    const before = await stat(path);
+    const context = {
+      workspace: new WorkspaceAccess([root]),
+      config: {} as never,
+      session: {} as never,
+    };
+    const replacement = 'other value\n';
+    expect(replacement).toHaveLength('first value\n'.length);
+    const command = `node -e "require('fs').writeFileSync('already-dirty.txt', '${replacement.replace(/\n/u, '\\n')}')"`;
+    const result = await shellTool.execute({command}, context);
+    await utimes(path, before.atime, before.mtime);
+
+    expect(result.ok).toBe(true);
+    expect(result.metadata?.changeTracking).toBe('workspace-snapshot');
+    expect(result.changedFiles).toEqual([path]);
   });
 });

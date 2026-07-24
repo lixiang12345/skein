@@ -1,6 +1,18 @@
 import type {ContextDegradation, ContextHit, MosaicConfig, PackedContext} from '../types.js';
 import {workspaceAliasPath} from '../utils/path.js';
-import {LocalContextIndex, type IndexProgress} from './local-index.js';
+import {
+  LocalContextIndex,
+  type IndexPreparationResult,
+  type IndexProgress,
+  type LocalIndexStatus,
+} from './local-index.js';
+
+export interface ContextEngineStatus {
+  [key: string]: unknown;
+  selected: 'local';
+  local: LocalIndexStatus;
+  degradation?: ContextDegradation;
+}
 
 /**
  * The in-process retrieval boundary used by the agent and search tool.
@@ -67,12 +79,22 @@ export class ContextEngine {
     return {engine: 'local', ...result};
   }
 
-  async status(): Promise<Record<string, unknown>> {
+  async prepare(
+    onProgress?: (progress: IndexProgress) => void,
+    forceBuild = false,
+  ): Promise<IndexPreparationResult> {
+    const result = await this.local.prepare(onProgress, forceBuild);
+    this.degradation = undefined;
+    return result;
+  }
+
+  async status(): Promise<ContextEngineStatus> {
     await this.local.load();
+    const degradation = this.lastDegradation();
     return {
       selected: 'local',
       local: this.local.status(),
-      ...(this.degradation ? {degradation: this.lastDegradation()} : {}),
+      ...(degradation ? {degradation} : {}),
     };
   }
 

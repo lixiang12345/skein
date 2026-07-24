@@ -39,6 +39,7 @@ import {
   TaskRail,
   TeamCockpit,
   TeamWorkbench,
+  WorkspacePanel,
   type TeamRunSummary,
   type TeamWorkbenchView,
   Timeline,
@@ -46,7 +47,9 @@ import {
   type ContextInspectorStatus,
   type ListEntry,
   type TimelineItem,
+  type WorkspacePanelStatus,
 } from './components.js';
+import type {WorkspaceReadiness} from './workspace-preparation.js';
 import {commandDefinitions, commandSuggestions} from './commands.js';
 import {refreshUpdateCache, resolveCachedUpdateNotice, type UpdateNotice} from '../utils/update-check.js';
 import {ComposerInput} from './composer.js';
@@ -61,7 +64,7 @@ import {
 import {displayWidth, sanitizeTerminalText, terminalEllipsis, truncateDisplay} from './text.js';
 import {resolveKittyKeyboardConfig} from './terminal-capabilities.js';
 import {nextTheme, reloadUserThemes, resolveThemeWithColor, ThemeProvider, themes} from './theme.js';
-import {fitTimelineToRows} from './viewport.js';
+import {estimateTimelineItemRows, fitTimelineToRows} from './viewport.js';
 import {
   endStreamingAssistants,
   finalizeAssistant,
@@ -104,10 +107,11 @@ export interface TuiOptions {
   initialPrompt?: string;
   askMode?: boolean;
   planMode?: boolean;
+  workspaceReadiness?: WorkspaceReadiness;
 }
 
 
-export function SkeinApp({runner, config, extensions, initialPrompt, askMode = false, planMode = false}: TuiOptions) {
+export function SkeinApp({runner, config, extensions, initialPrompt, askMode = false, planMode = false, workspaceReadiness}: TuiOptions) {
   const {exit} = useApp();
   const {columns, rows} = useWindowSize();
   const terminalWidth = Math.max(1, columns || 80);
@@ -439,7 +443,26 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         setTimeline(endStreamingAssistants);
         setActivity(undefined);
         refreshSession();
-        if (event.reason !== 'completed') {
+        if (event.completion && event.completion.status !== 'no_changes') {
+          const checks = event.completion.checks.map((check) => check.command).join(` ${separator} `);
+          append({
+            id: nextId(),
+            kind: 'notice',
+            wrapWidth: contentWidth,
+            tone: event.completion.status === 'verified'
+              ? 'success'
+              : event.completion.status === 'unverified'
+                ? 'warning'
+                : 'error',
+            text: event.completion.status === 'verified'
+              ? `Verified${separator}${event.completion.detail}${checks ? `${separator}${checks}` : ''}`
+              : event.completion.status === 'verification_failed'
+                ? `Verification failed${separator}${event.completion.detail}${checks ? `${separator}${checks}` : ''}`
+                : `Unverified${separator}${event.completion.detail}`,
+          });
+        }
+        if (event.reason !== 'completed' &&
+          event.reason !== 'unverified' && event.reason !== 'verification_failed') {
           append({
             id: nextId(),
             kind: 'notice',
@@ -1426,12 +1449,29 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const activityRows = showActivity && activity ? (contentWidth < 48 && activity.turn ? 3 : 2) : 0;
   const headerRows = showHeader ? 2 : 0;
   const chromeRows = headerRows + composerRows + footerRows + taskRows + paletteRows + inspectorRows + activityRows;
-  const timelineRows = Math.max(0, terminalHeight - chromeRows);
+  const availableTimelineRows = Math.max(0, terminalHeight - chromeRows);
   const teamItems = timeline.filter((item) => item.kind === 'agent' || item.kind === 'agent-message');
+  const showWorkspacePanel = Boolean(workspaceReadiness) && contentWidth >= 96 && !teamWorkbenchOpen &&
+    !teamItems.some((item) => item.kind === 'agent');
+  const workspacePanelWidth = showWorkspacePanel ? Math.min(38, Math.max(32, Math.floor(contentWidth * 0.34))) : 0;
+  const workspaceTimelineWidth = Math.max(1, contentWidth - workspacePanelWidth - (showWorkspacePanel ? 1 : 0));
+  const timelineContentRows = timeline.reduce((rows, item) => rows + estimateTimelineItemRows(item, {
+    width: workspaceTimelineWidth,
+    rows: availableTimelineRows,
+    compact: compactUi,
+    showToolOutput,
+    ...(expandedToolId ? {expandedToolId} : {}),
+  }), 0);
+  // Keep short sessions inline with the surrounding terminal. The viewport
+  // grows only as transcript content needs it, up to the real terminal height.
+  const timelineRows = teamWorkbenchOpen
+    ? availableTimelineRows
+    : Math.min(availableTimelineRows, Math.max(timelineContentRows, showWorkspacePanel ? 10 : 0));
   const showTeamCockpit = config.agents?.cockpit !== false && contentWidth >= 100 &&
     timelineRows >= 7 && teamItems.some((item) => item.kind === 'agent');
-  const cockpitWidth = showTeamCockpit ? Math.min(38, Math.max(30, Math.floor(contentWidth * 0.32))) : 0;
-  const timelineWidth = Math.max(1, contentWidth - cockpitWidth - (showTeamCockpit ? 1 : 0));
+  const cockpitWidth = showTeamCockpit ? Math.min(38, Math.max(30, Math.floor(contentWidth * 0.32))) : workspacePanelWidth;
+  const hasSidePanel = showTeamCockpit || showWorkspacePanel;
+  const timelineWidth = Math.max(1, contentWidth - cockpitWidth - (hasSidePanel ? 1 : 0));
   const visibleTimeline = fitTimelineToRows(timeline, {
     width: timelineWidth,
     rows: timelineRows,
@@ -1442,6 +1482,19 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const activeAgents = timeline.filter((item) => item.kind === 'agent' && item.state === 'running').length;
   const mcpServers = extensions?.mcpStatus() ?? [];
   const memoryStats = extensions?.memoryStats();
+  const workspacePanelStatus: WorkspacePanelStatus | undefined = workspaceReadiness ? {
+    model: `${config.model.provider}/${config.model.model}`,
+    mode: interactionMode,
+    context: workspaceReadiness.files ? 'ready' : 'empty',
+    files: workspaceReadiness.files,
+    chunks: workspaceReadiness.chunks,
+    permissions: permissionPosture(config),
+    tools: runner.tools.definitions().length,
+    skills: extensions?.listSkills().length ?? 0,
+    mcpConnected: mcpServers.filter((server) => server.state === 'connected').length,
+    mcpTotal: mcpServers.length,
+    memory: config.memory?.enabled ? 'on' : 'off',
+  } : undefined;
 
   if (terminalHeight < 8) {
     return (
@@ -1455,7 +1508,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
 
   return (
     <ThemeProvider theme={theme}>
-      <Box flexDirection="column" paddingX={horizontalPadding} height={terminalHeight} overflowY="hidden">
+      <Box flexDirection="column" paddingX={horizontalPadding} overflowY="hidden">
         {showHeader ? <Header config={config} askMode={interactionMode !== 'build'} planMode={interactionMode === 'plan'} width={contentWidth} glyphMode={glyphMode} /> : null}
         {timelineRows > 0 ? (
           <Box flexDirection="row" height={timelineRows} overflowY="hidden">
@@ -1485,6 +1538,10 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
               {showTeamCockpit ? (
                 <Box marginLeft={1}>
                   <TeamCockpit items={teamItems} width={cockpitWidth} glyphMode={glyphMode} />
+                </Box>
+              ) : showWorkspacePanel && workspacePanelStatus ? (
+                <Box marginLeft={1}>
+                  <WorkspacePanel status={workspacePanelStatus} width={workspacePanelWidth} glyphMode={glyphMode} />
                 </Box>
               ) : null}
             </>}
@@ -1569,6 +1626,13 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   );
 }
 
+function permissionPosture(config: MosaicConfig): string {
+  const values = [config.permissions.write, config.permissions.shell, config.permissions.git];
+  if (values.includes('deny')) return 'restricted';
+  if (values.includes('ask')) return 'guarded';
+  return 'open';
+}
+
 export async function runInteractiveTui(options: TuiOptions): Promise<void> {
   await reloadUserThemes();
   const instance = render(<SkeinApp {...options} />, {
@@ -1612,6 +1676,7 @@ function initialHistory(session: Session): string[] {
 
 function visibleMessage(message: ChatMessage): boolean {
   return !message.content.startsWith('<automatic-verification>') &&
+    !message.content.startsWith('<runtime-completion-gate') &&
     !message.content.startsWith('<workflow ') &&
     !message.content.startsWith('<retrieved-memory');
 }
@@ -1630,6 +1695,13 @@ function snapshotSession(source: Session): Session {
     })),
     tasks: source.tasks.map((task) => ({...task})),
     changedFiles: [...source.changedFiles],
+    ...(source.lastRun ? {
+      lastRun: {
+        ...source.lastRun,
+        changedFiles: [...source.lastRun.changedFiles],
+        checks: source.lastRun.checks.map((check) => ({...check})),
+      },
+    } : {}),
     ...(source.audit ? {
       audit: source.audit.map((event) => ({
         ...event,

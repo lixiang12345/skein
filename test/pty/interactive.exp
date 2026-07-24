@@ -69,6 +69,10 @@ spawn -noecho node dist/cli.js \
   --base-url http://127.0.0.1:9/v1
 stty rows 24 columns $width < $spawn_out(slave,name)
 
+# Workspace preparation runs before the chat TUI and must finish before input.
+await_pattern {Inspecting} {workspace preparation}
+await_pattern {verified} {workspace index verification}
+
 # Do not send input until Ink has entered raw input and bracketed-paste mode.
 # Without this handshake, narrow renders can fill the PTY before Expect reads
 # it and leave Return buffered by the terminal line discipline.

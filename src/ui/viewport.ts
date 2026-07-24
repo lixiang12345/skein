@@ -159,8 +159,7 @@ export function estimateTimelineItemRows(
   if (item.kind === 'agent' || item.kind === 'agent-message') return rowWidth < 64 ? 2 : 1;
   if (item.kind === 'workflow') return rowWidth < 64 ? 2 : 1;
   if (item.kind === 'banner') {
-    // Three bounded session-summary rows plus one trailing margin row.
-    return 4;
+    return rowWidth >= 48 ? 4 : 3;
   }
   return 1;
 }

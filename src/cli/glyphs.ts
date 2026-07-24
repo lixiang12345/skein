@@ -7,6 +7,7 @@ export interface CliGlyphs {
   running: string;
   success: string;
   error: string;
+  warning: string;
   separator: string;
   ellipsis: string;
   prompt: string;
@@ -19,6 +20,7 @@ const unicodeGlyphs: CliGlyphs = {
   running: '◌',
   success: '✓',
   error: '×',
+  warning: '!',
   separator: '·',
   ellipsis: '…',
   prompt: '›',
@@ -31,6 +33,7 @@ const asciiGlyphs: CliGlyphs = {
   running: '~',
   success: '+',
   error: 'x',
+  warning: '!',
   separator: '|',
   ellipsis: '...',
   prompt: '>',

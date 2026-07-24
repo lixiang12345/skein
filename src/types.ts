@@ -246,6 +246,42 @@ export interface WorkingMemory {
   lastUpdatedAt: string;
 }
 
+export type CompletionStatus =
+  | 'no_changes'
+  | 'verified'
+  | 'unverified'
+  | 'verification_failed';
+
+export type VerificationKind =
+  | 'configured'
+  | 'test'
+  | 'typecheck'
+  | 'lint'
+  | 'build'
+  | 'diff'
+  | 'check';
+
+export interface VerificationEvidence {
+  toolCallId: string;
+  tool: 'shell' | 'git';
+  command: string;
+  kind: VerificationKind;
+  ok: boolean;
+}
+
+export interface RunCompletion {
+  status: CompletionStatus;
+  changedFiles: string[];
+  checks: VerificationEvidence[];
+  detail: string;
+  mutationTracking?: 'complete' | 'unknown';
+}
+
+export interface SessionRunRecord extends RunCompletion {
+  reason: string;
+  finishedAt: string;
+}
+
 export type AgentPhase = 'work' | 'review' | 'revision' | 'write';
 
 export type WriterLaneStatus =
@@ -289,6 +325,7 @@ export interface Session {
   compactedThroughMessageId?: string;
   workingMemory?: WorkingMemory;
   contextSources?: ContextSource[];
+  lastRun?: SessionRunRecord;
   usage: {
     inputTokens: number;
     outputTokens: number;
@@ -320,7 +357,7 @@ export type AgentEvent =
   | {type: 'context_compacted'; omittedMessages: number; summaryTokens: number}
   | {type: 'usage'; inputTokens: number; outputTokens: number}
   | {type: 'error'; error: Error}
-  | {type: 'done'; reason: string};
+  | {type: 'done'; reason: string; completion?: RunCompletion};
 
 export interface RunOptions {
   maxTurns?: number;

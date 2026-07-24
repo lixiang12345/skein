@@ -66,6 +66,24 @@ const contextSourceSchema = z.object({
   addedAt: z.string(),
 }).strict();
 
+const verificationEvidenceSchema = z.object({
+  toolCallId: z.string(),
+  tool: z.enum(['shell', 'git']),
+  command: z.string(),
+  kind: z.enum(['configured', 'test', 'typecheck', 'lint', 'build', 'diff', 'check']),
+  ok: z.boolean(),
+}).strict();
+
+const lastRunSchema = z.object({
+  status: z.enum(['no_changes', 'verified', 'unverified', 'verification_failed']),
+  changedFiles: z.array(z.string()),
+  checks: z.array(verificationEvidenceSchema),
+  detail: z.string(),
+  mutationTracking: z.enum(['complete', 'unknown']).optional(),
+  reason: z.string(),
+  finishedAt: z.string(),
+}).strict();
+
 const workingMemorySchema = z.object({
   goal: z.string(),
   focus: z.string(),
@@ -93,6 +111,7 @@ const sessionSchema = z.object({
   compactedThroughMessageId: z.string().optional(),
   workingMemory: workingMemorySchema.optional(),
   contextSources: z.array(contextSourceSchema).max(64).optional(),
+  lastRun: lastRunSchema.optional(),
   usage: z.object({
     inputTokens: z.number().nonnegative(),
     outputTokens: z.number().nonnegative(),

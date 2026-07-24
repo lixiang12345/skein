@@ -68,14 +68,14 @@ Sources:
 
 | Surface | Capability |
 |---|---|
-| Context | Local BM25/path/symbol index, freshness checks, token packing, multi-root, `@file` mentions |
+| Context | Local BM25/path/symbol index, visible startup build/validation gate, freshness checks, token packing, multi-root, `@file` mentions |
 | Models | OpenAI, Anthropic, Gemini, OpenAI-compatible endpoints |
-| Agent | Multi-turn tool loop, task plan, automatic verification, ask-only mode |
+| Agent | Multi-turn tool loop, task plan, evidence-gated completion, automatic verification, ask-only mode |
 | Tools | Read, list, search, write, patch, shell, Git, context search, task updates |
 | Trust | Workspace path boundary, allow/ask/deny policy, command rules, hooks, checkpoints |
 | Sessions | Local persistence, resume/latest, list/show/delete/export |
-| UX | Ink TUI, action timeline, context telemetry, plan rail, inline permission band, interruption |
-| Automation | Prompt/stdin input, queue, quiet mode, JSON and JSONL event output, exit codes |
+| UX | Ink TUI, responsive branded welcome/workspace rail, action timeline, context telemetry, plan rail, inline permission band, interruption |
+| Automation | Prompt/stdin input, queue, quiet mode, JSON and JSONL output with verified/unverified status, exit codes |
 | Operations | Init, doctor, config, index/search/context/status, checkpoint management |
 
 ## Differentiation

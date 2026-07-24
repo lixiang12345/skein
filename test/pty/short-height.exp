@@ -61,6 +61,10 @@ spawn -noecho node dist/cli.js \
   --base-url http://127.0.0.1:9/v1
 stty rows 10 columns 40 < $spawn_out(slave,name)
 
+# Workspace preparation runs before the compact chat TUI.
+await_pattern {Inspecting} {workspace preparation}
+await_pattern {verified} {workspace index verification}
+
 # At ten rows the header is deliberately omitted. The test therefore starts
 # from the composer rather than relying on the normal branded header.
 await_pattern {Type a request} startup

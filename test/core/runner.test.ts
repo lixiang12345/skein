@@ -324,6 +324,7 @@ describe('AgentRunner', () => {
     runnerConfig.agent.autoVerify = true;
     runnerConfig.agent.verifyCommands = ['node -e "process.stdout.write(\'verified\')"'];
     runnerConfig.permissions.shell = 'allow';
+    runnerConfig.permissions.network = 'allow';
     const runner = new AgentRunner({
       config: runnerConfig,
       provider,
@@ -334,6 +335,180 @@ describe('AgentRunner', () => {
     expect(provider.calls).toHaveLength(3);
     expect(provider.calls[2]?.some((message) =>
       message.content.includes('<automatic-verification>'))).toBe(true);
+    expect(runner.getSession().lastRun).toMatchObject({status: 'verified', reason: 'completed'});
+  });
+
+  it('gives an unverified medium model one bounded recovery turn', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-completion-recovery-'));
+    roots.push(root);
+    const provider = new QueueProvider([
+      {
+        content: 'Writing the requested file.',
+        toolCalls: [{
+          id: 'write-before-gate',
+          name: 'write_file',
+          arguments: {path: 'result.txt', content: 'done\n'},
+        }],
+      },
+      {content: 'Done.', toolCalls: []},
+      {
+        content: 'Running a focused check.',
+        toolCalls: [{id: 'verify-after-gate', name: 'shell', arguments: {command: 'node --test'}}],
+      },
+      {content: 'The focused check passed.', toolCalls: []},
+    ]);
+    const runnerConfig = config(root);
+    runnerConfig.agent.autoVerify = true;
+    runnerConfig.permissions = {
+      ...runnerConfig.permissions,
+      shell: 'allow', write: 'allow', network: 'allow',
+    };
+    const events: AgentEvent[] = [];
+    const store = new SessionStore(root);
+    const runner = new AgentRunner({config: runnerConfig, provider, contextEngine: context, sessionStore: store});
+
+    const session = await runner.run('create and verify result', {
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(provider.calls).toHaveLength(4);
+    expect(provider.calls[2]?.some((item) => item.content.includes('<runtime-completion-gate'))).toBe(true);
+    expect(events.at(-1)).toMatchObject({
+      type: 'done',
+      reason: 'completed',
+      completion: {status: 'verified', checks: [expect.objectContaining({toolCallId: 'verify-after-gate'})]},
+    });
+    expect(session.lastRun).toMatchObject({status: 'verified', reason: 'completed'});
+    expect((await store.load(session.id)).lastRun).toEqual(session.lastRun);
+  });
+
+  it('reports unverified when the model ignores the bounded recovery directive', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-completion-unverified-'));
+    roots.push(root);
+    const provider = new QueueProvider([
+      {
+        content: '',
+        toolCalls: [{id: 'write-unverified', name: 'write_file', arguments: {path: 'result.txt', content: 'done\n'}}],
+      },
+      {content: 'Completed and verified.', toolCalls: []},
+      {content: 'Still completed and verified.', toolCalls: []},
+    ]);
+    const runnerConfig = config(root);
+    runnerConfig.agent.autoVerify = true;
+    const events: AgentEvent[] = [];
+    const runner = new AgentRunner({config: runnerConfig, provider, contextEngine: context});
+
+    const session = await runner.run('create result without skipping verification', {
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(provider.calls).toHaveLength(3);
+    expect(events.at(-1)).toMatchObject({
+      type: 'done',
+      reason: 'unverified',
+      completion: {status: 'unverified', checks: []},
+    });
+    expect(session.lastRun).toMatchObject({status: 'unverified', reason: 'unverified'});
+  });
+
+  it('persists completion state when the provider fails after a partial change', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-completion-provider-error-'));
+    roots.push(root);
+    const provider = new QueueProvider([{
+      content: '',
+      toolCalls: [{id: 'write-before-provider-error', name: 'write_file', arguments: {path: 'partial.txt', content: 'partial\n'}}],
+    }]);
+    const runnerConfig = config(root);
+    const store = new SessionStore(root);
+    const runner = new AgentRunner({config: runnerConfig, provider, contextEngine: context, sessionStore: store});
+
+    await expect(runner.run('write then fail')).rejects.toThrow('No scripted response remaining.');
+
+    const session = runner.getSession();
+    expect(session.lastRun).toMatchObject({
+      status: 'unverified',
+      reason: 'error',
+      changedFiles: [join(root, 'partial.txt')],
+    });
+    expect((await store.load(session.id)).lastRun).toEqual(session.lastRun);
+  });
+
+  it('does not let a later summary hide failed current verification', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-completion-failed-'));
+    roots.push(root);
+    const provider = new QueueProvider([
+      {
+        content: '',
+        toolCalls: [{id: 'write-before-failure', name: 'write_file', arguments: {path: 'result.txt', content: 'done\n'}}],
+      },
+      {content: 'Done.', toolCalls: []},
+      {
+        content: '',
+        toolCalls: [{
+          id: 'failed-verification',
+          name: 'shell',
+          arguments: {command: 'node --test missing.test.js'},
+        }],
+      },
+      {content: 'Everything passed.', toolCalls: []},
+    ]);
+    const runnerConfig = config(root);
+    runnerConfig.agent.autoVerify = true;
+    runnerConfig.permissions = {
+      ...runnerConfig.permissions,
+      shell: 'allow', write: 'allow', network: 'allow',
+    };
+    const events: AgentEvent[] = [];
+    const runner = new AgentRunner({config: runnerConfig, provider, contextEngine: context});
+
+    const session = await runner.run('create result and verify it', {
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(events.at(-1)).toMatchObject({
+      type: 'done',
+      reason: 'verification_failed',
+      completion: {
+        status: 'verification_failed',
+        checks: [expect.objectContaining({toolCallId: 'failed-verification', ok: false})],
+      },
+    });
+    expect(session.lastRun).toMatchObject({status: 'verification_failed', reason: 'verification_failed'});
+  });
+
+  it('accepts one verification after a multi-file edit batch', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-completion-multifile-'));
+    roots.push(root);
+    const provider = new QueueProvider([
+      {
+        content: '',
+        toolCalls: [{
+          id: 'write-two-files',
+          name: 'apply_patch',
+          arguments: {patch: '*** Begin Patch\n*** Add File: one.txt\n+one\n*** Add File: two.txt\n+two\n*** End Patch'},
+        }],
+      },
+      {
+        content: '',
+        toolCalls: [{id: 'verify-two-files', name: 'shell', arguments: {command: 'node --test'}}],
+      },
+      {content: 'Verified both files.', toolCalls: []},
+    ]);
+    const runnerConfig = config(root);
+    runnerConfig.agent.autoVerify = true;
+    runnerConfig.permissions = {
+      ...runnerConfig.permissions,
+      shell: 'allow', write: 'allow', network: 'allow',
+    };
+    const runner = new AgentRunner({config: runnerConfig, provider, contextEngine: context});
+
+    const session = await runner.run('create and verify two files');
+
+    expect(session.lastRun).toMatchObject({
+      status: 'verified',
+      changedFiles: expect.arrayContaining([join(root, 'one.txt'), join(root, 'two.txt')]),
+      checks: [expect.objectContaining({toolCallId: 'verify-two-files'})],
+    });
   });
 
   it('does not execute returned mutations after a provider overshoots the token budget', async () => {

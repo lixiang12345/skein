@@ -1,4 +1,6 @@
-import {lstat} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
+import {lstat, readFile, readdir} from 'node:fs/promises';
+import {join} from 'node:path';
 import {z} from 'zod';
 import {runShell} from '../utils/process.js';
 import type {AgentTool} from './types.js';
@@ -52,15 +54,41 @@ export const shellTool: AgentTool = {
     const candidates = appearsToModifyWorkspace(input.command)
       ? await collectAffectedPaths(input.command, input.cwd ?? '.', context)
       : [];
+    const unresolved = appearsToModifyWorkspace(input.command) && candidates.length === 0;
+    const roots = unresolved ? context.workspace.roots : [];
     const before = await snapshotPaths(candidates);
-    const result = await runShell(input.command, cwd, {
-      timeoutMs: input.timeout_ms ?? 120_000,
-      maxOutputBytes: input.max_output_bytes ?? 1_000_000,
-      ...(input.env ? {env: input.env} : {}),
-      ...(input.stdin !== undefined ? {stdin: input.stdin} : {}),
-      ...(context.signal ? {signal: context.signal} : {}),
-    });
-    const changedFiles = await changedPaths(candidates, before);
+    const beforeWorkspace = unresolved ? await captureWorkspaceSnapshot(roots) : undefined;
+    let result: Awaited<ReturnType<typeof runShell>>;
+    try {
+      result = await runShell(input.command, cwd, {
+        timeoutMs: input.timeout_ms ?? 120_000,
+        maxOutputBytes: input.max_output_bytes ?? 1_000_000,
+        ...(input.env ? {env: input.env} : {}),
+        ...(input.stdin !== undefined ? {stdin: input.stdin} : {}),
+        ...(context.signal ? {signal: context.signal} : {}),
+      });
+    } catch (error) {
+      const afterWorkspace = beforeWorkspace ? await captureWorkspaceSnapshot(roots) : undefined;
+      const changedFiles = beforeWorkspace && afterWorkspace
+        ? diffWorkspaceSnapshots(beforeWorkspace.files, afterWorkspace.files)
+        : await changedPaths(candidates, before);
+      return {
+        ok: false,
+        content: `Command: ${input.command}\nExecution interrupted: ${error instanceof Error ? error.message : String(error)}`,
+        metadata: {
+          cwd,
+          aborted: context.signal?.aborted ?? false,
+          changeTracking: beforeWorkspace && afterWorkspace && beforeWorkspace.complete && afterWorkspace.complete
+            ? 'workspace-snapshot'
+            : candidates.length ? 'targeted' : 'unresolved',
+        },
+        ...(changedFiles.length ? {changedFiles} : {}),
+      };
+    }
+    const afterWorkspace = beforeWorkspace ? await captureWorkspaceSnapshot(roots) : undefined;
+    const changedFiles = beforeWorkspace && afterWorkspace
+      ? diffWorkspaceSnapshots(beforeWorkspace.files, afterWorkspace.files)
+      : await changedPaths(candidates, before);
     const sections = [
       `Command: ${input.command}`,
       `Exit code: ${result.exitCode}${result.timedOut ? ' (timed out)' : ''}`,
@@ -75,7 +103,11 @@ export const shellTool: AgentTool = {
         exitCode: result.exitCode,
         timedOut: result.timedOut,
         durationMs: result.durationMs,
-        changeTracking: candidates.length ? 'targeted' : appearsToModifyWorkspace(input.command) ? 'unresolved' : 'read-only',
+        changeTracking: candidates.length
+          ? 'targeted'
+          : beforeWorkspace && afterWorkspace && beforeWorkspace.complete && afterWorkspace.complete
+            ? 'workspace-snapshot'
+            : beforeWorkspace ? 'unresolved' : 'read-only',
       },
       ...(changedFiles.length ? {changedFiles} : {}),
     };
@@ -187,6 +219,21 @@ function shellWords(value: string): string[] {
 
 interface PathSnapshot {exists: boolean; size?: number; mtimeMs?: number}
 
+interface WorkspaceFileSnapshot {
+  size: number;
+  mtimeMs: number;
+  hash: string;
+}
+
+interface WorkspaceSnapshot {
+  files: Map<string, WorkspaceFileSnapshot>;
+  complete: boolean;
+}
+
+const MAX_SNAPSHOT_FILES = 20_000;
+const MAX_SNAPSHOT_FILE_BYTES = 10_000_000;
+const MAX_SNAPSHOT_TOTAL_BYTES = 128_000_000;
+
 async function snapshotPaths(paths: string[]): Promise<Map<string, PathSnapshot>> {
   return new Map(await Promise.all(paths.map(async (path) => [path, await snapshotPath(path)] as const)));
 }
@@ -207,4 +254,71 @@ async function snapshotPath(path: string): Promise<PathSnapshot> {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {exists: false};
     throw error;
   }
+}
+
+async function captureWorkspaceSnapshot(roots: string[]): Promise<WorkspaceSnapshot> {
+  const files = new Map<string, WorkspaceFileSnapshot>();
+  let totalBytes = 0;
+  let complete = true;
+  for (const root of roots) {
+    const discovered = await discoverSnapshotFiles(root);
+    if (!discovered.complete) complete = false;
+    for (const path of discovered.files) {
+      try {
+        const info = await lstat(path);
+        if (!info.isFile() || info.isSymbolicLink()) continue;
+        if (files.size >= MAX_SNAPSHOT_FILES || info.size > MAX_SNAPSHOT_FILE_BYTES || totalBytes + info.size > MAX_SNAPSHOT_TOTAL_BYTES) {
+          complete = false;
+          continue;
+        }
+        const content = await readFile(path);
+        totalBytes += content.length;
+        files.set(path, {
+          size: info.size,
+          mtimeMs: info.mtimeMs,
+          hash: createHash('sha256').update(content).digest('hex'),
+        });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') complete = false;
+      }
+    }
+  }
+  return {files, complete};
+}
+
+function diffWorkspaceSnapshots(
+  before: Map<string, WorkspaceFileSnapshot>,
+  after: Map<string, WorkspaceFileSnapshot>,
+): string[] {
+  return [...new Set([...before.keys(), ...after.keys()])]
+    .filter((path) => JSON.stringify(before.get(path)) !== JSON.stringify(after.get(path)))
+    .sort();
+}
+
+async function discoverSnapshotFiles(root: string): Promise<{files: string[]; complete: boolean}> {
+  const ignored = new Set(['.git', '.skein', '.mosaic', 'node_modules']);
+  const files: string[] = [];
+  const pending = [root];
+  let complete = true;
+  while (pending.length) {
+    const directory = pending.pop();
+    if (!directory) break;
+    try {
+      const entries = await readdir(directory, {withFileTypes: true, encoding: 'utf8'});
+      for (const entry of entries) {
+        if (ignored.has(entry.name) || /^\.skein\.(?:migrating|rollback)-/u.test(entry.name)) continue;
+        if (entry.isSymbolicLink()) {
+          complete = false;
+          continue;
+        }
+        const path = join(directory, entry.name);
+        if (entry.isDirectory()) pending.push(path);
+        else if (entry.isFile()) files.push(path);
+      }
+    } catch {
+      complete = false;
+      continue;
+    }
+  }
+  return {files: files.sort(), complete};
 }

@@ -89,10 +89,34 @@ const localIndexSchema = z.object({
 }).strict();
 
 export interface IndexProgress {
-  phase: 'scan' | 'index' | 'write' | 'done';
+  phase: 'inspect' | 'scan' | 'index' | 'write' | 'validate' | 'done';
   completed: number;
   total: number;
   path?: string;
+}
+
+export interface LocalIndexStatus {
+  available: boolean;
+  path: string;
+  files: number;
+  chunks: number;
+  queryCacheEntries: number;
+  createdAt?: string;
+  generation?: string;
+}
+
+export interface IndexBuildResult {
+  files: number;
+  chunks: number;
+  reused: number;
+  durationMs: number;
+  generation: string;
+}
+
+export interface IndexPreparationResult extends IndexBuildResult {
+  rebuilt: boolean;
+  validated: true;
+  path: string;
 }
 
 const include = [
@@ -165,14 +189,59 @@ export class LocalContextIndex {
     }
   }
 
-  async build(onProgress?: (progress: IndexProgress) => void): Promise<{
-    files: number;
-    chunks: number;
-    reused: number;
-    durationMs: number;
-    generation: string;
-  }> {
+  async build(onProgress?: (progress: IndexProgress) => void): Promise<IndexBuildResult> {
     return this.buildWithOptions(onProgress, false);
+  }
+
+  async prepare(
+    onProgress?: (progress: IndexProgress) => void,
+    forceBuild = false,
+  ): Promise<IndexPreparationResult> {
+    const started = Date.now();
+    onProgress?.({phase: 'inspect', completed: 0, total: 0});
+    const loaded = await this.load();
+    let shouldBuild = forceBuild || !loaded || await this.manifestChanged();
+    let rebuildWithHashes = false;
+    let existingValidated = false;
+    if (!shouldBuild) {
+      existingValidated = await this.validateLoadedIndex(onProgress);
+      if (!existingValidated) {
+        shouldBuild = true;
+        rebuildWithHashes = true;
+      }
+    }
+    const result = shouldBuild
+      ? await this.buildWithOptions((progress) => {
+        if (progress.phase !== 'done') onProgress?.(progress);
+      }, rebuildWithHashes)
+      : existingBuildResult(this.status(), started);
+
+    // Reload the persisted artifact instead of trusting the in-memory build.
+    // This catches failed/truncated writes and schema or workspace-boundary drift
+    // before the user starts a conversation.
+    if (shouldBuild && !(await this.load())) {
+      throw new Error('The local context index could not be reloaded after preparation.');
+    }
+    const status = this.status();
+    if (!status.available || !status.generation) {
+      throw new Error('The local context index did not report a valid generation.');
+    }
+    if (status.generation !== result.generation || status.files !== result.files || status.chunks !== result.chunks) {
+      throw new Error('The persisted local context index does not match the prepared workspace snapshot.');
+    }
+    if (!existingValidated && !(await this.validateLoadedIndex(onProgress))) {
+      throw new Error('The persisted local context index failed content and chunk validation.');
+    }
+    if (await this.manifestChanged()) {
+      throw new Error('The workspace changed while its local context index was being validated. Retry preparation.');
+    }
+    onProgress?.({phase: 'done', completed: status.files, total: status.files});
+    return {
+      ...result,
+      rebuilt: shouldBuild,
+      validated: true,
+      path: status.path,
+    };
   }
 
   async search(query: string, topK = 12): Promise<ContextHit[]> {
@@ -195,15 +264,7 @@ export class LocalContextIndex {
     return packContextHits(hits, this.roots, maxTokens, 'local');
   }
 
-  status(): {
-    available: boolean;
-    path: string;
-    files: number;
-    chunks: number;
-    queryCacheEntries: number;
-    createdAt?: string;
-    generation?: string;
-  } {
+  status(): LocalIndexStatus {
     return {
       available: Boolean(this.index),
       path: this.indexPath,
@@ -218,13 +279,7 @@ export class LocalContextIndex {
   private async buildWithOptions(
     onProgress: ((progress: IndexProgress) => void) | undefined,
     verifyContentHashes: boolean,
-  ): Promise<{
-    files: number;
-    chunks: number;
-    reused: number;
-    durationMs: number;
-    generation: string;
-  }> {
+  ): Promise<IndexBuildResult> {
     const workspace = this.roots[0] ?? process.cwd();
     return withNamespaceLease(projectNamespacePaths(workspace).canonical, 'shared', async () => {
       assertActiveProjectNamespacePath(workspace, dirname(this.indexPath));
@@ -235,13 +290,7 @@ export class LocalContextIndex {
   private async buildUnlocked(
     onProgress: ((progress: IndexProgress) => void) | undefined,
     verifyContentHashes: boolean,
-  ): Promise<{
-    files: number;
-    chunks: number;
-    reused: number;
-    durationMs: number;
-    generation: string;
-  }> {
+  ): Promise<IndexBuildResult> {
     const started = Date.now();
     if (!this.index) await this.load();
     const previous = new Map(
@@ -363,6 +412,34 @@ export class LocalContextIndex {
     });
   }
 
+  private async validateLoadedIndex(onProgress?: (progress: IndexProgress) => void): Promise<boolean> {
+    const index = this.index;
+    if (!index || index.roots.length !== this.roots.length ||
+      index.roots.some((root, position) => root !== this.roots[position]) ||
+      createGeneration(index.files) !== index.generation) return false;
+    const total = index.files.length;
+    onProgress?.({phase: 'validate', completed: 0, total});
+    for (const [position, file] of index.files.entries()) {
+      onProgress?.({phase: 'validate', completed: position, total, path: file.path});
+      try {
+        const safePath = await this.workspace.resolvePath(file.absolutePath, {expect: 'file'});
+        if (safePath !== file.absolutePath) return false;
+        const content = await readFile(safePath, 'utf8');
+        if (content.includes('\u0000') || hashContent(content) !== file.contentHash) return false;
+        const expectedChunks = chunkFile({
+          root: file.root,
+          path: file.path,
+          absolutePath: file.absolutePath,
+        }, content);
+        if (!chunksMatch(expectedChunks, file.chunks)) return false;
+      } catch {
+        return false;
+      }
+    }
+    onProgress?.({phase: 'validate', completed: total, total});
+    return true;
+  }
+
   private async discoverFiles(): Promise<DiscoveredFile[]> {
     const discovered: DiscoveredFile[] = [];
     for (const root of this.roots) {
@@ -461,6 +538,32 @@ export class LocalContextIndex {
       this.queryCache.delete(oldest);
     }
   }
+}
+
+function chunksMatch(expected: IndexedChunk[], actual: IndexedChunk[]): boolean {
+  if (expected.length !== actual.length) return false;
+  return expected.every((chunk, index) => {
+    const candidate = actual[index];
+    return Boolean(candidate) && chunk.id === candidate?.id && chunk.root === candidate.root &&
+      chunk.path === candidate.path && chunk.absolutePath === candidate.absolutePath &&
+      chunk.startLine === candidate.startLine && chunk.endLine === candidate.endLine &&
+      chunk.content === candidate.content && chunk.symbol === candidate.symbol &&
+      chunk.tokens.length === candidate.tokens.length &&
+      chunk.tokens.every((token, tokenIndex) => token === candidate.tokens[tokenIndex]);
+  });
+}
+
+function existingBuildResult(status: LocalIndexStatus, started: number): IndexBuildResult {
+  if (!status.available || !status.generation) {
+    throw new Error('The existing local context index is unavailable.');
+  }
+  return {
+    files: status.files,
+    chunks: status.chunks,
+    reused: status.files,
+    durationMs: Date.now() - started,
+    generation: status.generation,
+  };
 }
 
 export function packContextHits(

@@ -6,6 +6,7 @@ import {AgentRunner} from '../../src/agent/runner.js';
 import {
   buildSessionStatePrompt,
   buildStableSystemPrompt,
+  buildRetrievedContext,
   buildTurnDirective,
   classifyTurnIntent,
   isTrivialTurn,
@@ -57,6 +58,8 @@ describe('dynamic prompt assembly', () => {
     expect(stable).toContain('memory_propose');
     expect(stable).toContain('Preserve user work');
     expect(stable).toContain("Match the user's language");
+    expect(stable).toContain('Context Engine runs automatically');
+    expect(stable).toContain('Zero retrieved spans');
     expect(stable).not.toContain('Current saved plan');
 
     session.tasks.push({id: 'task-1', title: 'Verify the parser', status: 'in_progress'});
@@ -64,6 +67,30 @@ describe('dynamic prompt assembly', () => {
     expect(state).toContain('Verify the parser');
     expect(state).toContain('authorization="none"');
     expect(buildStableSystemPrompt(config(root), 'workspace rule', 'reviewer')).toBe(stable);
+  });
+
+  it('explains automatic local retrieval even when the index returns no spans', () => {
+    const empty = buildRetrievedContext({
+      text: '', hits: [], estimatedTokens: 0, engine: 'local', truncated: false,
+    }, [], '/workspace');
+    expect(empty).toContain('<runtime-context-engine engine="local" hits="0"');
+    expect(empty).toContain('already ran automatically');
+    expect(empty).toContain('does not mean the Context Engine is disabled');
+    expect(empty).toContain('search and read tools');
+
+    const matched = buildRetrievedContext({
+      text: 'src/app.ts:1\nexport const app = true;',
+      hits: [{
+        path: '/workspace/src/app.ts', startLine: 1, endLine: 1,
+        content: 'export const app = true;', score: 1, source: 'local',
+      }],
+      estimatedTokens: 12,
+      engine: 'local',
+      truncated: false,
+    }, [], '/workspace');
+    expect(matched).toContain('hits="1"');
+    expect(matched).toContain('<retrieved-code engine="local"');
+    expect(matched).toContain('candidate evidence');
   });
 
   it('keeps workflow instructions ephemeral while preserving visible user input', async () => {

@@ -9,16 +9,18 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.5`.
+- Current repository version: `0.3.8`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
-- Retrieval: local BM25/path/symbol index with freshness validation and bounded
-  packing; no retrieval service is required.
+- Retrieval: local BM25/path/symbol index with visible interactive preparation,
+  persisted-content validation, and bounded packing; no retrieval service is
+  required.
 - Agent: provider-agnostic multi-turn runner for OpenAI, Anthropic, Gemini, and
   OpenAI-compatible endpoints; built-in tools, permissions, checkpoints,
   workflows, Skills, MCP, expert profiles, sessions, and memory are present.
-- UI: real Ink/React terminal UI, not a browser prototype. It supports prompt
+- UI: real Ink/React terminal UI, not a browser prototype. Fresh wide sessions
+  include a factual workspace rail; all sizes support prompt
   history, `@file` completion, command completion, multiline editing, queued
   follow-ups, live context inspection, permission approval, themes, ASCII mode,
   `NO_COLOR`, and narrow-height degradation.
@@ -38,8 +40,8 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package was `skein-code-cli-0.3.0.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.0.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.8.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.8.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
@@ -47,7 +49,7 @@ archive it describes.
 The final verification included a fresh install and real PTY interaction for
 all three executable aliases, `/about`, a permission prompt, denial, and clean
 Ctrl+C exit. PTY coverage included 20, 24 ASCII, 40, 80, 120 columns and a
-40x10 short-height case. The current 35-file test suite passes the full check.
+40x10 short-height case. The current 37-file test suite passes the full check.
 
 ## Recommended Order
 
@@ -75,11 +77,10 @@ Implementation notes:
 - `npm run release:verify` reproduces the package from source, installs it into
   an isolated prefix, rejects packaged local state, and exercises `skein`,
   `mosaic`, and `mosaic-code`.
-- The `main` branch rule requires the strict `check` status. The v0.2.3 CI and
-  release workflows completed successfully and npm published
-  `@skein-code/cli@0.2.3` under the `latest` tag. The v0.3.0 package was
-  reproduced and verified locally (34 test files, 317 tests, all three bin
-  aliases); its tag, CI run, and `npm publish` to `latest` follow this commit.
+- The `main` branch rule requires the strict `check` status. Version 0.3.8 adds
+  the startup context-readiness gate, branded wide welcome rail, runtime
+  completion evidence, and conservative dynamic-shell mutation tracking. Its
+  tag, GitHub verification, and npm publication use the same source commit.
 
 ### P1: Skein Storage Namespace And Migration
 

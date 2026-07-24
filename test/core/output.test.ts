@@ -91,6 +91,82 @@ describe('HeadlessReporter', () => {
     expect(JSON.stringify(output.context)).not.toContain('omitted from summary');
   });
 
+  it('reports an unverified run as structured non-success', () => {
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const reporter = new HeadlessReporter({format: 'json'});
+    reporter.onEvent({type: 'assistant', content: 'Claimed complete.'});
+    reporter.onEvent({
+      type: 'done',
+      reason: 'unverified',
+      completion: {
+        status: 'unverified',
+        changedFiles: ['/tmp/reporter-test/result.ts'],
+        checks: [],
+        detail: 'No successful verification was recorded after the last change to 1 workspace file.',
+      },
+    });
+    reporter.finish(session);
+
+    const output = JSON.parse(stdout.mock.calls.map(([chunk]) => String(chunk)).join('')) as {
+      ok?: boolean;
+      reason?: string;
+      completion?: {status?: string};
+    };
+    expect(output).toMatchObject({
+      ok: false,
+      reason: 'unverified',
+      completion: {status: 'unverified'},
+    });
+  });
+
+  it('keeps successful read-only runs successful in JSON', () => {
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const reporter = new HeadlessReporter({format: 'json'});
+    reporter.onEvent({type: 'assistant', content: 'The code path is read-only.'});
+    reporter.onEvent({
+      type: 'done',
+      reason: 'completed',
+      completion: {
+        status: 'no_changes',
+        changedFiles: [],
+        checks: [],
+        detail: 'No workspace files changed in this run.',
+      },
+    });
+    reporter.finish(session);
+
+    const output = JSON.parse(stdout.mock.calls.map(([chunk]) => String(chunk)).join('')) as {ok?: boolean};
+    expect(output.ok).toBe(true);
+  });
+
+  it('streams completion evidence before the final session record', () => {
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const reporter = new HeadlessReporter({format: 'stream-json'});
+    const completion = {
+      status: 'verified' as const,
+      changedFiles: ['/tmp/reporter-test/result.ts'],
+      checks: [{
+        toolCallId: 'check-1',
+        tool: 'shell' as const,
+        command: 'npm test',
+        kind: 'test' as const,
+        ok: true,
+      }],
+      detail: '1 current verification check passed for 1 workspace file.',
+    };
+    reporter.onEvent({type: 'done', reason: 'completed', completion});
+    reporter.finish({...session, lastRun: {...completion, reason: 'completed', finishedAt: new Date().toISOString()}});
+
+    const lines = stdout.mock.calls.map(([chunk]) => JSON.parse(String(chunk)) as {
+      type?: string;
+      completion?: {status?: string};
+      session?: {lastRun?: {status?: string}};
+    });
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatchObject({type: 'done', completion: {status: 'verified'}});
+    expect(lines[1]).toMatchObject({type: 'session', session: {lastRun: {status: 'verified'}}});
+  });
+
   it('uses only ASCII chrome when the fallback glyph mode is enabled', () => {
     const previous = process.env.SKEIN_GLYPHS;
     process.env.SKEIN_GLYPHS = 'ascii';
