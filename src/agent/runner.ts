@@ -37,6 +37,7 @@ import {
   buildSessionStatePrompt,
   buildStableSystemPrompt,
   buildTurnDirective,
+  isTrivialTurn,
 } from './prompt.js';
 import type {PromptContextProvider} from './prompt-context.js';
 import {discoverWorkspaceRules, formatWorkspaceRules} from './rules.js';
@@ -140,8 +141,12 @@ export class AgentRunner {
       this.session.messages.push(message('user', request));
       await this.persist();
 
+      // Greetings, acknowledgements, and connectivity checks carry no task.
+      // Suppress the retrieval + prompt telemetry so a plain "hi" stays quiet
+      // instead of dumping a dense context panel and degradation warning.
+      const trivialTurn = isTrivialTurn(request);
       const packed = await this.packContext(request);
-      await emit({type: 'context', packed});
+      if (!trivialTurn) await emit({type: 'context', packed});
       const mentions = await this.packMentions(request);
       const retrievedContext = buildRetrievedContext(
         packed,
@@ -182,7 +187,7 @@ export class AgentRunner {
         ...(augmentation.skills?.length ? [`skills:${augmentation.skills.length}`] : []),
         ...(augmentation.memoryCount ? [`memory:${augmentation.memoryCount}`] : []),
       ];
-      await emit({
+      if (!trivialTurn) await emit({
         type: 'prompt',
         intent: turnDirective.intent,
         sections: promptSections,

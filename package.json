@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,8 +16,8 @@
   },
   "skein": {
     "releaseNotes": [
-      "New: skein update self-upgrades to the latest release",
-      "Detects npm/pnpm/yarn/bun; --check reports only, --yes skips the prompt"
+      "Quieter turns: greetings like \"hi\" no longer dump a context panel",
+      "Redesigned entry banner into a bordered hero card with aligned metadata"
     ]
   },
   "bin": {

@@ -159,10 +159,10 @@ export function estimateTimelineItemRows(
   if (item.kind === 'agent' || item.kind === 'agent-message') return rowWidth < 64 ? 2 : 1;
   if (item.kind === 'workflow') return rowWidth < 64 ? 2 : 1;
   if (item.kind === 'banner') {
-    // Wordmark art (3 rows) on wide layouts, a single line when narrow, plus
-    // three metadata/help lines and the trailing margin row.
-    const wordmarkRows = rowWidth >= 44 ? 3 : 1;
-    return wordmarkRows + 3 + 1;
+    // Bordered hero card: top+bottom border (2), wordmark + tagline (2), a
+    // blank spacer, three aligned metadata rows, another spacer, the hint line,
+    // and the trailing margin row.
+    return 2 + 2 + 1 + 3 + 1 + 1 + 1;
   }
   return 1;
 }

@@ -1257,23 +1257,45 @@ function Banner({model, engine, workspace, version, width, glyphs}: {
   glyphs: UiGlyphs;
 }) {
   const theme = useTheme();
-  const innerWidth = Math.max(1, safeWidth(width) - 2);
-  // A single-line wordmark reads cleanly in every terminal font. Multi-line
-  // half-block art fractured badly across fonts, so the brand mark is one bold
-  // line: a leading glyph plus letter-spaced name that still looks like a logo.
+  const rowWidth = safeWidth(width);
+  // The entry panel is a bordered hero card so a fresh session opens on real
+  // structure instead of four loose lines. A leading glyph plus letter-spaced
+  // name reads like a wordmark in every terminal font; multi-line block art
+  // fractured badly across fonts, so the mark stays on one bold line.
   const wordmark = `${glyphs.brand}  ${PRODUCT_NAME.toUpperCase().split('').join(' ')}`;
-  const meta = [
-    `model ${sanitizeInlineTerminalText(model)}`,
-    `engine ${sanitizeInlineTerminalText(engine)}`,
-    `cwd ${compactDisplayPath(sanitizeInlineTerminalText(workspace), 32)}`,
-  ].join(` ${glyphs.separator} `);
-  const tagline = 'a terminal coding agent you can see through';
+  // Content sits inside the border (2 cols) and the horizontal padding (2 cols).
+  const innerWidth = Math.max(1, rowWidth - 4);
+  const tagline = `v${version} ${glyphs.separator} a terminal coding agent you can see through`;
+  // Aligned label column keeps the metadata reading like a spec sheet.
+  const metaRows = [
+    {label: 'model', value: sanitizeInlineTerminalText(model)},
+    {label: 'engine', value: sanitizeInlineTerminalText(engine)},
+    {label: 'cwd', value: compactDisplayPath(sanitizeInlineTerminalText(workspace), Math.max(12, innerWidth - 8))},
+  ];
+  const labelCol = 8;
+  const hint = `type a request ${glyphs.separator} /help for commands ${glyphs.separator} @ to attach files`;
   return (
-    <Box marginBottom={1} flexDirection="column">
+    <Box
+      marginBottom={1}
+      flexDirection="column"
+      width={rowWidth}
+      borderStyle={glyphs.borderStyle}
+      borderColor={theme.border}
+      paddingX={1}
+    >
       <Text bold color={theme.accent}>{truncateDisplay(wordmark, innerWidth)}</Text>
-      <Text color={theme.muted}>{truncateDisplay(`v${version} ${glyphs.separator} ${tagline}`, innerWidth)}</Text>
-      <Text color={theme.dim}>{truncateDisplay(meta, innerWidth)}</Text>
-      <Text color={theme.dim}>{truncateDisplay(`type a request ${glyphs.separator} /help for commands ${glyphs.separator} @ to attach files`, innerWidth)}</Text>
+      <Text color={theme.muted}>{truncateDisplay(tagline, innerWidth)}</Text>
+      <Box marginTop={1} flexDirection="column">
+        {metaRows.map((row) => (
+          <Box key={row.label}>
+            <Text color={theme.dim}>{padDisplay(row.label, labelCol)}</Text>
+            <Text color={theme.text}>{truncateDisplay(row.value, Math.max(1, innerWidth - labelCol))}</Text>
+          </Box>
+        ))}
+      </Box>
+      <Box marginTop={1}>
+        <Text color={theme.dim}>{truncateDisplay(hint, innerWidth)}</Text>
+      </Box>
     </Box>
   );
 }

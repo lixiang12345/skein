@@ -86,6 +86,21 @@ export function classifyTurnIntent(input: string): TurnIntent {
   return 'implement';
 }
 
+/**
+ * A trivial turn is a greeting, acknowledgement, or connectivity check that
+ * carries no real task. These should not trigger the retrieval + prompt
+ * telemetry that is useful only when the model is actually working on code.
+ */
+export function isTrivialTurn(input: string): boolean {
+  const value = input.trim().toLocaleLowerCase();
+  if (!value) return true;
+  // Any file mention or path reference is real work, never small talk.
+  if (value.includes('@') || value.includes('/') || value.includes('\\')) return false;
+  if (value.length > 40) return false;
+  const smallTalk = /^(hi+|hey+|hello+|yo|sup|hiya|howdy|ping|test|check|你好+|您好|哈喽|哈啰|哈罗|嗨+|在吗|在么|在不在|thanks?|thank you|thx|ty|cheers|谢谢|多谢|感谢|辛苦了|辛苦|ok|okay|okey|好的?|收到|明白|了解|nice|cool|great|awesome|bye|再见|拜拜|good ?(morning|night|evening|afternoon)|morning|gm|gn)[\s!.,。！？~、]*$/u;
+  return smallTalk.test(value);
+}
+
 export function buildTurnDirective(input: string): {intent: TurnIntent; text: string} {
   const intent = classifyTurnIntent(input);
   const guidance: Record<TurnIntent, string> = {

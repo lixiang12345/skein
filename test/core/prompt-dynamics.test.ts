@@ -8,6 +8,7 @@ import {
   buildStableSystemPrompt,
   buildTurnDirective,
   classifyTurnIntent,
+  isTrivialTurn,
 } from '../../src/agent/prompt.js';
 import {createSession} from '../../src/session/store.js';
 import type {ModelProvider} from '../../src/providers/provider.js';
@@ -26,6 +27,15 @@ describe('dynamic prompt assembly', () => {
     expect(classifyTurnIntent('排查这个崩溃并修复')).toBe('debug');
     expect(classifyTurnIntent('解释一下请求链路')).toBe('explain');
     expect(buildTurnDirective('重构这个模块').text).toContain('intent="refactor"');
+  });
+
+  it('treats greetings and acknowledgements as trivial turns', () => {
+    for (const trivial of ['hi', 'Hello!', '你好', '嗨~', '谢谢', 'ok', '收到', 'thanks', 'gm', 'ping', '在吗？']) {
+      expect(isTrivialTurn(trivial), trivial).toBe(true);
+    }
+    for (const real of ['fix the crash', '重构这个模块', 'explain @src/agent/runner.ts', 'add pagination to /users', 'hi, can you refactor the parser for me please']) {
+      expect(isTrivialTurn(real), real).toBe(false);
+    }
   });
 
   it('keeps mutable plan state outside the cacheable system prefix', () => {
