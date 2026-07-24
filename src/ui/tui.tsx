@@ -1451,7 +1451,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const chromeRows = headerRows + composerRows + footerRows + taskRows + paletteRows + inspectorRows + activityRows;
   const availableTimelineRows = Math.max(0, terminalHeight - chromeRows);
   const teamItems = timeline.filter((item) => item.kind === 'agent' || item.kind === 'agent-message');
-  const showWorkspacePanel = Boolean(workspaceReadiness) && contentWidth >= 96 && !teamWorkbenchOpen &&
+  const showWorkspacePanel = Boolean(workspaceReadiness) && contentWidth >= 88 && terminalHeight >= 20 && !teamWorkbenchOpen &&
     !teamItems.some((item) => item.kind === 'agent');
   const workspacePanelWidth = showWorkspacePanel ? Math.min(38, Math.max(32, Math.floor(contentWidth * 0.34))) : 0;
   const workspaceTimelineWidth = Math.max(1, contentWidth - workspacePanelWidth - (showWorkspacePanel ? 1 : 0));
@@ -1466,7 +1466,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   // grows only as transcript content needs it, up to the real terminal height.
   const timelineRows = teamWorkbenchOpen
     ? availableTimelineRows
-    : Math.min(availableTimelineRows, Math.max(timelineContentRows, showWorkspacePanel ? 10 : 0));
+    : Math.min(availableTimelineRows, Math.max(timelineContentRows, showWorkspacePanel ? 13 : 0));
   const showTeamCockpit = config.agents?.cockpit !== false && contentWidth >= 100 &&
     timelineRows >= 7 && teamItems.some((item) => item.kind === 'agent');
   const cockpitWidth = showTeamCockpit ? Math.min(38, Math.max(30, Math.floor(contentWidth * 0.32))) : workspacePanelWidth;

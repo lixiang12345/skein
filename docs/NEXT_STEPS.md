@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.8`.
+- Current repository version: `0.3.9`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -19,8 +19,9 @@ one of the milestones below.
 - Agent: provider-agnostic multi-turn runner for OpenAI, Anthropic, Gemini, and
   OpenAI-compatible endpoints; built-in tools, permissions, checkpoints,
   workflows, Skills, MCP, expert profiles, sessions, and memory are present.
-- UI: real Ink/React terminal UI, not a browser prototype. Fresh wide sessions
-  include a factual workspace rail; all sizes support prompt
+- UI: real Ink/React terminal UI, not a browser prototype. Fresh sessions use
+  a compact Skein identity; wide sessions add a grouped factual workspace rail;
+  all sizes support prompt
   history, `@file` completion, command completion, multiline editing, queued
   follow-ups, live context inspection, permission approval, themes, ASCII mode,
   `NO_COLOR`, and narrow-height degradation.
@@ -40,8 +41,8 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.8.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.8.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.9.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.9.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
@@ -77,10 +78,11 @@ Implementation notes:
 - `npm run release:verify` reproduces the package from source, installs it into
   an isolated prefix, rejects packaged local state, and exercises `skein`,
   `mosaic`, and `mosaic-code`.
-- The `main` branch rule requires the strict `check` status. Version 0.3.8 adds
-  the startup context-readiness gate, branded wide welcome rail, runtime
-  completion evidence, and conservative dynamic-shell mutation tracking. Its
-  tag, GitHub verification, and npm publication use the same source commit.
+- The `main` branch rule requires the strict `check` status. Version 0.3.9
+  refines the real four-stage context handoff, compact Skein welcome, and
+  grouped workspace rail. The startup readiness gate, runtime completion
+  evidence, and conservative dynamic-shell mutation tracking remain enforced.
+  Its tag, GitHub verification, and npm publication use the same source commit.
 
 ### P1: Skein Storage Namespace And Migration
 

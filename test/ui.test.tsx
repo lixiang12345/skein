@@ -80,7 +80,10 @@ describe('terminal presentation', () => {
         memory: 'on',
       }} />, {columns: width});
       expect(output).toContain('WORKSPACE');
-      expect(output).toContain('context ready');
+      expect(output).toContain('local index ready');
+      expect(output).toContain('CONTEXT');
+      expect(output).toContain('RUNTIME');
+      expect(output).toContain('EXTENSIONS');
       expect(output).toContain('guarded');
       for (const line of output.split('\n')) expect(displayWidth(line)).toBeLessThanOrEqual(width);
     }
@@ -501,10 +504,10 @@ describe('terminal presentation', () => {
       version: '0.3.5',
     }]} />, {columns});
 
-    expect(output).toContain(columns >= 48 ? 'Ready' : columns < 28 ? 'New ' : 'New session');
+    expect(output).toContain(columns >= 48 ? 'index verified' : columns < 28 ? 'New ' : 'New session');
     expect(output).toContain('v0.3.5');
     expect(output).toContain('cwd ');
-    expect(output.trimEnd().split('\n')).toHaveLength(columns >= 48 ? 3 : 2);
+    expect(output.trimEnd().split('\n')).toHaveLength(columns >= 48 ? 4 : 2);
     if (columns >= 48) expect(output).toContain('context runs automatically');
     expect(output).not.toMatch(/[┌┐└┘╭╮╰╯│█]/u);
     for (const line of output.split('\n')) {

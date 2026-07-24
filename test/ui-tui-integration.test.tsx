@@ -59,10 +59,14 @@ describe('SkeinApp completion flows', () => {
     try {
       const frame = harness.lastFrame();
       expect(frame).toContain('SKEIN');
+      expect(frame).toContain('grounded coding workspace');
       expect(frame).toContain('WORKSPACE');
-      expect(frame).toContain('context ready');
+      expect(frame).toContain('CONTEXT');
+      expect(frame).toContain('local index ready');
       expect(frame).toContain('28 files');
       expect(frame).toContain('71 chunks');
+      expect(frame).toContain('RUNTIME');
+      expect(frame).toContain('EXTENSIONS');
       expect(frame).toContain('9 tools');
       expect(frame).toContain('guarded');
       expect(frame).toContain('Type a request');

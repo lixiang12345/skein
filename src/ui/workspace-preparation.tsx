@@ -38,6 +38,7 @@ export function WorkspacePreparationView({
   workspace,
   model,
   width,
+  height = 24,
   frame = 0,
 }: {
   progress: IndexProgress;
@@ -46,47 +47,145 @@ export function WorkspacePreparationView({
   workspace: string;
   model: string;
   width: number;
+  height?: number;
   frame?: number;
 }) {
   const theme = useTheme();
   const safeWidth = Math.max(1, Math.floor(width));
   const innerWidth = Math.max(1, safeWidth - (safeWidth >= 24 ? 4 : 0));
   const compact = safeWidth < 48;
+  const constrained = height < 14;
   const ascii = process.env.SKEIN_GLYPHS === 'ascii' || process.env.MOSAIC_GLYPHS === 'ascii';
   const spinner = (ascii ? ['.', 'o', 'O', 'o'] : ['◜', '◠', '◝', '◞', '◡', '◟'])[frame % (ascii ? 4 : 6)] as string;
   const separator = ascii ? '|' : '·';
   const brand = ascii ? '*' : PRODUCT_MARK;
   const phase = readiness ? 'ready' : error ? 'error' : progress.phase;
-  const activeGlyph = readiness ? (ascii ? '[ok]' : '✓') : error ? (ascii ? '[x]' : '×') : spinner;
   const phaseLabel = preparationLabel(phase, progress, readiness, compact);
   const detail = preparationDetail(phase, progress, readiness, error);
   const modelLine = `model ${sanitizeTerminalText(model)}`;
   const workspaceLine = `workspace ${compactDisplayPath(sanitizeTerminalText(workspace), Math.max(1, innerWidth - 10))}`;
-  const steps = ['inspect', 'index', 'validate'] as const;
-  const currentIndex = readiness ? steps.length : phase === 'validate' ? 2 : phase === 'scan' || phase === 'index' || phase === 'write' ? 1 : 0;
-  const tracker = steps.map((step, index) => {
-    const marker = index < currentIndex ? (ascii ? '[x]' : '●') : index === currentIndex && !error ? (ascii ? '[>]' : '◆') : (ascii ? '[ ]' : '○');
-    return `${marker} ${step}`;
-  }).join(compact ? ' ' : '   ');
+  const steps = preparationSteps(phase, progress, readiness, error, {ascii, spinner});
 
   return (
     <Box flexDirection="column" paddingX={safeWidth >= 24 ? 2 : 0}>
-      <Text bold color={theme.accent}>{truncateDisplay(`${brand} ${PRODUCT_NAME.toUpperCase()}  WORKSPACE PREP`, innerWidth)}</Text>
-      {!compact ? <Text color={theme.dim}>{truncateDisplay(`${modelLine}  ${separator}  ${workspaceLine}`, innerWidth)}</Text> : (
+      <Box>
+        <Text bold color={theme.accent}>{brand}  {PRODUCT_NAME.toUpperCase()}</Text>
+        {!compact && !constrained ? <Text color={theme.dim}>  {separator}  LOCAL CONTEXT</Text> : null}
+      </Box>
+      {!constrained ? <Text color={theme.muted}>{truncateDisplay('Ground the workspace before the first request.', innerWidth)}</Text> : null}
+      {!constrained && !compact ? <Text color={theme.dim}>{truncateDisplay(`${modelLine}  ${separator}  ${workspaceLine}`, innerWidth)}</Text> : !constrained ? (
         <>
           <Text color={theme.dim}>{truncateDisplay(modelLine, innerWidth)}</Text>
           <Text color={theme.dim}>{truncateDisplay(workspaceLine, innerWidth)}</Text>
         </>
-      )}
-      <Box marginTop={1}><Text color={theme.border}>{truncateDisplay(tracker, innerWidth)}</Text></Box>
+      ) : <Text color={theme.dim}>{truncateDisplay(workspaceLine, innerWidth)}</Text>}
+      <Box marginTop={1} flexDirection={constrained ? 'row' : 'column'}>
+        {steps.map((step) => constrained ? (
+          <Text key={step.id} color={step.state === 'active' ? theme.accent : step.state === 'complete' ? theme.success : step.state === 'error' ? theme.error : theme.dim}>
+            {step.glyph} {step.id === 'persist' ? 'save' : step.id}{step.id === 'verify' ? '' : ' '}
+          </Text>
+        ) : (
+          <Box key={step.id} height={1} overflowY="hidden">
+            <Text bold color={step.state === 'active' ? theme.accent : step.state === 'complete' ? theme.success : step.state === 'error' ? theme.error : theme.border}>
+              {step.glyph}{' '}
+            </Text>
+            <Text bold={step.state === 'active'} color={step.state === 'pending' ? theme.dim : theme.textStrong}>
+              {truncateDisplay(step.label, compact ? 8 : 10)}
+            </Text>
+            <Text color={step.state === 'active' ? theme.muted : theme.dim}>
+              {'  '}{truncateDisplay(step.detail, Math.max(1, innerWidth - displayWidth(step.glyph) - (compact ? 12 : 14)))}
+            </Text>
+          </Box>
+        ))}
+      </Box>
       <Box marginTop={1}>
-        <Text bold color={error ? theme.error : readiness ? theme.success : theme.accent}>{activeGlyph} </Text>
-        <Text bold color={theme.textStrong}>{truncateDisplay(phaseLabel, Math.max(1, innerWidth - displayWidth(activeGlyph) - 1))}</Text>
+        <Text bold color={error ? theme.error : readiness ? theme.success : theme.accent}>
+          {readiness ? (ascii ? '[ok]' : '✓') : error ? (ascii ? '[x]' : '×') : spinner}{' '}
+        </Text>
+        <Text bold color={theme.textStrong}>{truncateDisplay(phaseLabel, Math.max(1, innerWidth - 5))}</Text>
       </Box>
       <Text color={error ? theme.error : theme.muted} wrap="truncate">{truncateDisplay(detail, innerWidth)}</Text>
-      {error ? <Text color={theme.dim}>{truncateDisplay(`Enter retry  ${separator}  Esc exit`, innerWidth)}</Text> : null}
+      {error ? <Text color={theme.dim}>{truncateDisplay(`Enter retry  ${separator}  Esc exit`, innerWidth)}</Text> : !constrained ? (
+        <Text color={theme.dim}>{truncateDisplay(`local only  ${separator}  no source code uploaded`, innerWidth)}</Text>
+      ) : null}
     </Box>
   );
+}
+
+type PreparationStepState = 'complete' | 'active' | 'pending' | 'error';
+
+interface PreparationStep {
+  id: 'inspect' | 'build' | 'persist' | 'verify';
+  label: string;
+  detail: string;
+  state: PreparationStepState;
+  glyph: string;
+}
+
+function preparationSteps(
+  phase: IndexProgress['phase'] | 'ready' | 'error',
+  progress: IndexProgress,
+  readiness: WorkspaceReadiness | undefined,
+  error: string | undefined,
+  glyphs: {ascii: boolean; spinner: string},
+): PreparationStep[] {
+  const runtimePhase = phase === 'error' ? progress.phase : phase;
+  const current = runtimePhase === 'scan' || runtimePhase === 'index'
+    ? 'build'
+    : runtimePhase === 'write'
+      ? 'persist'
+      : runtimePhase === 'validate'
+        ? 'verify'
+        : 'inspect';
+  const order: PreparationStep['id'][] = ['inspect', 'build', 'persist', 'verify'];
+  const currentIndex = phase === 'ready' ? order.length : order.indexOf(current);
+  const activeDetail = runtimePhase === 'inspect'
+    ? 'manifest and workspace boundaries'
+    : runtimePhase === 'scan'
+      ? `${progress.total} source files discovered`
+      : runtimePhase === 'index'
+        ? `${progress.completed}/${progress.total} source files`
+        : runtimePhase === 'write'
+          ? 'atomic local index write'
+          : runtimePhase === 'validate'
+            ? progress.total ? `${progress.completed}/${progress.total} content hashes` : 'generation and content hashes'
+            : '';
+  const readyDetails: Record<PreparationStep['id'], string> = {
+    inspect: 'workspace boundaries checked',
+    build: readiness?.rebuilt ? `${readiness.files} files · ${readiness.chunks} chunks` : 'existing index is current',
+    persist: readiness?.rebuilt ? 'local artifact committed' : 'local artifact loaded',
+    verify: 'content and generation matched',
+  };
+  const pendingDetails: Record<PreparationStep['id'], string> = {
+    inspect: 'manifest and workspace boundaries',
+    build: 'source files and code chunks',
+    persist: 'atomic local index write',
+    verify: 'generation and content hashes',
+  };
+
+  return order.map((id, index) => {
+    const state: PreparationStepState = error && index === currentIndex
+      ? 'error'
+      : index < currentIndex || phase === 'ready'
+        ? 'complete'
+        : index === currentIndex
+          ? 'active'
+          : 'pending';
+    const glyph = state === 'complete'
+      ? (glyphs.ascii ? '[x]' : '●')
+      : state === 'error'
+        ? (glyphs.ascii ? '[!]' : '×')
+        : state === 'active'
+          ? glyphs.spinner
+          : (glyphs.ascii ? '[ ]' : '○');
+    return {
+      id,
+      label: id === 'persist' ? 'Persist' : `${id[0]?.toUpperCase()}${id.slice(1)}`,
+      detail: phase === 'ready' ? readyDetails[id] : state === 'active' || state === 'error' ? activeDetail : pendingDetails[id],
+      state,
+      glyph,
+    };
+  });
 }
 
 function WorkspacePreparationApp({
@@ -105,7 +204,7 @@ function WorkspacePreparationApp({
   onFinish: (result: WorkspacePreparationResult) => void;
 }) {
   const {exit} = useApp();
-  const {columns} = useWindowSize();
+  const {columns, rows} = useWindowSize();
   const [attempt, setAttempt] = useState(0);
   const [frame, setFrame] = useState(0);
   const [progress, setProgress] = useState<IndexProgress>({phase: 'inspect', completed: 0, total: 0});
@@ -159,6 +258,7 @@ function WorkspacePreparationApp({
       workspace={workspace}
       model={`${config.model.provider}/${config.model.model}`}
       width={Math.max(1, columns || 80)}
+      height={Math.max(1, rows || 24)}
       frame={frame}
     />
   );

@@ -542,15 +542,18 @@ export function WorkspacePanel({status, width = 36, glyphMode = 'auto'}: {
   const contextLabel = status.context === 'empty' ? 'ready · empty workspace' : 'ready';
   const mcpLabel = status.mcpTotal ? `${status.mcpConnected}/${status.mcpTotal} connected` : 'off';
   return (
-    <Box flexDirection="column" width={width} borderStyle={glyphs.borderStyle} borderColor={theme.border} paddingX={1}>
-      <Text bold color={theme.accent}>{truncateDisplay(`${glyphs.context} WORKSPACE`, inner)}</Text>
-      <Text color={status.context === 'empty' ? theme.warning : theme.success}>{truncateDisplay(`${glyphs.success} context ${contextLabel}`, inner)}</Text>
-      {status.context === 'ready' ? <Text color={theme.muted}>{truncateDisplay(`${status.files} files ${glyphs.separator} ${status.chunks} chunks`, inner)}</Text> : null}
+    <Box flexDirection="column" width={width} height={13} borderStyle={glyphs.borderStyle} borderColor={theme.border} paddingX={1}>
+      <Text bold color={theme.accent}>{truncateDisplay(`${glyphs.brand} WORKSPACE`, inner)}</Text>
+      <Text color={theme.dim}>{truncateDisplay('CONTEXT', inner)}</Text>
+      <Text color={status.context === 'empty' ? theme.warning : theme.success}>{truncateDisplay(`${glyphs.success} local index ${contextLabel}`, inner)}</Text>
+      <Text color={theme.muted}>{truncateDisplay(`${status.files} files ${glyphs.separator} ${status.chunks} chunks`, inner)}</Text>
+      <Text color={theme.dim}>{truncateDisplay('RUNTIME', inner)}</Text>
       <Text color={theme.text}>{truncateDisplay(status.model, inner)}</Text>
       <Text color={theme.muted}>{truncateDisplay(`mode ${status.mode.toUpperCase()} ${glyphs.separator} ${status.permissions}`, inner)}</Text>
+      <Text color={theme.dim}>{truncateDisplay('EXTENSIONS', inner)}</Text>
       <Text color={theme.muted}>{truncateDisplay(`${status.tools} tools ${glyphs.separator} ${status.skills} skills`, inner)}</Text>
       <Text color={theme.muted}>{truncateDisplay(`MCP ${mcpLabel} ${glyphs.separator} memory ${status.memory}`, inner)}</Text>
-      <Text color={theme.dim}>{truncateDisplay('@file pin  ·  /status inspect', inner)}</Text>
+      <Text color={theme.dim}>{truncateDisplay(`@file pin ${glyphs.separator} /status inspect`, inner)}</Text>
     </Box>
   );
 }
@@ -1336,16 +1339,19 @@ function Banner({model, engine, workspace, version, width, glyphs}: {
   const padding = rowWidth >= 24 ? 2 : 0;
   const innerWidth = Math.max(1, rowWidth - padding);
   const safeEngine = sanitizeInlineTerminalText(engine);
-  const meta = rowWidth >= 48
-    ? `${PRODUCT_NAME.toUpperCase()}  ${glyphs.separator}  local-first coding workspace`
+  const expanded = rowWidth >= 48;
+  const ascii = glyphs.brand === '*';
+  const weaveTop = ascii ? '/\\/\\' : '╲╱╲╱';
+  const weaveBottom = ascii ? '\\/\\/' : '╱╲╱╲';
+  const meta = expanded
+    ? 'grounded coding workspace'
     : rowWidth >= 28
       ? `New session ${glyphs.separator} v${version}`
       : `New ${glyphs.separator} v${version}`;
-  const cwd = rowWidth >= 48
-    ? `${glyphs.success} Ready ${glyphs.separator} ${safeEngine} context ${glyphs.separator} ${sanitizeInlineTerminalText(model)} ${glyphs.separator} v${version}`
+  const status = expanded
+    ? `${glyphs.success} ${safeEngine} index verified ${glyphs.separator} ${sanitizeInlineTerminalText(model)} ${glyphs.separator} v${version}`
     : `cwd ${compactDisplayPath(sanitizeInlineTerminalText(workspace), Math.max(1, innerWidth - 4))}`;
   const hint = `context runs automatically ${glyphs.separator} @file pins ${glyphs.separator} /help commands`;
-  const statusWidth = displayWidth(glyphs.success) + 1;
 
   return (
     <Box
@@ -1353,12 +1359,21 @@ function Banner({model, engine, workspace, version, width, glyphs}: {
       flexDirection="column"
       paddingLeft={padding}
     >
-      <Box height={1} overflowY="hidden">
+      {expanded ? <>
+        <Box height={1} overflowY="hidden">
+          <Text bold color={theme.accent}>{weaveTop}</Text>
+          <Text bold color={theme.textStrong}>  S K E I N</Text>
+        </Box>
+        <Box height={1} overflowY="hidden">
+          <Text bold color={theme.accent}>{weaveBottom}</Text>
+          <Text color={theme.muted}>  {truncateDisplay(meta, Math.max(1, innerWidth - displayWidth(weaveBottom) - 2))}</Text>
+        </Box>
+      </> : <Box height={1} overflowY="hidden">
         <Text bold color={theme.accent}>{glyphs.brand} </Text>
-        <Text bold color={theme.textStrong} wrap="truncate">{truncateDisplay(meta, Math.max(1, innerWidth - statusWidth))}</Text>
-      </Box>
-      <Text color={rowWidth >= 48 ? theme.success : theme.muted}>{truncateDisplay(cwd, innerWidth)}</Text>
-      {rowWidth >= 48 ? <Text color={theme.dim}>{truncateDisplay(`${hint} ${glyphs.separator} cwd ${compactDisplayPath(sanitizeInlineTerminalText(workspace), 24)}`, innerWidth)}</Text> : null}
+        <Text bold color={theme.textStrong}>{truncateDisplay(meta, Math.max(1, innerWidth - displayWidth(glyphs.brand) - 1))}</Text>
+      </Box>}
+      <Text color={expanded ? theme.success : theme.muted}>{truncateDisplay(status, innerWidth)}</Text>
+      {expanded ? <Text color={theme.dim}>{truncateDisplay(`${hint} ${glyphs.separator} cwd ${compactDisplayPath(sanitizeInlineTerminalText(workspace), 24)}`, innerWidth)}</Text> : null}
     </Box>
   );
 }

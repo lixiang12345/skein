@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,9 +16,9 @@
   },
   "skein": {
     "releaseNotes": [
-      "Startup builds or reuses the local index and validates persisted workspace content before chat",
-      "Wide fresh sessions add a factual workspace rail for model, context, permissions, tools, and extensions",
-      "Completion requires current runtime evidence and conservatively tracks dynamic shell mutations"
+      "First-run context preparation now shows the real inspect, build, persist, and verify stages",
+      "Fresh sessions add a compact Skein identity and grouped workspace rail without filling the terminal",
+      "Short and narrow terminals collapse the index handoff while preserving validation and recovery states"
     ]
   },
   "bin": {

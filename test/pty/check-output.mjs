@@ -33,7 +33,7 @@ const required = scenario === 'short'
 if (scenario === 'full' && width >= 48) required.push('context runs automatically', '@file pins');
 if (scenario === 'full' && width >= 80) required.push('Ctrl+R');
 if (scenario === 'full' && width >= 96) {
-  required.push('WORKSPACE', 'context ready', 'files', 'chunks', 'mode BUILD', 'tools', 'MCP off', 'memory on');
+  required.push('WORKSPACE', 'CONTEXT', 'local index ready', 'RUNTIME', 'EXTENSIONS', 'files', 'chunks', 'mode BUILD', 'tools', 'MCP off', 'memory on');
 }
 for (const value of required) {
   if (!cleaned.includes(value)) throw new Error(`${path} did not render ${value}`);

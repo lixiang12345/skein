@@ -54,6 +54,46 @@ describe('workspace preparation', () => {
     }
   });
 
+  it('shows the real four-stage local index handoff without fabricated percentages', () => {
+    const output = renderToString(
+      <ThemeProvider theme={testTheme}>
+        <WorkspacePreparationView
+          progress={{phase: 'write', completed: 42, total: 42}}
+          workspace="/tmp/project"
+          model="openai/test"
+          width={80}
+          frame={2}
+        />
+      </ThemeProvider>,
+      {columns: 80},
+    );
+
+    for (const label of ['Inspect', 'Build', 'Persist', 'Verify']) expect(output).toContain(label);
+    expect(output).toContain('atomic local index write');
+    expect(output).toContain('local only');
+    expect(output).not.toContain('%');
+  });
+
+  it('collapses preparation chrome in a ten-row terminal', () => {
+    const output = renderToString(
+      <ThemeProvider theme={testTheme}>
+        <WorkspacePreparationView
+          progress={{phase: 'validate', completed: 4, total: 8}}
+          workspace="/tmp/project"
+          model="openai/test"
+          width={40}
+          height={10}
+        />
+      </ThemeProvider>,
+      {columns: 40},
+    );
+
+    expect(output.split('\n').length).toBeLessThanOrEqual(7);
+    expect(output).toContain('inspect');
+    expect(output).toContain('verify');
+    expect(output).not.toContain('no source code uploaded');
+  });
+
   it('renders a bounded retry path when validation fails', () => {
     const output = renderToString(
       <ThemeProvider theme={testTheme}>
@@ -68,6 +108,7 @@ describe('workspace preparation', () => {
       {columns: 40},
     );
     expect(output).toContain('preparation failed');
+    expect(output).toMatch(/× Verify|\[!\] Verify/u);
     expect(output).toContain('Enter retry');
     expect(output).toContain('Esc exit');
   });
