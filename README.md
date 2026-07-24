@@ -85,6 +85,10 @@ To install the published package from npm:
 npm install -g @skein-code/cli
 ```
 
+Once installed, upgrade in place with `skein update` (it detects your package
+manager and runs the matching global install). Add `--check` to only report a
+newer version, or `--yes` to skip the confirmation prompt.
+
 `skein` is the primary command. Existing installations can continue using
 `mosaic` or `mosaic-code`; the `.mosaic/` project state and `MOSAIC_*`
 environment variables remain compatible with this release.
@@ -224,6 +228,7 @@ skein --print [prompt]               headless agent run
 skein init                           project setup
 skein doctor                         prerequisite and fallback checks
 skein doctor --visual                terminal rendering and input calibration
+skein update                         upgrade to the latest release
 skein config show                    resolved, redacted configuration
 skein index                          build/update the selected index
 skein search <query>                 ranked grounded spans

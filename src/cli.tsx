@@ -59,6 +59,7 @@ import {
   resolveProjectNamespaceSync,
 } from './utils/namespace.js';
 import {refreshUpdateCache, updateNoticeText, upgradeCommand, type UpdateNotice} from './utils/update-check.js';
+import {resolveUpgradePlan, runUpgrade, upgradeCommandOverride} from './utils/self-update.js';
 import {PRODUCT_NAME, PRODUCT_COMMAND} from './brand.js';
 import {PLAN_MODE_INSTRUCTIONS} from './agent/prompt.js';
 import packageJson from '../package.json' with {type: 'json'};
@@ -265,6 +266,75 @@ program
     const config = await runtimeConfig(workspaceOption(options.workspace), runtimeOptions(options));
     const ok = await runDoctor(config, {json: options.json === true, visual: options.visual === true});
     if (!ok) process.exitCode = 1;
+  });
+
+program
+  .command('update')
+  .description('Update to the latest published release')
+  .option('--check', 'only report whether a newer version is available')
+  .option('--yes', 'skip the confirmation prompt and upgrade immediately')
+  .option('--json', 'print the result as JSON')
+  .action(async (options: {check?: boolean; yes?: boolean; json?: boolean}) => {
+    const json = options.json === true;
+    const current = packageJson.version;
+    // A user asking to update wants the freshest answer, so bypass the 24h
+    // interval gate. Never throws; a null result means up to date or offline.
+    const notice = await refreshUpdateCache(current, {force: true}).catch(() => undefined);
+
+    if (!notice) {
+      if (json) printObject({current, latest: current, upToDate: true}, true);
+      else process.stdout.write(`${chalk.green(cliGlyphs.success)} Already on the latest release (v${current}).\n`);
+      return;
+    }
+
+    const override = upgradeCommandOverride();
+    const plan = override
+      ? {command: override, args: [] as string[], manager: 'custom' as const, display: override, shell: true}
+      : {...resolveUpgradePlan({version: notice.latest}), shell: false};
+
+    if (json && options.check === true) {
+      printObject({current, latest: notice.latest, upToDate: false, command: plan.display, ...(notice.highlights ? {highlights: notice.highlights} : {})}, true);
+      return;
+    }
+
+    process.stdout.write(`${chalk.cyan(cliGlyphs.brand)} Update available ${chalk.dim(`v${current}`)} ${cliGlyphs.separator} ${chalk.green(`v${notice.latest}`)}\n`);
+    for (const highlight of notice.highlights ?? []) {
+      process.stdout.write(`  ${cliGlyphs.separator} ${highlight}\n`);
+    }
+
+    if (options.check === true) {
+      process.stdout.write(`  Run ${chalk.cyan(`${PRODUCT_COMMAND} update`)} to install ${chalk.dim(`(${plan.display})`)}.\n`);
+      return;
+    }
+
+    // Only prompt when attached to an interactive terminal; piped or scripted
+    // invocations must pass --yes so we never block on a prompt nobody can answer.
+    const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+    if (options.yes !== true) {
+      if (!interactive) {
+        process.stdout.write(`  Re-run with ${chalk.cyan(`${PRODUCT_COMMAND} update --yes`)} to install ${chalk.dim(`(${plan.display})`)}.\n`);
+        return;
+      }
+      const rl = createInterface({input, output});
+      try {
+        const answer = (await rl.question(`  Install ${chalk.dim(plan.display)}? [Y/n] `)).trim().toLowerCase();
+        if (answer === 'n' || answer === 'no') {
+          process.stdout.write('  Update cancelled.\n');
+          return;
+        }
+      } finally {
+        rl.close();
+      }
+    }
+
+    process.stdout.write(`${chalk.dim(`${cliGlyphs.running} ${plan.display}`)}\n`);
+    const result = await runUpgrade(plan);
+    if (result.ok) {
+      process.stdout.write(`${chalk.green(cliGlyphs.success)} Updated to v${notice.latest}. Restart ${PRODUCT_COMMAND} to use it.\n`);
+    } else {
+      process.stdout.write(`${chalk.red(cliGlyphs.error)} Update failed (exit ${result.exitCode}). Run ${chalk.cyan(plan.display)} manually.\n`);
+      process.exitCode = 1;
+    }
   });
 
 program

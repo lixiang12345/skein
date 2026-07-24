@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,8 +16,8 @@
   },
   "skein": {
     "releaseNotes": [
-      "Fix ghost characters left in /theme list and other list panels",
-      "List rows now pad to a stable width so incremental repaints overwrite stale cells"
+      "New: skein update self-upgrades to the latest release",
+      "Detects npm/pnpm/yarn/bun; --check reports only, --yes skips the prompt"
     ]
   },
   "bin": {
