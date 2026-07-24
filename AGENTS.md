@@ -28,6 +28,13 @@ Use Vitest with `describe`, `it`, and `expect`. Name tests `*.test.ts` or `*.tes
 
 History follows Conventional Commit-style subjects: `feat(ui): ...`, `fix(cli): ...`, `docs: ...`, and `chore(release): ...`. Keep commits focused and summaries specific. PRs should explain the outcome, trust implications, and verification performed. Link issues; include terminal captures for TUI changes and migration notes for storage/configuration changes. CI must pass on Linux and macOS.
 
+Every successful push to the Git remote must be followed by a verified npm
+release of the same source state. Bump the package version, update release
+notes, run `npm run release:verify`, create and push the matching `v*` tag, then
+publish `@skein-code/cli` with public access. Confirm the npm dist-tag resolves
+to that version before handoff; never report a release complete after only a
+Git push.
+
 ## Security & Configuration Tips
 
 Never commit API keys, `.env`, `.mosaic/`, or `.skein/` state. Prefer environment-variable references for credentials. Treat repository configuration as untrusted executable input; use `--trust-project-config` only after reviewing hooks, endpoints, permissions, and verification commands.

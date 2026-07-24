@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,8 +16,9 @@
   },
   "skein": {
     "releaseNotes": [
-      "New ANSI Shadow \"SKEIN\" logotype gives the entry banner a real product wordmark",
-      "Wordmark carries a subtle theme-aware gradient; narrow and ASCII terminals fall back cleanly"
+      "Local multilingual retrieval now runs without an external service and verifies indexed spans against current files",
+      "First-run model setup has two explicit connection paths with responsive, masked credential entry",
+      "The interactive queue can now be inspected, reordered by removal, or cleared with /queue"
     ]
   },
   "bin": {
