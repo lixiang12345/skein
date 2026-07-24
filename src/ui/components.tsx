@@ -1248,6 +1248,33 @@ function ThemePreview({name, width, glyphs}: {name: string; width: number; glyph
   );
 }
 
+// ANSI Shadow wordmark, baked in so the banner needs no runtime figlet
+// dependency. Box-drawing glyphs render as a bold product logotype in modern
+// terminal fonts; narrow and ASCII terminals fall back to a plain wordmark.
+const BRAND_WORDMARK = [
+  '\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2588\u2588\u2557  \u2588\u2588\u2557\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2588\u2588\u2557\u2588\u2588\u2588\u2557   \u2588\u2588\u2557',
+  '\u2588\u2588\u2554\u2550\u2550\u2550\u2550\u255d\u2588\u2588\u2551 \u2588\u2588\u2554\u255d\u2588\u2588\u2554\u2550\u2550\u2550\u2550\u255d\u2588\u2588\u2551\u2588\u2588\u2588\u2588\u2557  \u2588\u2588\u2551',
+  '\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2588\u2588\u2588\u2588\u2588\u2554\u255d \u2588\u2588\u2588\u2588\u2588\u2557  \u2588\u2588\u2551\u2588\u2588\u2554\u2588\u2588\u2557 \u2588\u2588\u2551',
+  '\u255a\u2550\u2550\u2550\u2550\u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2588\u2588\u2557 \u2588\u2588\u2554\u2550\u2550\u255d  \u2588\u2588\u2551\u2588\u2588\u2551\u255a\u2588\u2588\u2557\u2588\u2588\u2551',
+  '\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2551\u2588\u2588\u2551  \u2588\u2588\u2557\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2588\u2588\u2551\u2588\u2588\u2551 \u255a\u2588\u2588\u2588\u2588\u2551',
+  '\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u255d\u255a\u2550\u255d  \u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u255d\u255a\u2550\u255d\u255a\u2550\u255d  \u255a\u2550\u2550\u2550\u255d',
+];
+const BRAND_WORDMARK_WIDTH = 37;
+
+// Blend two #rrggbb colors so the wordmark can carry a subtle vertical gradient
+// that adapts to whatever theme is active instead of a hard-coded palette.
+function blendHex(from: string, to: string, t: number): string {
+  const parse = (hex: string): [number, number, number] => [
+    parseInt(hex.slice(1, 3), 16),
+    parseInt(hex.slice(3, 5), 16),
+    parseInt(hex.slice(5, 7), 16),
+  ];
+  const [ar, ag, ab] = parse(from);
+  const [br, bg, bb] = parse(to);
+  const mix = (a: number, b: number) => Math.round(a + (b - a) * t).toString(16).padStart(2, '0');
+  return `#${mix(ar, br)}${mix(ag, bg)}${mix(ab, bb)}`;
+}
+
 function Banner({model, engine, workspace, version, width, glyphs}: {
   model: string;
   engine: string;
@@ -1259,12 +1286,13 @@ function Banner({model, engine, workspace, version, width, glyphs}: {
   const theme = useTheme();
   const rowWidth = safeWidth(width);
   // The entry panel is a bordered hero card so a fresh session opens on real
-  // structure instead of four loose lines. It pairs a small block-art logo — a
-  // thread coiling into an "S", echoing the name (a skein is a coil of yarn) —
-  // with the wordmark and a spec-sheet of session metadata.
-  const wordmark = PRODUCT_NAME.toLowerCase();
-  // Content sits inside the border (2 cols) and the horizontal padding (2 cols).
+  // structure. A baked ANSI Shadow wordmark gives it a genuine product
+  // logotype; narrow and ASCII terminals fall back to a bold plain wordmark so
+  // the card never overflows or renders broken glyphs.
   const innerWidth = Math.max(1, rowWidth - 4);
+  const useAscii = glyphs.borderStyle === 'classic';
+  const showLogotype = !useAscii && innerWidth >= BRAND_WORDMARK_WIDTH;
+  const plainWordmark = `${glyphs.brand}  ${PRODUCT_NAME.toUpperCase().split('').join(' ')}`;
   const tagline = `v${version} ${glyphs.separator} a terminal coding agent you can see through`;
   // Aligned label column keeps the metadata reading like a spec sheet.
   const metaRows = [
@@ -1275,28 +1303,6 @@ function Banner({model, engine, workspace, version, width, glyphs}: {
   const labelCol = 8;
   const hint = `type a request ${glyphs.separator} /help for commands ${glyphs.separator} @ to attach files`;
 
-  // The logo is a 5x5 pixel "S" coil. Each pixel is drawn two columns wide so
-  // it reads square in the terminal cell grid. Full blocks (█) render reliably
-  // where half-blocks fracture across fonts; ASCII terminals fall back to `#`.
-  const useAscii = glyphs.borderStyle === 'classic';
-  const fill = useAscii ? '##' : '██';
-  const gap = '  ';
-  const logoPixels = [
-    [0, 1, 1, 1, 1],
-    [1, 0, 0, 0, 0],
-    [0, 1, 1, 1, 0],
-    [0, 0, 0, 0, 1],
-    [1, 1, 1, 1, 0],
-  ];
-  const logoRows = logoPixels.map((cells) => cells.map((on) => (on ? fill : gap)).join(''));
-  const logoWidth = 10; // 5 pixels * 2 columns
-  const logoGutter = 2;
-  // The logo sits to the left of a wordmark/tagline stack. Below them the
-  // metadata rows read full width. Drop the art on very narrow terminals so
-  // the wordmark and spec sheet always fit inside the card.
-  const showLogo = innerWidth >= logoWidth + logoGutter + 12;
-  const headWidth = showLogo ? Math.max(1, innerWidth - logoWidth - logoGutter) : innerWidth;
-
   return (
     <Box
       marginBottom={1}
@@ -1306,46 +1312,38 @@ function Banner({model, engine, workspace, version, width, glyphs}: {
       borderColor={theme.border}
       paddingX={1}
     >
-      <Box flexDirection="row">
-        {showLogo ? (
-          <Box flexDirection="column" marginRight={logoGutter}>
-            {logoRows.map((line, index) => (
-              <Text key={index} color={theme.accent}>{line}</Text>
-            ))}
-          </Box>
-        ) : null}
-        <Box flexDirection="column" flexGrow={1}>
-          <Text bold color={theme.accent}>{truncateDisplay(wordmark, headWidth)}</Text>
-          <Text color={theme.muted}>{truncateDisplay(tagline, headWidth)}</Text>
-          {showLogo ? (
-            <Box marginTop={1} flexDirection="column">
-              {metaRows.map((row) => (
-                <Box key={row.label}>
-                  <Text color={theme.dim}>{padDisplay(row.label, labelCol)}</Text>
-                  <Text color={theme.text}>{truncateDisplay(row.value, Math.max(1, headWidth - labelCol))}</Text>
-                </Box>
-              ))}
-            </Box>
-          ) : null}
-        </Box>
-      </Box>
-      {showLogo ? null : (
-        <Box marginTop={1} flexDirection="column">
-          {metaRows.map((row) => (
-            <Box key={row.label}>
-              <Text color={theme.dim}>{padDisplay(row.label, labelCol)}</Text>
-              <Text color={theme.text}>{truncateDisplay(row.value, Math.max(1, innerWidth - labelCol))}</Text>
-            </Box>
+      {showLogotype ? (
+        <Box flexDirection="column">
+          {BRAND_WORDMARK.map((line, index) => (
+            <Text
+              key={index}
+              bold
+              color={blendHex(theme.accent, theme.textStrong, (index / (BRAND_WORDMARK.length - 1)) * 0.55)}
+            >
+              {line}
+            </Text>
           ))}
         </Box>
+      ) : (
+        <Text bold color={theme.accent}>{truncateDisplay(plainWordmark, innerWidth)}</Text>
       )}
+      <Box marginTop={showLogotype ? 1 : 0}>
+        <Text color={theme.muted}>{truncateDisplay(tagline, innerWidth)}</Text>
+      </Box>
+      <Box marginTop={1} flexDirection="column">
+        {metaRows.map((row) => (
+          <Box key={row.label}>
+            <Text color={theme.dim}>{padDisplay(row.label, labelCol)}</Text>
+            <Text color={theme.text}>{truncateDisplay(row.value, Math.max(1, innerWidth - labelCol))}</Text>
+          </Box>
+        ))}
+      </Box>
       <Box marginTop={1}>
         <Text color={theme.dim}>{truncateDisplay(hint, innerWidth)}</Text>
       </Box>
     </Box>
   );
 }
-
 function UpdateNotice({current, latest, command, highlights, width, glyphs}: {
   current: string;
   latest: string;

@@ -159,10 +159,14 @@ export function estimateTimelineItemRows(
   if (item.kind === 'agent' || item.kind === 'agent-message') return rowWidth < 64 ? 2 : 1;
   if (item.kind === 'workflow') return rowWidth < 64 ? 2 : 1;
   if (item.kind === 'banner') {
-    // Bordered hero card: top+bottom border (2), wordmark + tagline (2), a
-    // blank spacer, three aligned metadata rows, another spacer, the hint line,
-    // and the trailing margin row.
-    return 2 + 2 + 1 + 3 + 1 + 1 + 1;
+    // Bordered hero card. Wide terminals show the six-row ANSI Shadow logotype
+    // plus a blank spacer before the tagline; narrow terminals collapse to a
+    // single plain wordmark line. Both layouts then add the tagline, a spacer,
+    // three aligned metadata rows, another spacer, the hint line, top+bottom
+    // border, and the trailing margin row.
+    const wide = rowWidth >= 41;
+    const headRows = wide ? 6 + 1 : 1;
+    return 2 + headRows + 1 + 1 + 3 + 1 + 1 + 1;
   }
   return 1;
 }
