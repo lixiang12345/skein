@@ -1259,10 +1259,10 @@ function Banner({model, engine, workspace, version, width, glyphs}: {
   const theme = useTheme();
   const rowWidth = safeWidth(width);
   // The entry panel is a bordered hero card so a fresh session opens on real
-  // structure instead of four loose lines. A leading glyph plus letter-spaced
-  // name reads like a wordmark in every terminal font; multi-line block art
-  // fractured badly across fonts, so the mark stays on one bold line.
-  const wordmark = `${glyphs.brand}  ${PRODUCT_NAME.toUpperCase().split('').join(' ')}`;
+  // structure instead of four loose lines. It pairs a small block-art logo — a
+  // thread coiling into an "S", echoing the name (a skein is a coil of yarn) —
+  // with the wordmark and a spec-sheet of session metadata.
+  const wordmark = PRODUCT_NAME.toLowerCase();
   // Content sits inside the border (2 cols) and the horizontal padding (2 cols).
   const innerWidth = Math.max(1, rowWidth - 4);
   const tagline = `v${version} ${glyphs.separator} a terminal coding agent you can see through`;
@@ -1274,6 +1274,29 @@ function Banner({model, engine, workspace, version, width, glyphs}: {
   ];
   const labelCol = 8;
   const hint = `type a request ${glyphs.separator} /help for commands ${glyphs.separator} @ to attach files`;
+
+  // The logo is a 5x5 pixel "S" coil. Each pixel is drawn two columns wide so
+  // it reads square in the terminal cell grid. Full blocks (█) render reliably
+  // where half-blocks fracture across fonts; ASCII terminals fall back to `#`.
+  const useAscii = glyphs.borderStyle === 'classic';
+  const fill = useAscii ? '##' : '██';
+  const gap = '  ';
+  const logoPixels = [
+    [0, 1, 1, 1, 1],
+    [1, 0, 0, 0, 0],
+    [0, 1, 1, 1, 0],
+    [0, 0, 0, 0, 1],
+    [1, 1, 1, 1, 0],
+  ];
+  const logoRows = logoPixels.map((cells) => cells.map((on) => (on ? fill : gap)).join(''));
+  const logoWidth = 10; // 5 pixels * 2 columns
+  const logoGutter = 2;
+  // The logo sits to the left of a wordmark/tagline stack. Below them the
+  // metadata rows read full width. Drop the art on very narrow terminals so
+  // the wordmark and spec sheet always fit inside the card.
+  const showLogo = innerWidth >= logoWidth + logoGutter + 12;
+  const headWidth = showLogo ? Math.max(1, innerWidth - logoWidth - logoGutter) : innerWidth;
+
   return (
     <Box
       marginBottom={1}
@@ -1283,16 +1306,39 @@ function Banner({model, engine, workspace, version, width, glyphs}: {
       borderColor={theme.border}
       paddingX={1}
     >
-      <Text bold color={theme.accent}>{truncateDisplay(wordmark, innerWidth)}</Text>
-      <Text color={theme.muted}>{truncateDisplay(tagline, innerWidth)}</Text>
-      <Box marginTop={1} flexDirection="column">
-        {metaRows.map((row) => (
-          <Box key={row.label}>
-            <Text color={theme.dim}>{padDisplay(row.label, labelCol)}</Text>
-            <Text color={theme.text}>{truncateDisplay(row.value, Math.max(1, innerWidth - labelCol))}</Text>
+      <Box flexDirection="row">
+        {showLogo ? (
+          <Box flexDirection="column" marginRight={logoGutter}>
+            {logoRows.map((line, index) => (
+              <Text key={index} color={theme.accent}>{line}</Text>
+            ))}
           </Box>
-        ))}
+        ) : null}
+        <Box flexDirection="column" flexGrow={1}>
+          <Text bold color={theme.accent}>{truncateDisplay(wordmark, headWidth)}</Text>
+          <Text color={theme.muted}>{truncateDisplay(tagline, headWidth)}</Text>
+          {showLogo ? (
+            <Box marginTop={1} flexDirection="column">
+              {metaRows.map((row) => (
+                <Box key={row.label}>
+                  <Text color={theme.dim}>{padDisplay(row.label, labelCol)}</Text>
+                  <Text color={theme.text}>{truncateDisplay(row.value, Math.max(1, headWidth - labelCol))}</Text>
+                </Box>
+              ))}
+            </Box>
+          ) : null}
+        </Box>
       </Box>
+      {showLogo ? null : (
+        <Box marginTop={1} flexDirection="column">
+          {metaRows.map((row) => (
+            <Box key={row.label}>
+              <Text color={theme.dim}>{padDisplay(row.label, labelCol)}</Text>
+              <Text color={theme.text}>{truncateDisplay(row.value, Math.max(1, innerWidth - labelCol))}</Text>
+            </Box>
+          ))}
+        </Box>
+      )}
       <Box marginTop={1}>
         <Text color={theme.dim}>{truncateDisplay(hint, innerWidth)}</Text>
       </Box>

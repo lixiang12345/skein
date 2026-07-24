@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,8 +16,8 @@
   },
   "skein": {
     "releaseNotes": [
-      "Quieter turns: greetings like \"hi\" no longer dump a context panel",
-      "Redesigned entry banner into a bordered hero card with aligned metadata"
+      "New woven-coil \"S\" logo replaces the plain wordmark in the entry banner",
+      "Entry banner pairs the logo with the wordmark and an aligned session spec sheet"
     ]
   },
   "bin": {
