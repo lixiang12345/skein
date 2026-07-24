@@ -29,6 +29,16 @@ describe('dynamic prompt assembly', () => {
     expect(buildTurnDirective('重构这个模块').text).toContain('intent="refactor"');
   });
 
+  it('injects optional orchestration guidance only when agent tools are enabled', () => {
+    const direct = buildTurnDirective('Implement the parser');
+    expect(direct.text).toContain('Use only tools exposed for this turn');
+    expect(direct.text).not.toContain('team_run');
+
+    const orchestrated = buildTurnDirective('Implement the parser', {agents: true});
+    expect(orchestrated.text).toContain('team_run');
+    expect(orchestrated.text).toContain('keep workspace mutation in the main agent');
+  });
+
   it('treats greetings and acknowledgements as trivial turns', () => {
     for (const trivial of ['hi', 'Hello!', '你好', '嗨~', '谢谢', 'ok', '收到', 'thanks', 'gm', 'ping', '在吗？']) {
       expect(isTrivialTurn(trivial), trivial).toBe(true);
@@ -45,6 +55,8 @@ describe('dynamic prompt assembly', () => {
     expect(stable).toContain('workspace rule');
     expect(stable).toContain('reviewer');
     expect(stable).toContain('memory_propose');
+    expect(stable).toContain('Preserve user work');
+    expect(stable).toContain("Match the user's language");
     expect(stable).not.toContain('Current saved plan');
 
     session.tasks.push({id: 'task-1', title: 'Verify the parser', status: 'in_progress'});

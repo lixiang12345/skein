@@ -6,6 +6,7 @@ import {redactEndpoint} from '../config.js';
 import {ContextEngine} from '../context/context-engine.js';
 import {resolveExecutableRuntime, runProcess} from '../utils/process.js';
 import {PRODUCT_COMMAND, PRODUCT_NAME} from '../brand.js';
+import {resolveKittyKeyboardConfig} from '../ui/terminal-capabilities.js';
 import {resolveCliGlyphs, type CliGlyphs} from './glyphs.js';
 import {
   inspectHomeNamespace,
@@ -284,9 +285,10 @@ function visualChecks(glyphs: CliGlyphs): Check[] {
   const color = process.env.NO_COLOR
     ? 'disabled by NO_COLOR'
     : process.env.COLORTERM || process.env.TERM || 'terminal default';
-  const keyboard = process.env.TERM_PROGRAM
-    ? `${process.env.TERM_PROGRAM}; Kitty protocol auto-negotiates when supported`
-    : 'Kitty protocol auto-negotiates when supported';
+  const kittyKeyboard = resolveKittyKeyboardConfig();
+  const terminalName = process.env.TERM_PROGRAM || process.env.TERM || 'unknown terminal';
+  const keyboard = `${terminalName}; Kitty enhancements ${kittyKeyboard.mode}` +
+    '; set SKEIN_KITTY_KEYBOARD=on|off to override';
   return [
     {
       name: 'Terminal viewport',

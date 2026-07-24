@@ -5,6 +5,11 @@ import stripAnsi from 'strip-ansi';
 const [path, widthText, mode, scenario = 'full'] = process.argv.slice(2);
 const width = Number(widthText);
 const raw = await readFile(path, 'utf8');
+for (const sequence of ['\u001b[?u', '\u001b[?0u', '^[[?u', '^[[?0u']) {
+  if (raw.includes(sequence)) {
+    throw new Error(`${path} leaked a terminal capability probe: ${JSON.stringify(sequence)}`);
+  }
+}
 const physicalLines = raw
   .replace(/\u001b\[[0-9;]*[ABEFHf]/gu, '\n');
 const cleaned = stripAnsi(physicalLines)

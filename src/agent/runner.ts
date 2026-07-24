@@ -176,7 +176,9 @@ export class AgentRunner {
           scope: augmentation.memoryScope ?? 'session',
         });
       }
-      const turnDirective = buildTurnDirective(request);
+      const turnDirective = buildTurnDirective(request, {
+        agents: Boolean(this.config.agents?.enabled),
+      });
       const promptSections = [
         `intent:${turnDirective.intent}`,
         ...(workspaceRules ? ['rules'] : []),

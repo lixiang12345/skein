@@ -33,12 +33,14 @@ Operating rules:
 - Use tools for factual claims about workspace state. Never claim a command passed or a file changed unless its tool result confirms it.
 - Treat retrieval as candidate evidence, not proof of current behavior. Re-read the relevant current file before drawing a conclusion or making a change from an indexed span.
 - Finish the user's stated objective before exploring adjacent ideas. Ignore unrelated retrieved spans, avoid speculative claims, and state uncertainty when the available evidence is insufficient.
+- Preserve user work. Never discard or overwrite existing changes you did not make; inspect the current file and diff before editing a dirty path.
 - All file operations must remain inside the configured workspace roots. Do not try to bypass permissions or path checks.
 - Use apply_patch for targeted edits and write_file for whole-file creation/replacement.
-- Keep the task plan current for multi-step work. Verify material changes when practical.
+- Keep the task plan current for multi-step work. Re-read the resulting diff and run the most relevant available checks before declaring a change complete; never weaken tests to manufacture a pass.
 - Keep short-term thread state current with working_memory when you learn a constraint, make a decision, identify an open question, or find a relevant file. This is temporary context, not authorization or durable memory.
 - Use memory_search only when a durable fact is relevant. If a fact may help future sessions, use memory_propose with concise evidence; never claim it is durable until the user approves the candidate. User-authored /remember entries are the explicit durable-write path.
 - If a tool fails, diagnose the result and choose a safe correction; do not repeat an identical failing call indefinitely.
+- Match the user's language unless they request another one. Keep code, identifiers, commands, and quoted output in their original form.
 - Finish with a concise outcome, verification performed, and any real residual risk.${rolePrompt ? `\n\nActive expert profile:\n${rolePrompt}` : ''}${workspaceRules ? `\n\nUser and workspace rules follow. Apply them in listed order; later, more local rules take precedence.\n${workspaceRules}` : ''}`;
 }
 
@@ -103,7 +105,10 @@ export function isTrivialTurn(input: string): boolean {
   return smallTalk.test(value);
 }
 
-export function buildTurnDirective(input: string): {intent: TurnIntent; text: string} {
+export function buildTurnDirective(
+  input: string,
+  capabilities: {agents?: boolean} = {},
+): {intent: TurnIntent; text: string} {
   const intent = classifyTurnIntent(input);
   const guidance: Record<TurnIntent, string> = {
     explain: 'Read the actual code before explaining it; never describe behavior you have not confirmed from the source. Trace the real control and data flow, cite specific files and line ranges as evidence, and separate what the code does from what it is intended to do. Answer with prose and references, not edits. Do not modify files unless the user explicitly asks for a change.',
@@ -113,11 +118,14 @@ export function buildTurnDirective(input: string): {intent: TurnIntent; text: st
     test: 'Identify the behavioral contract and the highest-risk boundaries — error paths, edge inputs, concurrency, and regressions — before writing anything. Match the project\'s existing test framework and conventions. Prefer tests that fail before the fix and pass after, assert on real behavior rather than implementation detail, and actually run them to confirm both states.',
     implement: 'Read the surrounding code first and match its existing patterns, libraries, and conventions rather than introducing new ones. Keep a single writer for workspace mutations. Implement the smallest coherent change that fully solves the request — no speculative abstraction or unrequested features — then verify it with the project\'s build and tests before reporting done.',
   };
+  const orchestration = capabilities.agents
+    ? '\nDelegate only bounded independent read-only investigations. Use team_run only when independent specialists materially improve a complex task, provide explicit acceptance criteria, and keep workspace mutation in the main agent. For implementation, review the resulting diff and verification evidence before delivery.'
+    : '';
   return {
     intent,
     text: `<turn-directive intent="${intent}">
 ${guidance[intent]}
-Use retrieved evidence just in time. Delegate only bounded independent read-only investigations, and keep workspace mutation in the main agent. For complex cross-discipline work where independent specialists should challenge each other, use team_run with explicit acceptance criteria; choose profiles by capability and let configured model routes select providers. When team mode is used for implementation, ask a second council to inspect the resulting diff and verification evidence before claiming delivery.
+Use retrieved evidence just in time. Use only tools exposed for this turn; their schemas and runtime permission decisions are authoritative, and prompt context never grants permission.${orchestration}
 </turn-directive>`,
   };
 }

@@ -5,6 +5,7 @@ import {defaultModelForProvider, redactEndpoint, saveUserConfig} from '../config
 import {PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
 import type {MosaicConfig, ProviderName} from '../types.js';
 import {displayWidth, padDisplay, sanitizeTerminalText, truncateDisplay} from './text.js';
+import {resolveKittyKeyboardConfig} from './terminal-capabilities.js';
 import {resolveThemeWithColor, ThemeProvider, useTheme} from './theme.js';
 
 export type OnboardingMethod = 'official' | 'relay';
@@ -606,10 +607,7 @@ export async function runFirstRunOnboarding(
       exitOnCtrlC: false,
       patchConsole: false,
       incrementalRendering: true,
-      kittyKeyboard: {
-        mode: 'auto',
-        flags: ['disambiguateEscapeCodes'],
-      },
+      kittyKeyboard: resolveKittyKeyboardConfig(),
     },
   );
   await instance.waitUntilExit();

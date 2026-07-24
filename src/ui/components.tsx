@@ -194,7 +194,7 @@ export function Header({config, askMode, planMode = false, width = 80, glyphMode
   const showModel = terminalWidth >= 72 && modelSpace >= 12;
 
   return (
-    <Box marginBottom={1}>
+    <Box marginBottom={1} height={1} overflowY="hidden">
       <Text bold color={theme.accent}>{brand}</Text>
       {showRepository ? <>
         <Text color={theme.border}>{separator}</Text>
@@ -202,7 +202,7 @@ export function Header({config, askMode, planMode = false, width = 80, glyphMode
         <Text color={theme.border}>{separator}</Text>
       </> : <Text> </Text>}
       <Text bold color={modeColor}>{modeLabel}</Text>
-      {showModel ? <><Box flexGrow={1} /><Text color={theme.dim}>{truncateDisplay(model, modelSpace)}</Text></> : null}
+      {showModel ? <><Box flexGrow={1} /><Text color={theme.dim} wrap="truncate">{truncateDisplay(model, modelSpace)}</Text></> : null}
     </Box>
   );
 }
@@ -1280,15 +1280,13 @@ function Banner({engine, workspace, version, width, glyphs}: {
   const padding = rowWidth >= 24 ? 2 : 0;
   const innerWidth = Math.max(1, rowWidth - padding);
   const safeEngine = sanitizeInlineTerminalText(engine);
-  const meta = rowWidth >= 32
-    ? `v${version} ${glyphs.separator} ${safeEngine} context`
-    : `v${version}`;
+  const meta = rowWidth >= 48
+    ? `New session ${glyphs.separator} ${safeEngine} index ${glyphs.separator} v${version}`
+    : rowWidth >= 28
+      ? `New session ${glyphs.separator} v${version}`
+      : `New ${glyphs.separator} v${version}`;
   const cwd = `cwd ${compactDisplayPath(sanitizeInlineTerminalText(workspace), Math.max(1, innerWidth - 4))}`;
-  const hint = rowWidth < 24
-    ? `@file ${glyphs.separator} /help`
-    : rowWidth < 48
-      ? `request ${glyphs.separator} @file ${glyphs.separator} /help`
-      : `Start with a request, @file, or /help.`;
+  const statusWidth = displayWidth(glyphs.success) + 1;
 
   return (
     <Box
@@ -1296,9 +1294,11 @@ function Banner({engine, workspace, version, width, glyphs}: {
       flexDirection="column"
       paddingLeft={padding}
     >
-      <Text bold color={theme.textStrong}>{truncateDisplay(`New session ${glyphs.separator} ${meta}`, innerWidth)}</Text>
+      <Box height={1} overflowY="hidden">
+        <Text bold color={theme.success}>{glyphs.success} </Text>
+        <Text bold color={theme.textStrong} wrap="truncate">{truncateDisplay(meta, Math.max(1, innerWidth - statusWidth))}</Text>
+      </Box>
       <Text color={theme.muted}>{truncateDisplay(cwd, innerWidth)}</Text>
-      <Text color={theme.dim}>{truncateDisplay(hint, innerWidth)}</Text>
     </Box>
   );
 }

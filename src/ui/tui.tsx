@@ -59,6 +59,7 @@ import {
   type HistorySearchState,
 } from './history-search.js';
 import {displayWidth, sanitizeTerminalText, terminalEllipsis, truncateDisplay} from './text.js';
+import {resolveKittyKeyboardConfig} from './terminal-capabilities.js';
 import {nextTheme, reloadUserThemes, resolveThemeWithColor, ThemeProvider, themes} from './theme.js';
 import {fitTimelineToRows} from './viewport.js';
 import {
@@ -1575,10 +1576,7 @@ export async function runInteractiveTui(options: TuiOptions): Promise<void> {
     patchConsole: true,
     incrementalRendering: true,
     maxFps: 30,
-    kittyKeyboard: {
-      mode: 'auto',
-      flags: ['disambiguateEscapeCodes'],
-    },
+    kittyKeyboard: resolveKittyKeyboardConfig(),
   });
   await instance.waitUntilExit();
 }

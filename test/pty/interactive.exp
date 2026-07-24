@@ -23,6 +23,7 @@ unset -nocomplain env(FORCE_COLOR)
 unset -nocomplain env(CI)
 unset -nocomplain env(GITHUB_ACTIONS)
 set env(SKEIN_HOME) "$workspace/.skein-home"
+set env(SKEIN_KITTY_KEYBOARD) off
 if {$mode eq "ascii"} {
   set env(SKEIN_GLYPHS) ascii
   set env(NO_COLOR) 1
@@ -85,10 +86,6 @@ expect {
   }
 }
 
-# Ink holds input briefly while checking whether the terminal supports the
-# Kitty protocol. A bare PTY cannot answer that query, so let its 200 ms probe
-# finish before exercising the standard terminal key sequences.
-after 300
 set enter "\r"
 set escape "\033"
 set ctrl_c "\003"

@@ -4,6 +4,7 @@ import {describe, expect, it} from 'vitest';
 import {CommandPalette, ContextInspector, Footer, Header, PermissionCard, PromptBar, TaskRail, TeamCockpit, TeamWorkbench, Timeline} from '../src/ui/components.js';
 import {displayWidth, sanitizeTerminalText} from '../src/ui/text.js';
 import {detectTerminalAppearance, resolveTheme, resolveThemeWithColor} from '../src/ui/theme.js';
+import {resolveKittyKeyboardConfig} from '../src/ui/terminal-capabilities.js';
 import type {MosaicConfig, ToolCall} from '../src/types.js';
 
 const config: MosaicConfig = {
@@ -20,6 +21,18 @@ const config: MosaicConfig = {
 };
 
 describe('terminal presentation', () => {
+  it('does not probe unknown terminals for Kitty keyboard support', () => {
+    expect(resolveKittyKeyboardConfig({TERM: 'xterm-256color'}).mode).toBe('disabled');
+    expect(resolveKittyKeyboardConfig({TERM_PROGRAM: 'Apple_Terminal'}).mode).toBe('disabled');
+    expect(resolveKittyKeyboardConfig({KITTY_WINDOW_ID: '1'}).mode).toBe('enabled');
+    expect(resolveKittyKeyboardConfig({WEZTERM_PANE: '2'}).mode).toBe('enabled');
+    expect(resolveKittyKeyboardConfig({
+      KITTY_WINDOW_ID: '1',
+      SKEIN_KITTY_KEYBOARD: 'off',
+    }).mode).toBe('disabled');
+    expect(resolveKittyKeyboardConfig({SKEIN_KITTY_KEYBOARD: 'on'}).mode).toBe('enabled');
+  });
+
   it('renders the branded header, timeline, and plan without throwing', () => {
     const output = renderToString(
       <>
@@ -84,6 +97,18 @@ describe('terminal presentation', () => {
   it('labels the explicit planning mode in the header', () => {
     const output = renderToString(<Header config={config} askMode planMode />);
     expect(output).toContain('PLAN');
+  });
+
+  it('keeps a long model identifier on one bounded header row', () => {
+    const output = renderToString(<Header config={{
+      ...config,
+      model: {provider: 'compatible', model: 'a-very-long-model-name-that-must-not-wrap-opus-4-8'},
+    }} askMode={false} width={80} />, {columns: 80});
+
+    const rows = output.trimEnd().split('\n');
+    expect(rows).toHaveLength(1);
+    expect(displayWidth(rows[0] ?? '')).toBeLessThanOrEqual(80);
+    expect(output).not.toContain('\n4-8');
   });
 
   it('reveals bounded tool output without allowing ANSI or control-sequence injection', () => {
@@ -436,10 +461,10 @@ describe('terminal presentation', () => {
       version: '0.3.5',
     }]} />, {columns});
 
-    expect(output).toContain('New session');
+    expect(output).toContain(columns < 28 ? 'New ' : 'New session');
     expect(output).toContain('v0.3.5');
     expect(output).toContain('cwd ');
-    expect(output.trimEnd().split('\n')).toHaveLength(3);
+    expect(output.trimEnd().split('\n')).toHaveLength(2);
     expect(output).not.toMatch(/[┌┐└┘╭╮╰╯│█]/u);
     for (const line of output.split('\n')) {
       expect(displayWidth(line), `${columns}-column session summary overflowed: ${JSON.stringify(line)}`).toBeLessThanOrEqual(columns);

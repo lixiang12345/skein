@@ -180,7 +180,9 @@ as `accent`, `text`, `muted`, `success`, and `error`. Set
 `SKEIN_GLYPHS=ascii` when a terminal or multiplexer renders Unicode symbols
 inconsistently. `NO_COLOR=1` or `ui.color: false` removes palette colors while
 keeping status symbols and semantic labels intact. `/density compact` and
-`/density comfortable` control vertical rhythm.
+`/density comfortable` control vertical rhythm. Skein enables Kitty keyboard
+enhancements without probing when Kitty, WezTerm, Ghostty, or foot declares
+support; set `SKEIN_KITTY_KEYBOARD=on|off` to override detection.
 
 Run `skein doctor --visual` to inspect terminal width, color mode, glyph
 fallback, keyboard protocol support, and a CJK/emoji/box-drawing calibration
