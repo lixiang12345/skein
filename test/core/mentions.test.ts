@@ -80,7 +80,7 @@ describe('file mention suggestions', () => {
     expect(await mentionSuggestions('new-file', [main, extra])).toEqual(['main/new-file.ts']);
   });
 
-  it('maps safe ContextEngine hit paths, rejects escapes, deduplicates, and ranks', () => {
+  it('maps safe local retrieval hit paths, rejects escapes, deduplicates, and ranks', () => {
     const main = join(tmpdir(), 'skein-context-main');
     const extra = join(tmpdir(), 'skein-context-extra');
     const roots = [main, extra];

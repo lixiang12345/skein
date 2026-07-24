@@ -2,12 +2,12 @@ import React, {useCallback, useEffect, useMemo, useReducer, useRef} from 'react'
 import {Box, render, Text, useApp, useInput, useWindowSize} from 'ink';
 import TextInput from 'ink-text-input';
 import {defaultModelForProvider, redactEndpoint, saveUserConfig} from '../config.js';
-import {PRODUCT_COMMAND, PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
+import {PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
 import type {MosaicConfig, ProviderName} from '../types.js';
-import {displayWidth, sanitizeTerminalText, truncateDisplay} from './text.js';
+import {displayWidth, padDisplay, sanitizeTerminalText, truncateDisplay} from './text.js';
 import {resolveThemeWithColor, ThemeProvider, useTheme} from './theme.js';
 
-export type OnboardingMethod = 'official' | 'relay' | 'cli';
+export type OnboardingMethod = 'official' | 'relay';
 export type RelayProtocol = 'openai-compatible' | 'anthropic-compatible';
 export type OnboardingStep =
   | 'method'
@@ -16,7 +16,6 @@ export type OnboardingStep =
   | 'endpoint'
   | 'model'
   | 'api-key'
-  | 'cli-info'
   | 'confirm'
   | 'saving';
 
@@ -61,20 +60,19 @@ export type OnboardingAction =
   | {type: 'SAVE_ERROR'};
 
 const officialProviders: Array<{provider: Exclude<ProviderName, 'compatible'>; label: string; detail: string}> = [
-  {provider: 'openai', label: 'OpenAI API', detail: 'Uses the OpenAI API key and native OpenAI protocol.'},
-  {provider: 'anthropic', label: 'Anthropic API', detail: 'Uses the Anthropic API key and Messages protocol.'},
-  {provider: 'gemini', label: 'Google Gemini API', detail: 'Uses the Gemini API key and generateContent protocol.'},
+  {provider: 'openai', label: 'OpenAI API', detail: 'Native API protocol · API key'},
+  {provider: 'anthropic', label: 'Anthropic API', detail: 'Messages API · API key'},
+  {provider: 'gemini', label: 'Google Gemini API', detail: 'generateContent API · API key'},
 ];
 
 const methods: Array<{value: OnboardingMethod; label: string; detail: string}> = [
-  {value: 'official', label: 'Official model API', detail: 'Connect OpenAI, Anthropic, or Gemini with an API key.'},
-  {value: 'relay', label: 'Third-party relay', detail: 'Choose the relay protocol explicitly, then enter its endpoint and key.'},
-  {value: 'cli', label: 'Already signed in to a CLI', detail: 'Learn how Codex, Claude Code, or Gemini CLI can join as delegated agents.'},
+  {value: 'official', label: 'Provider API key', detail: 'OpenAI, Anthropic, or Gemini · direct billing'},
+  {value: 'relay', label: 'Compatible endpoint', detail: 'Local server or relay · protocol chosen explicitly'},
 ];
 
 const relayProtocols: Array<{value: RelayProtocol; label: string; detail: string}> = [
-  {value: 'openai-compatible', label: 'OpenAI-compatible', detail: 'POST /chat/completions · Bearer authentication · OpenAI tool format'},
-  {value: 'anthropic-compatible', label: 'Anthropic-compatible', detail: 'POST /messages · x-api-key · anthropic-version · content blocks'},
+  {value: 'openai-compatible', label: 'OpenAI-compatible', detail: 'Chat Completions · Bearer key'},
+  {value: 'anthropic-compatible', label: 'Anthropic-compatible', detail: 'Messages API · x-api-key'},
 ];
 
 const forbiddenDirectionControls = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
@@ -203,7 +201,7 @@ function selectCurrentOption(state: OnboardingState): OnboardingState {
     if (method === 'relay') {
       return advance({...state, draft: {...state.draft, method}}, 'relay-protocol');
     }
-    return advance({...state, draft: {...state.draft, method}}, 'cli-info');
+    return state;
   }
   if (state.step === 'official-provider') {
     const provider = officialProviders[state.selected]?.provider;
@@ -357,10 +355,6 @@ function OnboardingFlow({initialConfig, saveConfig, onFinish}: OnboardingAppProp
       dispatch({type: 'SELECT'});
       return;
     }
-    if (state.step === 'cli-info') {
-      dispatch({type: 'BACK'});
-      return;
-    }
     if (state.step === 'confirm') dispatch({type: 'SAVE_START'});
   });
 
@@ -397,36 +391,51 @@ export function OnboardingScreen({state, dispatch, width, compact = false}: {
   const ascii = process.env.SKEIN_GLYPHS === 'ascii' || process.env.MOSAIC_GLYPHS === 'ascii';
   const marker = ascii ? '>' : '›';
   const mark = ascii ? '*' : PRODUCT_MARK;
-  const inputField = inputFieldForStep(state.step);
+  const inputField = inputFieldForStep(state);
+  const stage = setupStage(state);
+  const summary = connectionSummary(state);
+  const horizontalPadding = width >= 32 ? 1 : 0;
+  const headerWidth = Math.max(1, width - horizontalPadding * 2);
   return (
-    <Box width={width} paddingX={width >= 32 ? 1 : 0} flexDirection="column">
-      <Text bold color={theme.accent}>{truncateDisplay(`${mark}  ${PRODUCT_NAME.toUpperCase()}  /  FIRST RUN`, width)}</Text>
-      <Text color={theme.textStrong} bold>{titleForStep(state.step)}</Text>
-      {!compact ? <Text color={theme.muted} wrap="wrap">{descriptionForStep(state)}</Text> : null}
+    <Box width={width} paddingX={horizontalPadding} flexDirection="column">
+      <Box width={headerWidth} justifyContent="space-between">
+        <Text bold color={theme.accent}>{truncateDisplay(`${mark}  ${PRODUCT_NAME.toUpperCase()}`, Math.max(1, headerWidth - displayWidth(stage.progress) - 1))}</Text>
+        <Text color={theme.dim}>{stage.progress}</Text>
+      </Box>
+      <Text color={theme.border}>{truncateDisplay(stageDivider(ascii, headerWidth), headerWidth)}</Text>
+      <Text color={theme.dim}>{truncateDisplay(stage.name, headerWidth)}</Text>
       {!compact ? <Box height={1} /> : null}
-      {state.step === 'method' ? <OptionList options={methods} selected={state.selected} marker={marker} width={width} compact={compact} /> : null}
-      {state.step === 'official-provider' ? <OptionList options={officialProviders} selected={state.selected} marker={marker} width={width} compact={compact} /> : null}
-      {state.step === 'relay-protocol' ? <OptionList options={relayProtocols} selected={state.selected} marker={marker} width={width} compact={compact} /> : null}
+      <Text color={theme.textStrong} bold>{truncateDisplay(titleForStep(state.step), headerWidth)}</Text>
+      {!compact ? <Text color={theme.muted} wrap="wrap">{descriptionForStep(state)}</Text> : null}
+      {summary ? <Text color={theme.dim}>{truncateDisplay(summary, headerWidth)}</Text> : null}
+      {!compact ? <Box height={1} /> : null}
+      {state.step === 'method' ? <OptionList options={methods} selected={state.selected} marker={marker} width={headerWidth} compact={compact} /> : null}
+      {state.step === 'official-provider' ? <OptionList options={officialProviders} selected={state.selected} marker={marker} width={headerWidth} compact={compact} /> : null}
+      {state.step === 'relay-protocol' ? <OptionList options={relayProtocols} selected={state.selected} marker={marker} width={headerWidth} compact={compact} /> : null}
       {inputField ? (
         <Box flexDirection="column">
-          <Text color={theme.muted}>{inputField.label}</Text>
-          <Box borderStyle="round" borderColor={state.error ? theme.error : theme.borderFocus} paddingX={1}>
+          <Box>
+            <Text color={theme.textStrong} bold>{inputField.label}</Text>
+            <Text color={theme.dim}>{inputField.required ? '  required' : '  optional'}</Text>
+          </Box>
+          <Box borderStyle="round" borderColor={state.error ? theme.error : theme.borderFocus} paddingX={1} width={headerWidth}>
             <Text color={theme.accent}>{marker} </Text>
-            <TextInput
-              value={state.draft[inputField.field]}
-              onChange={(value) => dispatch({type: 'INPUT', field: inputField.field, value})}
-              onSubmit={(value) => dispatch({type: 'SUBMIT_INPUT', field: inputField.field, value})}
-              placeholder={inputField.placeholder}
-              {...(inputField.field === 'apiKey' ? {mask: ascii ? '*' : '•'} : {})}
-            />
+            <Box width={Math.max(1, headerWidth - 6)} height={1} overflow="hidden">
+              <TextInput
+                value={state.draft[inputField.field]}
+                onChange={(value) => dispatch({type: 'INPUT', field: inputField.field, value})}
+                onSubmit={(value) => dispatch({type: 'SUBMIT_INPUT', field: inputField.field, value})}
+                placeholder={inputField.placeholder}
+                {...(inputField.field === 'apiKey' ? {mask: ascii ? '*' : '•'} : {})}
+              />
+            </Box>
           </Box>
         </Box>
       ) : null}
-      {state.step === 'cli-info' ? <CliInfo width={width} /> : null}
-      {state.step === 'confirm' || state.step === 'saving' ? <Confirmation state={state} width={width} /> : null}
-      {state.error ? <Text color={theme.error}>! {truncateDisplay(state.error, Math.max(1, width - 2))}</Text> : null}
+      {state.step === 'confirm' || state.step === 'saving' ? <Confirmation state={state} width={headerWidth} /> : null}
+      {state.error ? <Text color={theme.error}>! {truncateDisplay(state.error, Math.max(1, headerWidth - 2))}</Text> : null}
       {!compact ? <Box height={1} /> : null}
-      <Text color={theme.dim}>{footerForStep(state)}</Text>
+      <Text color={theme.dim}>{footerForStep(state, headerWidth)}</Text>
     </Box>
   );
 }
@@ -444,33 +453,23 @@ function OptionList({options, selected, marker, width, compact}: {
       {options.map((option, index) => {
         const active = index === selected;
         const prefix = active ? `${marker} ` : '  ';
-        const available = Math.max(1, width - displayWidth(prefix));
+        const available = Math.max(1, width - displayWidth(prefix) - (active ? 2 : 0));
+        const label = `${prefix}${truncateDisplay(option.label, available)}`;
         return (
           <Box key={option.label} flexDirection="column" marginBottom={compact || index === options.length - 1 ? 0 : 1}>
-            <Text color={active ? theme.accent : theme.text} bold={active}>{prefix}{truncateDisplay(option.label, available)}</Text>
-            {(!compact && width >= 36) || active ? <Text color={active ? theme.muted : theme.dim} wrap="wrap">  {option.detail}</Text> : null}
+            <Text
+              color={active ? theme.selectionText : theme.text}
+              bold={active}
+              {...(active ? {backgroundColor: theme.selection} : {})}
+            >{active ? padDisplay(label, width) : label}</Text>
+            {(!compact && width >= 36) || active ? (
+              <Box marginLeft={2} width={Math.max(1, width - 2)}>
+                <Text color={active ? theme.muted : theme.dim} wrap="wrap">{option.detail}</Text>
+              </Box>
+            ) : null}
           </Box>
         );
       })}
-    </Box>
-  );
-}
-
-function CliInfo({width}: {width: number}) {
-  const theme = useTheme();
-  const rows = [
-    ['Native chat', 'Requires an official model API or a compatible relay.'],
-    ['Signed-in CLIs', 'Codex, Claude Code, and Gemini CLI can be delegated teammates.'],
-    ['After setup', `Run ${PRODUCT_COMMAND} agents setup to configure team routing.`],
-  ];
-  return (
-    <Box flexDirection="column">
-      {rows.map(([label, detail]) => (
-        <Box key={label} flexDirection={width >= 54 ? 'row' : 'column'}>
-          <Box width={width >= 54 ? 17 : undefined}><Text color={theme.textStrong} bold>{label}</Text></Box>
-          <Text color={theme.muted} wrap="wrap">{detail}</Text>
-        </Box>
-      ))}
     </Box>
   );
 }
@@ -479,21 +478,22 @@ function Confirmation({state, width}: {state: OnboardingState; width: number}) {
   const theme = useTheme();
   const relay = state.draft.method === 'relay';
   const values: Array<[string, string]> = [
-    ['Mode', relay ? 'Third-party relay' : 'Official API'],
+    ['Mode', relay ? 'Compatible endpoint' : 'Provider API'],
     ['Protocol', relay ? relayLabel(state.draft.relayProtocol) : providerLabel(state.draft.provider)],
     ...(relay ? [['Base URL', redactEndpoint(state.draft.baseUrl)] as [string, string]] : []),
     ['Model', state.draft.model],
-    ['Credential', state.draft.apiKey ? 'configured · masked · saved with mode 0600' : 'not required for this loopback endpoint'],
+    ['Credential', state.draft.apiKey ? 'configured · masked · owner-only' : 'not required for this loopback endpoint'],
   ];
+  const tabular = width >= 36;
   return (
     <Box flexDirection="column">
       {values.map(([label, value]) => (
-        <Box key={label} flexDirection={width >= 48 ? 'row' : 'column'}>
-          <Box width={width >= 48 ? 14 : undefined}><Text color={theme.dim}>{label}</Text></Box>
-          <Text color={theme.text}>{truncateDisplay(value, Math.max(1, width - (width >= 48 ? 14 : 0)))}</Text>
+        <Box key={label} flexDirection={tabular ? 'row' : 'column'}>
+          <Box width={tabular ? 12 : undefined}><Text color={theme.dim}>{label}</Text></Box>
+          <Text color={theme.text}>{truncateDisplay(value, Math.max(1, width - (tabular ? 12 : 0)))}</Text>
         </Box>
       ))}
-      {state.step === 'saving' ? <Text color={theme.accent}>Saving and validating local configuration…</Text> : null}
+      {state.step === 'saving' ? <Text color={theme.accent}>Saving and validating configuration…</Text> : null}
     </Box>
   );
 }
@@ -505,45 +505,74 @@ function menuCount(step: OnboardingStep): number {
   return 0;
 }
 
-function inputFieldForStep(step: OnboardingStep): {field: EditableField; label: string; placeholder: string} | undefined {
-  if (step === 'endpoint') return {field: 'baseUrl', label: 'Relay base URL', placeholder: 'https://relay.example/v1'};
-  if (step === 'model') return {field: 'model', label: 'Model identifier', placeholder: 'provider model id'};
-  if (step === 'api-key') return {field: 'apiKey', label: 'API key', placeholder: 'paste credential (input is masked)'};
+function inputFieldForStep(state: OnboardingState): {field: EditableField; label: string; placeholder: string; required: boolean} | undefined {
+  if (state.step === 'endpoint') return {field: 'baseUrl', label: 'Base URL', placeholder: 'https://relay.example/v1', required: true};
+  if (state.step === 'model') return {field: 'model', label: 'Model identifier', placeholder: 'provider-model-id', required: true};
+  if (state.step === 'api-key') return {field: 'apiKey', label: 'API key', placeholder: 'paste key · input is masked', required: apiKeyRequired(state)};
   return undefined;
 }
 
+function setupStage(state: OnboardingState): {index: number; name: string; progress: string} {
+  const index = state.step === 'endpoint' || state.step === 'model'
+    ? 2
+    : state.step === 'api-key'
+      ? 3
+      : state.step === 'confirm' || state.step === 'saving'
+        ? 4
+        : 1;
+  const name = index === 1 ? 'CONNECTION' : index === 2 ? 'MODEL' : index === 3 ? 'CREDENTIAL' : 'REVIEW';
+  return {index, name, progress: `SETUP ${index}/4`};
+}
+
+function stageDivider(ascii: boolean, width: number): string {
+  return (ascii ? '-' : '─').repeat(Math.max(1, width));
+}
+
+function connectionSummary(state: OnboardingState): string {
+  if (!state.draft.method) return '';
+  const parts = [state.draft.method === 'relay' ? 'Compatible endpoint' : 'Provider API'];
+  if (state.draft.provider) parts.push(
+    state.draft.method === 'relay'
+      ? relayLabel(state.draft.relayProtocol)
+      : providerLabel(state.draft.provider),
+  );
+  if (state.draft.baseUrl) parts.push(redactEndpoint(state.draft.baseUrl));
+  if (state.draft.model) parts.push(state.draft.model);
+  return parts.join('  /  ');
+}
+
 function titleForStep(step: OnboardingStep): string {
-  if (step === 'method') return 'Connect a model';
-  if (step === 'official-provider') return 'Choose the official provider';
-  if (step === 'relay-protocol') return 'Choose the relay protocol';
-  if (step === 'endpoint') return 'Enter the relay base URL';
-  if (step === 'model') return 'Choose the model';
-  if (step === 'api-key') return 'Add the credential';
-  if (step === 'cli-info') return 'What a signed-in CLI can do';
-  if (step === 'confirm') return 'Review the connection';
+  if (step === 'method') return 'Choose how Skein reaches the model';
+  if (step === 'official-provider') return 'Choose a provider';
+  if (step === 'relay-protocol') return 'Choose the endpoint protocol';
+  if (step === 'endpoint') return 'Enter the endpoint base URL';
+  if (step === 'model') return 'Enter the model identifier';
+  if (step === 'api-key') return 'Add the API key';
+  if (step === 'confirm') return 'Review and save';
   return 'Saving configuration';
 }
 
 function descriptionForStep(state: OnboardingState): string {
-  if (state.step === 'method') return 'Native chat needs a model API. Choose an official API or a third-party relay; signed-in CLIs are available to delegated agents.';
-  if (state.step === 'official-provider') return 'Subscription login and API billing are separate. Enter an API key in the next steps.';
-  if (state.step === 'relay-protocol') return 'Skein never guesses a protocol from the URL or model name.';
-  if (state.step === 'endpoint') return 'Remote relays require HTTPS. Loopback development servers may use HTTP.';
-  if (state.step === 'model') return 'Use the exact model identifier accepted by the selected provider or relay.';
+  if (state.step === 'method') return 'Pick one connection path. You can change it later with configuration.';
+  if (state.step === 'official-provider') return 'Use the API credential issued by the selected provider.';
+  if (state.step === 'relay-protocol') return 'The protocol is explicit so requests and credentials are never guessed.';
+  if (state.step === 'endpoint') return 'Remote endpoints require HTTPS. Loopback development servers may use HTTP.';
+  if (state.step === 'model') return 'Use the exact model identifier accepted by this provider or endpoint.';
   if (state.step === 'api-key') return apiKeyRequired(state)
-    ? 'The value stays masked and is written only to the owner-readable user configuration.'
-    : 'This loopback OpenAI-compatible endpoint may be keyless. Leave blank if it does not authenticate.';
-  if (state.step === 'cli-info') return 'A Codex or Claude subscription login cannot be reused as a native model API key.';
-  if (state.step === 'confirm') return 'Skein will save this as the user default, reload it, and validate the resolved configuration before opening a session.';
-  return 'No session or provider is created until this step succeeds.';
+    ? 'Masked on screen and saved only to your owner-readable user configuration.'
+    : 'This loopback endpoint may be keyless. Leave blank if it does not authenticate.';
+  if (state.step === 'confirm') return 'The values below are sanitized before Skein saves and validates them.';
+  return 'The configuration is saved only after this step succeeds.';
 }
 
-function footerForStep(state: OnboardingState): string {
+function footerForStep(state: OnboardingState, width: number): string {
   if (state.step === 'saving') return 'Saving owner-only configuration · please wait';
-  if (state.step === 'confirm') return 'Enter save · Esc back · Ctrl+C cancel';
-  if (state.step === 'cli-info') return 'Enter or Esc back · Ctrl+C cancel';
-  if (menuCount(state.step)) return '↑/↓ or Tab choose · Enter continue · Esc back · Ctrl+C cancel';
-  return 'Enter continue · Esc back · Ctrl+C cancel';
+  if (width < 28) return menuCount(state.step) ? '↑↓ · Enter · Esc' : 'Enter · Esc';
+  if (state.step === 'confirm') return width < 48 ? 'Enter save · Esc back' : 'Enter save · Esc back · Ctrl+C cancel';
+  if (menuCount(state.step)) return width < 48
+    ? '↑/↓ select · Enter next · Esc back'
+    : '↑/↓ or Tab choose · Enter continue · Esc back · Ctrl+C cancel';
+  return width < 48 ? 'Enter next · Esc back' : 'Enter continue · Esc back · Ctrl+C cancel';
 }
 
 function relayLabel(protocol?: RelayProtocol): string {

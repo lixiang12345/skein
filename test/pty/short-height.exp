@@ -57,8 +57,7 @@ proc await_frame {label} {
 spawn -noecho node dist/cli.js \
   --workspace $workspace \
   --provider compatible \
-  --base-url http://127.0.0.1:9/v1 \
-  --context-engine local
+  --base-url http://127.0.0.1:9/v1
 stty rows 10 columns 40 < $spawn_out(slave,name)
 
 # At ten rows the header is deliberately omitted. The test therefore starts
@@ -96,7 +95,7 @@ send -- $enter
 await_pattern {Permission} {the compact permission panel}
 await_frame {the compact permission frame}
 send -- $escape
-await_pattern {Git diff was not approved} {the denied compact permission result}
+await_pattern {Git diff was not} {the denied compact permission result}
 await_frame {the permission result frame}
 
 send -- "/ho"

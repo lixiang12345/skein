@@ -19,7 +19,7 @@ function config(root: string): MosaicConfig {
   return {
     model: {provider: 'compatible', model: 'test-model', apiKey: 'test'},
     workspaceRoots: [root],
-    context: {engine: 'local', maxTokens: 2_000, topK: 4, contextEngineCommand: 'missing'},
+    context: {maxTokens: 2_000, topK: 4},
     permissions: {
       read: 'allow', write: 'allow', shell: 'deny', git: 'deny', network: 'deny',
       allowCommands: [], denyCommands: [],

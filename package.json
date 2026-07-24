@@ -43,6 +43,7 @@
     "test:watch": "vitest",
     "pretest:pty": "npm run build",
     "test:pty": "sh test/pty/run-visual.sh",
+    "benchmark:context": "tsx scripts/benchmark-local-index.ts",
     "verify:package": "node scripts/verify-package.mjs",
     "release:verify": "npm run check && npm run verify:package --",
     "typecheck": "tsc --noEmit",

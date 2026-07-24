@@ -33,6 +33,7 @@ export const commandDefinitions: CommandDefinition[] = [
   command('audit', 'Review the hash-chained tool and permission timeline'),
   command('rollback', 'Restore workspace files from a checkpoint', '/rollback [checkpoint-id]'),
   command('transcript', 'Expand or collapse complete tool output', '/transcript [on|off]'),
+  command('queue', 'Inspect or remove follow-ups waiting behind the active run', '/queue [list|drop|clear] [number]'),
   command('hotkeys', 'Show terminal editing and run controls'),
   command('mode', 'Switch between read-only Ask, Plan, and action-capable Build modes', '/mode [ask|plan|build]'),
   command('density', 'Switch between compact and comfortable terminal rhythm', '/density [compact|comfortable]'),
@@ -111,6 +112,19 @@ export function commandSuggestions(
       {name: 'forget', description: 'Permanently remove a memory by id'},
     ].filter((item) => item.name.includes(query)).map((item) => ({
       value: `/memory ${item.name}${['stats', 'list', 'candidates'].includes(item.name) ? '' : ' '}`,
+      label: item.name,
+      description: item.description,
+    }));
+  }
+
+  if (firstSpace >= 0 && commandName === 'queue') {
+    const query = argument.trim().toLocaleLowerCase();
+    return [
+      {name: 'list', description: 'Show queued commands and follow-ups'},
+      {name: 'drop', description: 'Remove one queued item by number'},
+      {name: 'clear', description: 'Remove every queued item'},
+    ].filter((item) => item.name.includes(query)).map((item) => ({
+      value: `/queue ${item.name}${item.name === 'drop' ? ' ' : ''}`,
       label: item.name,
       description: item.description,
     }));

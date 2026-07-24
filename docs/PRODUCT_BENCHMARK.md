@@ -20,7 +20,7 @@ product surfaces.
 
 | Area | Mainstream signal | Skein today | Product implication |
 | --- | --- | --- | --- |
-| Context | Auggie automatically indexes projects and offers context-aware interactive and print modes. Its MCP Tool Search avoids loading every remote schema up front. See [Auggie overview](https://docs.augmentcode.com/cli/overview) and [integrations](https://docs.augmentcode.com/cli/integrations). | Local BM25/path/symbol retrieval plus a behavior-negotiated ContextEngine adapter, verified current-file/commit packing, empty-result cross-checks, observable fallback, progressive Skills, and hard token caps. Filesystem freshness remains `unknown` until each hit is consumed; doctor reports semantic readiness and query telemetry reports degraded channels. MCP schemas are registered eagerly. | Make MCP tool discovery lazy and measurable, and add proactive channel state to the TUI without pretending status alone proves freshness. |
+| Context | Auggie automatically indexes projects and offers context-aware interactive and print modes. Its MCP Tool Search avoids loading every remote schema up front. See [Auggie overview](https://docs.augmentcode.com/cli/overview) and [integrations](https://docs.augmentcode.com/cli/integrations). | Local BM25/path/symbol retrieval with language-aware chunks, current-file freshness checks, diversity-aware token packing, progressive Skills, and hard token caps. MCP schemas are registered eagerly. | Benchmark local recall and latency by language, then make MCP tool discovery lazy and measurable. |
 | Workflow modes | Claude Code documents isolated subagents, agent teams, hooks, code intelligence, Skills, MCP, and plugins in one extension model. See [Claude Code extensions](https://code.claude.com/docs/en/features-overview). Copilot CLI exposes Plan and Autopilot modes. See [Copilot CLI](https://github.com/features/copilot/cli). | Ask and Build modes exist; Ask is read-only but does not produce a named approval-ready plan. | Add an explicit Plan mode. Keep it read-only and require approval before Build. |
 | Code intelligence | Claude Code advertises language-server-backed symbol navigation and live type errors. | Retrieval is lexical/BM25/path/symbol index based; no LSP diagnostics or rename graph. | Add an optional LSP adapter after storage and scheduler foundations. |
 | Parallel work | Claude documents isolated subagents and agent teams; Copilot CLI offers background delegation and fleet-style parallel work. | Routed multi-model councils share bounded reports, observe/guard/strict task-budget policies, reviewer acceptance/revision, and a responsive Team Cockpit. The main agent remains the only writer. | Add worktree-isolated writers, deterministic integration, and conflict/rollback UX without weakening the visible review gate. |
@@ -48,7 +48,7 @@ product surfaces.
    reviewer loop, then add cancellation propagation, deterministic integration,
    and single-writer/worktree boundaries.
 6. **P1 code intelligence:** add optional LSP diagnostics and symbol actions
-   without making the local index or external ContextEngine mandatory.
+   without making the local index mandatory.
 7. **P2 trust and sharing:** first-run capability review, sandbox adapters,
    redacted review bundles, and explicit privacy/export/delete controls.
 

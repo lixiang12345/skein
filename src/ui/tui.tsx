@@ -132,7 +132,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const [busy, setBusy] = useState(false);
   const [timeline, setTimeline] = useState<TimelineItem[]>(() => initialTimeline(initialSession, {
     model: `${config.model.provider}/${config.model.model}`,
-    engine: config.context.engine,
+    engine: 'local',
     workspace: runner.workspace.primaryRoot ?? process.cwd(),
     version: packageJson.version,
   }, setupProblem));
@@ -260,24 +260,24 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     setMentionLoading(true);
     const timer = setTimeout(() => {
       void (async () => {
-        let semantic: string[] = [];
+        let rankedPaths: string[] = [];
         if (query.trim().length >= 2) {
           try {
             const hits = await runner.contextEngine.search(query, 12);
-            semantic = contextHitMentionSuggestions(hits, runner.workspace.roots, query, 8);
+            rankedPaths = contextHitMentionSuggestions(hits, runner.workspace.roots, query, 8);
           } catch {
-            // A missing external index should not make file completion unavailable.
+            // Local retrieval failure should not make file completion unavailable.
           }
         }
         try {
           const index = await getMentionPathIndex(runner.workspace.roots);
           const paths = rankMentionSuggestions([
-            ...semantic,
+            ...rankedPaths,
             ...index.suggest(query, 12),
           ], query, 6);
           if (request === mentionRequest.current) setMentionMatches(paths);
         } catch {
-          if (request === mentionRequest.current) setMentionMatches(semantic);
+          if (request === mentionRequest.current) setMentionMatches(rankedPaths);
         } finally {
           if (request === mentionRequest.current) setMentionLoading(false);
         }
@@ -488,6 +488,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       appendList('Keyboard', [
         {label: 'Enter', detail: busy ? 'steer the next model turn' : 'send request'},
         {label: 'Alt+Enter', detail: 'queue a follow-up while a run is active'},
+        {label: '/queue', detail: 'inspect, drop, or clear queued follow-ups'},
         {label: 'Ctrl+J', detail: 'insert a newline'},
         {label: 'Ctrl+R', detail: 'search prompt history'},
         {label: 'Ctrl+O', detail: 'toggle the latest tool result'},
@@ -497,6 +498,49 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         {label: 'Ctrl+C', detail: 'interrupt, clear, then exit'},
       ]);
       return true;
+    }
+    if (command === 'queue') {
+      const [rawAction = 'list', rawPosition = ''] = argument.split(/\s+/u);
+      const action = rawAction.toLocaleLowerCase();
+      if (action === 'list' || !action) {
+        appendList('Queued follow-ups', queued.current.length
+          ? queued.current.map((item, index) => ({
+            label: `${index + 1}  ${item.kind === 'local' ? 'command' : 'follow-up'}`,
+            detail: item.display,
+          }))
+          : [{label: 'Queue is empty.'}]);
+        return true;
+      }
+      if (action === 'clear') {
+        const removed = queued.current.length;
+        queued.current = [];
+        setQueue([]);
+        append({
+          id: nextId(),
+          kind: 'notice',
+          tone: 'info',
+          text: removed
+            ? `Cleared ${removed} queued follow-up${removed === 1 ? '' : 's'}.`
+            : 'Queue is already empty.',
+        });
+        return true;
+      }
+      if (action === 'drop') {
+        const position = Number(rawPosition);
+        if (!Number.isInteger(position) || position < 1 || position > queued.current.length) {
+          throw new Error(`Usage: /queue drop <1-${Math.max(1, queued.current.length)}>`);
+        }
+        const [removed] = queued.current.splice(position - 1, 1);
+        setQueue([...queued.current]);
+        append({
+          id: nextId(),
+          kind: 'notice',
+          tone: 'info',
+          text: `Removed queued ${removed?.kind === 'local' ? 'command' : 'follow-up'} ${position}: ${removed?.display ?? ''}`,
+        });
+        return true;
+      }
+      throw new Error('Usage: /queue [list|drop|clear] [number]');
     }
     if (command === 'transcript') {
       const normalized = argument.toLocaleLowerCase();
@@ -532,7 +576,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       const decision = evaluatePermission(config.permissions, call, 'git', {forceAsk: interactionMode !== 'build'});
       if (decision.outcome === 'deny') throw new Error(`Git diff denied: ${decision.reason}`);
       if (decision.outcome === 'ask' && !(await requestPermission(call, 'git'))) {
-        append({id: nextId(), kind: 'notice', tone: 'info', text: 'Git diff was not approved.'});
+        append({id: nextId(), kind: 'notice', tone: 'info', text: 'Git diff was not run; permission denied.'});
         return true;
       }
       append({id, kind: 'tool', name: 'git diff', detail: 'workspace changes', state: 'running', startedAt: Date.now()});
@@ -870,7 +914,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       const status = runner.getContextStatus();
       appendList('Skein', [
         {label: `${config.model.provider}/${config.model.model}`, detail: 'model'},
-        {label: config.context.engine, detail: 'context engine'},
+        {label: 'local', detail: 'context engine'},
         {label: theme.name, detail: 'terminal theme'},
         {label: config.memory?.enabled ? 'enabled' : 'disabled', detail: 'durable memory'},
         {label: config.agents?.enabled ? `${config.agents.maxConcurrent} concurrent` : 'disabled', detail: 'expert delegation'},
@@ -1025,6 +1069,18 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
           } catch (error) {
             append({id: nextId(), kind: 'notice', tone: 'error', text: error instanceof Error ? error.message : String(error)});
           }
+          if (stopRequested.current) {
+            const discarded = queued.current.length;
+            queued.current = [];
+            setQueue([]);
+            append({
+              id: nextId(),
+              kind: 'notice',
+              tone: 'info',
+              text: `Command sequence stopped${discarded ? `; discarded ${discarded} queued follow-up${discarded === 1 ? '' : 's'}` : ''}.`,
+            });
+            break;
+          }
           current = queued.current.shift();
           setQueue([...queued.current]);
           continue;
@@ -1104,24 +1160,39 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     void submit(value, mode === 'normal' && processing.current ? 'steer' : mode);
   }, [composerCursor, historySearch, selectedSuggestion, submit, suggestionMode]);
 
+  const requestRunStop = useCallback(() => {
+    if (!processing.current || stopRequested.current) return;
+    stopRequested.current = true;
+    const pending = queued.current.length;
+    const activeRun = Boolean(controller.current);
+    setActivity({
+      label: activeRun ? 'Stopping the active run' : 'Stopping after the active command',
+      startedAt: Date.now(),
+    });
+    append({
+      id: nextId(),
+      kind: 'notice',
+      tone: 'info',
+      text: `${activeRun ? 'Interrupt' : 'Stop'} requested${pending ? `; ${pending} queued follow-up${pending === 1 ? '' : 's'} will be discarded` : ''}.`,
+    });
+    controller.current?.abort();
+  }, [append]);
+
   function settlePermission(grant: PermissionGrant, stop = false): void {
     if (!permission) return;
     const {call, category, resolve} = permission;
     resolve(grant);
     setPermission(undefined);
-    append({
-      id: nextId(),
-      kind: 'notice',
-      tone: grant ? 'success' : 'info',
-      text: grant === 'session'
-        ? `Allowed ${call.name} for this exact ${category} target during the session.`
-        : grant
-          ? `Allowed ${call.name} once.`
-          : `Denied ${call.name}.`,
-    });
+    if (grant === 'session') {
+      append({
+        id: nextId(),
+        kind: 'notice',
+        tone: 'success',
+        text: `Allowed ${call.name} for this exact ${category} target during the session.`,
+      });
+    }
     if (stop) {
-      stopRequested.current = true;
-      controller.current?.abort();
+      requestRunStop();
     }
   }
 
@@ -1143,8 +1214,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     if (teamWorkbenchOpen) {
       if (key.ctrl && inputKey.toLocaleLowerCase() === 'c') {
         if (busy) {
-          stopRequested.current = true;
-          controller.current?.abort();
+          requestRunStop();
         } else {
           exit();
         }
@@ -1222,11 +1292,10 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       if (historySearch) {
         setInput(resolveHistorySearch(historySearch, 'cancel'));
         setHistorySearch(undefined);
-      } else if (busy) {
-        stopRequested.current = true;
-        controller.current?.abort();
       } else if (suggestionMode !== 'none') {
         setSuggestionsDismissedFor(input);
+      } else if (busy) {
+        requestRunStop();
       } else if (input) {
         setInput('');
       }
@@ -1237,8 +1306,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         setInput(resolveHistorySearch(historySearch, 'cancel'));
         setHistorySearch(undefined);
       } else if (busy) {
-        stopRequested.current = true;
-        controller.current?.abort();
+        requestRunStop();
       } else if (input) {
         setInput('');
       } else {
@@ -1347,10 +1415,11 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     : 0;
   const attachments = composerAttachments(input);
   const visibleAttachments = compactComposer ? [] : attachments;
+  const visibleQueuePreview = compactComposer ? undefined : queue[0]?.display;
   const composerPreview = input || (busy ? `follow-up${ellipsis}` : interactionMode === 'ask' ? `trace or explain${ellipsis}` : interactionMode === 'plan' ? `outline the implementation${ellipsis}` : `inspect, change, or verify${ellipsis}`);
   const composerRows = permission
     ? permissionRows(contentWidth, Boolean(typeof permission.call.arguments.cwd === 'string' || runner.workspace.primaryRoot), constrainedHeight)
-    : 3 + visibleAttachments.length + composerValueRows(composerPreview, Math.max(1, contentWidth - 2), compactComposer ? 1 : 4);
+    : 3 + visibleAttachments.length + (visibleQueuePreview ? 1 : 0) + composerValueRows(composerPreview, Math.max(1, contentWidth - 2), compactComposer ? 1 : 4);
   const inspectorRows = renderContextInspector ? contextInspectorRows(session, compactUi, contentWidth, minimalInspector) : 0;
   const footerRows = showFooter ? (contentWidth < 48 ? 2 : 1) : 0;
   const activityRows = showActivity && activity ? (contentWidth < 48 && activity.turn ? 3 : 2) : 0;
@@ -1460,6 +1529,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
             width={contentWidth}
             placeholder={busy ? `Steer ${PRODUCT_NAME}${separator}alt+enter queues` : `Type a request${separator}@file${separator}/command`}
             queueCount={queue.length}
+            {...(visibleQueuePreview ? {queuePreview: visibleQueuePreview} : {})}
             attachments={visibleAttachments}
             glyphMode={glyphMode}
           >

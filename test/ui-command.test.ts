@@ -32,6 +32,7 @@ describe('terminal command and width helpers', () => {
     expect(commandSuggestions('/mode a')[0]).toMatchObject({value: '/mode ask', label: 'ask'});
     expect(commandSuggestions('/mode p')[0]).toMatchObject({value: '/mode plan', label: 'plan'});
     expect(commandSuggestions('/connections s')[0]).toMatchObject({value: '/connections setup', label: 'setup'});
+    expect(commandSuggestions('/queue d')[0]).toMatchObject({value: '/queue drop ', label: 'drop'});
   });
 
   it('truncates Chinese and emoji by terminal cells instead of UTF-16 length', () => {

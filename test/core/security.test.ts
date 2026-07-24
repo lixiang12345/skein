@@ -35,7 +35,7 @@ describe('workspace and permission boundaries', () => {
     await expect(workspace.resolvePath('link.txt')).rejects.toThrow('symbolic link');
   });
 
-  it('resolves ContextEngine root aliases without losing workspace boundaries', async () => {
+  it('resolves local retrieval root aliases without losing workspace boundaries', async () => {
     const main = await mkdtemp(join(tmpdir(), 'mosaic-alias-main-'));
     const extra = await mkdtemp(join(tmpdir(), 'mosaic-alias-extra-'));
     roots.push(main, extra);

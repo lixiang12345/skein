@@ -334,7 +334,7 @@ class CompetingIntegrationLane extends WriterLane {
 function writerConfig(root: string): MosaicConfig {
   const config = defaultConfig(root);
   config.model = {provider: 'compatible', model: 'test'};
-  config.context = {engine: 'local', maxTokens: 2_000, topK: 4, contextEngineCommand: 'none'};
+  config.context = {maxTokens: 2_000, topK: 4};
   config.agents = {
     ...config.agents!,
     enabled: true,

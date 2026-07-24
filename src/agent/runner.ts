@@ -636,23 +636,7 @@ export class AgentRunner {
   }
 
   private async packContext(input: string): Promise<PackedContext> {
-    try {
-      return await this.contextEngine.pack(input);
-    } catch (error) {
-      if (this.config.context.engine === 'contextengine') throw error;
-      return {
-        text: '',
-        hits: [],
-        estimatedTokens: 0,
-        engine: 'unavailable',
-        truncated: false,
-        degradation: {
-          code: 'context-unavailable',
-          summary: 'Context retrieval failed; continuing without retrieved code.',
-          detail: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
+    return this.contextEngine.pack(input);
   }
 
   private async packMentions(input: string) {

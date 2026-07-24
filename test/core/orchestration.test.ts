@@ -714,7 +714,7 @@ describe('bounded orchestration', () => {
 function config(root: string): MosaicConfig {
   return {
     model: {provider: 'compatible', model: 'test'}, workspaceRoots: [root],
-    context: {engine: 'local', maxTokens: 2_000, topK: 4, contextEngineCommand: 'none'},
+    context: {maxTokens: 2_000, topK: 4},
     permissions: {read: 'allow', write: 'deny', shell: 'deny', git: 'deny', network: 'deny', allowCommands: [], denyCommands: []},
     hooks: {},
     agent: {maxTurns: 3, maxSessionTokens: 20_000, autoVerify: false, verifyCommands: [], checkpointBeforeWrite: false},

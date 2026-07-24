@@ -11,7 +11,7 @@ import {workingMemoryTool} from './working-memory.js';
 import {writeFileTool} from './write.js';
 
 export interface DefaultToolRegistryOptions {
-  /** Reserved for callers that want the registry to document its semantic engine. */
+  /** Reserved for callers that want the registry to document its ranked retrieval. */
   contextEngine?: ContextProvider;
 }
 

@@ -4,18 +4,16 @@
 
 Skein understands the change surface before it edits, exposes every tool call,
 and keeps sessions and pre-write checkpoints on your machine. It supports
-OpenAI, Anthropic, Gemini, and OpenAI-compatible endpoints, with
-[ContextEngine-plugin](https://github.com/lixiang12345/ContextEngine-plugin) as
-an optional high-quality retrieval layer and a built-in local index as the
-zero-service fallback.
+OpenAI, Anthropic, Gemini, and OpenAI-compatible endpoints, with a local,
+inspectable index for code retrieval and no retrieval service dependency.
 
 ```text
 ◆ SKEIN  ·  ~/work/api                                      ● BUILD
-  anthropic/claude-sonnet-4-5  ·  context auto  ·  memory on  ·  agents 3
+  anthropic/claude-sonnet-4-5  ·  context local  ·  memory on  ·  agents 3
 
 › Find the webhook retry bug and add a regression test.
-◇ context  contextengine · 12 spans · ~8.4k
-· prompt/debug  intent:debug · working-memory · code:contextengine
+◇ context  local · 12 spans · ~8.4k
+· prompt/debug  intent:debug · working-memory · code:local
 ✓ read_file  src/billing/webhook.ts  31ms
 ✓ apply_patch  src/billing/webhook.ts  18ms
 
@@ -36,8 +34,8 @@ zero-service fallback.
   features, suitable for local scripts and CI.
 - **Model ownership:** use four provider families without changing the agent or
   session format.
-- **Retrieval you control:** select ContextEngine for hybrid
-  FTS/symbol/vector/graph retrieval, or run the local BM25/path/symbol index.
+- **Retrieval you control:** run the local BM25/path/symbol index, inspect its
+  source spans, and rebuild it explicitly when needed.
 - **Visible trust:** per-category permissions, deny rules, hooks, workspace path
   enforcement, changed-file telemetry, and persisted tool results.
 - **Reversible work:** Skein snapshots affected files before mutation without
@@ -60,7 +58,6 @@ The product rationale and competitor research are in
 - Node.js 22.16 or newer
 - A model API key, or an OpenAI-compatible local endpoint
 - Optional: Git and ripgrep
-- Optional: ContextEngine-plugin plus PostgreSQL/pgvector
 
 ## Install
 
@@ -96,10 +93,11 @@ environment variables remain compatible with this release.
 ## Quick start
 
 On the first interactive `skein` run, an incomplete model configuration opens
-a keyboard-driven setup before any session is created. It offers an official
-API, a third-party relay, or an explanation of signed-in CLI support. OpenAI,
-Anthropic, and Gemini subscription logins are not API credentials; signed-in
-Codex, Claude Code, and Gemini CLIs are available only as delegated agents.
+a keyboard-driven setup before any session is created. Choose a provider API
+key or an explicitly configured compatible endpoint; Skein never guesses the
+protocol or destination. OpenAI, Anthropic, and Gemini subscription logins are
+not API credentials. Signed-in coding CLIs remain delegated tools rather than
+primary model connections.
 
 For non-interactive setup, set credentials for one provider:
 
@@ -151,14 +149,15 @@ Explain the race in @src/queue/worker.ts and fix it with the smallest change.
 The transcript stays on the terminal's native background. A thin rule marks the
 composer; consequential permission requests become an inline warning band with
 the exact tool target and working directory. Enter sends a request, or steers the current run when it is busy;
-`Alt+Enter` queues a follow-up, while `Ctrl+J` or `Shift+Enter` inserts a
-newline. `Ctrl+R` searches prompt history, `Ctrl+O` expands or collapses the
-latest tool result, and Escape interrupts the current run. The composer supports
+`Alt+Enter` queues a follow-up, while `/queue` lists, removes, or clears pending
+follow-ups. `Ctrl+J` or `Shift+Enter` inserts a newline. `Ctrl+R` searches prompt
+history, `Ctrl+O` expands or collapses the latest tool result, and Escape first
+dismisses an active completion palette, then interrupts the current run. The composer supports
 multiline cursor movement, word movement/deletion, `Ctrl+U`/`Ctrl+K`, and
 bounded undo/redo. Type `/` for a keyboard-navigable command palette, or run
 `/hotkeys` inside Skein.
 
-Useful interactive commands include `/workflow`, `/context`, `/mode`, `/memory`,
+Useful interactive commands include `/workflow`, `/context`, `/mode`, `/queue`, `/memory`,
 `/remember`, `/skills`, `/agents`, `/mcp`, `/tools`, `/permissions`, and
 `/theme`. `/transcript` reveals bounded full tool results, `/changes` lists
 session writes, `/diff` opens the current Git diff through the normal permission
@@ -248,7 +247,7 @@ Run `skein <command> --help` for complete flags.
 
 A cloned repository must not be able to execute commands merely by committing
 `.mosaic/config.*`. Skein therefore ignores project-defined hooks, custom
-ContextEngine executables, verification commands, checkpoint overrides, and
+verification commands, checkpoint overrides, and
 permission policy by default. It also ignores remote model provider/endpoint
 overrides and their project-stored API keys; loopback compatible endpoints and
 local credentials remain available for local models. Review the file first,
@@ -288,10 +287,8 @@ model:
   maxTokens: 8192
 
 context:
-  engine: auto
   maxTokens: 12000
   topK: 12
-  contextEngineCommand: contextengine
 
 permissions:
   read: allow
@@ -350,52 +347,35 @@ trust and lifecycle contract.
 to the project directory; use `--add-workspace` for an intentionally external
 root.
 
-## ContextEngine integration
+## Local retrieval
 
-Skein's `auto` mode negotiates a ContextEngine-compatible CLI by version,
-required command flags, exit behavior, and response schemas. `skein index` can
-bootstrap a compatible but unindexed workspace; `search` and `context` use the
-external engine only after an index is ready. Missing, incompatible, unhealthy,
-stale, malformed, or over-budget results fall back to the local index and emit
-structured degradation metadata. `contextengine` makes those conditions hard
-errors, while `local` never starts an external process.
+Skein indexes supported source files into the project-local `.skein/index.json`
+namespace. The index combines BM25 term scoring with path, symbol, phrase, and
+CJK token signals, then repacks verified spans under the configured token cap.
+`skein index` is explicit and repeatable; `search`, `context`, and the agent
+automatically load the local index and never start an external process.
+
+Index entries are constrained to configured workspace roots. Before a result is
+packed into a prompt, Skein rechecks the current file and rejects entries that
+are stale, moved, symlinked, binary, or outside the workspace. Retrieval is
+evidence only: the model must still confirm factual claims with read or other
+workspace tools.
+
+To measure a local index change, run the reproducible benchmark with an explicit
+query-to-relevant-file manifest:
 
 ```bash
-git clone https://github.com/lixiang12345/ContextEngine-plugin.git
-cd ContextEngine-plugin
-npm install && npm run build && npm link
-npm run db:up
-export CONTEXTENGINE_DATABASE_URL=postgresql://contextengine:contextengine@127.0.0.1:54329/contextengine
-# Optional semantic channel, using an embedding-specific credential:
-# export CONTEXTENGINE_EMBEDDING_API_KEY=...
-# export CONTEXTENGINE_EMBEDDING_BASE_URL=https://embedding.example/v1
-# export CONTEXTENGINE_EMBEDDING_MODEL=your-embedding-model
-
-cd /path/to/project
-skein index
-skein status
+npm run benchmark:context -- \
+  --workspace test/fixtures/context-benchmark \
+  --cases test/fixtures/context-benchmark.json \
+  --fresh-index
 ```
 
-External commands run from a private temporary directory. Skein forwards only
-`CONTEXTENGINE_*` variables and required proxy, certificate, locale, and
-temporary-directory settings; it does not load a repository `.env` or forward
-chat-model credentials. A shared gateway key should therefore be referenced by
-an embedding-specific `CONTEXTENGINE_*` variable rather than reused implicitly.
-
-ContextEngine status cannot prove that every indexed line still matches the
-filesystem. Skein realpath-checks each result, verifies its hash and current line
-content, and reruns the entire query locally if any hit is stale or invalid.
-Empty external results in `auto` mode are cross-checked against the current
-local index so newly added files are not silently missed. ContextEngine's
-synthetic commit-lineage hits are reconstructed from the current repository
-with a constrained read-only Git invocation before use. The external
-`packedText` is never passed directly to a model; Skein repacks only verified
-current-file or commit-summary spans under its own token cap.
-
-ContextEngine remains an optional adapter, not a hidden hard dependency. The
-local fallback keeps Skein useful offline, and fallback reason/remediation is
-visible in TUI context telemetry, headless output, direct JSON commands, and
-`skein doctor`.
+It reports Recall@5/10/20, MRR, useful-token ratio, stale-hit rate, and cold,
+incremental, and warm-query latency. The included fixture only validates the
+metric pipeline; it is not evidence for performance on a production repository.
+`--fresh-index` deletes and rebuilds that workspace's local index, so use it only
+where rebuilding the index is intended.
 
 ## Safety model
 
@@ -417,7 +397,7 @@ visible in TUI context telemetry, headless output, direct JSON commands, and
   command when a repository workflow genuinely needs them.
 - Git operations that may invoke transport, signing, merge, or checkout helpers
   require the `shell` category in addition to Git/write/network as applicable.
-  Git and ContextEngine executables are resolved outside workspace-controlled
+  Git executables are resolved outside workspace-controlled
   `PATH` entries.
 - Git checkpoints include dirty and explicitly named paths before a mutation.
   Branch switches can change clean tracked files that cannot be predicted

@@ -108,7 +108,6 @@ program
   .option('--provider <provider>', 'model provider')
   .option('--model <model>', 'model identifier')
   .option('--base-url <url>', 'OpenAI-compatible or provider base URL')
-  .option('--context-engine <engine>', 'auto, contextengine, or local')
   .option('--max-turns <n>', 'maximum agent turns')
   .option('--token-budget <n>', 'maximum cumulative session tokens')
   .option('--resume [session]', 'resume a session by id or prefix')
@@ -127,7 +126,6 @@ program
   .option('--model <model>', 'model identifier')
   .option('--base-url <url>', 'provider base URL')
   .option('--api-key <key>', 'store a provider key in project config (prefer env vars)')
-  .option('--context-engine <engine>', 'auto, contextengine, or local', 'auto')
   .option('--index', 'build the index after writing config')
   .option('--yes', 'use defaults without prompting')
   .action(async (options: InitOptions) => {
@@ -956,7 +954,6 @@ interface RootOptions {
   provider?: string;
   model?: string;
   baseUrl?: string;
-  contextEngine?: string;
   maxTurns?: string;
   tokenBudget?: string;
   resume?: string | boolean;
@@ -972,7 +969,6 @@ interface InitOptions {
   model?: string;
   baseUrl?: string;
   apiKey?: string;
-  contextEngine: string;
   index?: boolean;
   yes?: boolean;
 }
@@ -999,7 +995,6 @@ interface RuntimeConfigOptions {
   provider?: string;
   model?: string;
   baseUrl?: string;
-  contextEngine?: string;
   maxTokens?: string;
   tokenBudget?: string;
   color?: boolean;
@@ -1167,7 +1162,7 @@ async function runInit(options: InitOptions): Promise<void> {
       ...(baseUrl ? {baseUrl} : {}),
       ...(options.apiKey ? {apiKey: options.apiKey} : {}),
     },
-    context: {engine: validateContextEngine(options.contextEngine)},
+    context: {},
   };
   const path = await saveProjectConfig(workspace, config);
   await trustProjectModelConfig(workspace, path);
@@ -1260,9 +1255,6 @@ async function runtimeConfig(
     ...(options.addWorkspace ?? []).map((root) => resolve(workspace, root)),
   ];
   const provider = options.provider ? validateProvider(options.provider) : loaded.model.provider;
-  const contextEngine = options.contextEngine
-    ? validateContextEngine(options.contextEngine)
-    : loaded.context.engine;
   return {
     ...loaded,
     workspaceRoots: [...new Set(roots)],
@@ -1271,7 +1263,7 @@ async function runtimeConfig(
       ...(options.model ? {model: options.model} : {}),
       ...(options.baseUrl ? {baseUrl: options.baseUrl} : {}),
     }),
-    context: {...loaded.context, engine: contextEngine},
+    context: loaded.context,
     agent: {
       ...loaded.agent,
       ...(options.checkpoint === false ? {checkpointBeforeWrite: false} : {}),
@@ -1345,14 +1337,7 @@ function printStatusSummary(
   const keyReady = Boolean(config.model.apiKey) || config.model.provider === 'compatible';
   const endpoint = redactEndpoint(config.model.baseUrl);
   const local = (context.local ?? {}) as {available?: boolean; files?: number; chunks?: number};
-  const selected = String(context.selected ?? 'local');
-  const engineDetail = selected === 'contextengine'
-    ? 'ContextEngine (external)'
-    : selected === 'unindexed'
-      ? `ContextEngine available; index not built ${glyphs.separator} run ${PRODUCT_COMMAND} index`
-      : selected === 'unavailable'
-        ? `ContextEngine required but unavailable ${glyphs.separator} run ${PRODUCT_COMMAND} doctor`
-        : 'local index';
+  const engineDetail = 'local index';
   const indexFiles = local.files ?? 0;
   const indexReady = Boolean(local.available) && indexFiles > 0;
   const indexDetail = indexReady
@@ -1365,7 +1350,7 @@ function printStatusSummary(
   line(keyReady ? 'ok' : 'warn', 'API key', keyReady
     ? 'configured'
     : `missing ${glyphs.separator} set it, then run ${PRODUCT_COMMAND} doctor to verify`);
-  line(selected === 'unavailable' ? 'error' : 'ok', 'Context engine', engineDetail);
+  line('ok', 'Context engine', engineDetail);
   line(indexReady ? 'ok' : 'warn', 'Code index', indexDetail);
   line('ok', 'Workspace', config.workspaceRoots.join(`  ${glyphs.separator}  `));
   const namespaceName = namespace.activeKind === 'canonical' ? '.skein' : '.mosaic';
@@ -1459,7 +1444,6 @@ function runtimeOptions(options: RuntimeConfigOptions): RuntimeConfigOptions {
   const provider = options.provider ?? root.provider;
   const model = options.model ?? root.model;
   const baseUrl = options.baseUrl ?? root.baseUrl;
-  const contextEngine = options.contextEngine ?? root.contextEngine;
   const tokenBudget = options.tokenBudget ?? root.tokenBudget;
   return {
     addWorkspace: [...(root.addWorkspace ?? []), ...(options.addWorkspace ?? [])],
@@ -1467,7 +1451,6 @@ function runtimeOptions(options: RuntimeConfigOptions): RuntimeConfigOptions {
     ...(provider ? {provider} : {}),
     ...(model ? {model} : {}),
     ...(baseUrl ? {baseUrl} : {}),
-    ...(contextEngine ? {contextEngine} : {}),
     ...(options.maxTokens ? {maxTokens: options.maxTokens} : {}),
     ...(tokenBudget ? {tokenBudget} : {}),
     ...(root.color !== undefined ? {color: root.color} : {}),
@@ -1484,11 +1467,6 @@ function positiveInt(value: string | undefined, fallback: number): number {
 function validateProvider(value: string): ProviderName {
   if (value === 'openai' || value === 'anthropic' || value === 'gemini' || value === 'compatible') return value;
   throw new Error(`Unknown provider ${value}; use openai, anthropic, gemini, or compatible.`);
-}
-
-function validateContextEngine(value: string): MosaicConfig['context']['engine'] {
-  if (value === 'auto' || value === 'local' || value === 'contextengine') return value;
-  throw new Error(`Unknown context engine ${value}; use auto, contextengine, or local.`);
 }
 
 function environmentName(provider: ProviderName): string {

@@ -72,8 +72,8 @@ describe('HeadlessReporter', () => {
         engine: 'local',
         truncated: false,
         degradation: {
-          code: 'contextengine-not-indexed',
-          summary: 'ContextEngine has no index; used the local index.',
+          code: 'local-retrieval-failed',
+          summary: 'Local retrieval failed.',
         },
       },
     });
@@ -86,7 +86,7 @@ describe('HeadlessReporter', () => {
     expect(output.context).toMatchObject({
       engine: 'local',
       hits: 0,
-      degradation: {code: 'contextengine-not-indexed'},
+      degradation: {code: 'local-retrieval-failed'},
     });
     expect(JSON.stringify(output.context)).not.toContain('omitted from summary');
   });

@@ -127,10 +127,8 @@ export interface MosaicConfig {
   model: ModelConfig;
   workspaceRoots: string[];
   context: {
-    engine: 'auto' | 'contextengine' | 'local';
     maxTokens: number;
     topK: number;
-    contextEngineCommand: string;
   };
   permissions: PermissionConfig;
   hooks: HookConfig;

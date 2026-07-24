@@ -3,6 +3,7 @@ import {Box, Text} from 'ink';
 import {basename} from 'node:path';
 import type {AgentPhase, ContextDegradation, ContextSource, MosaicConfig, SessionTask, ToolCall, ToolCategory, WorkingMemory} from '../types.js';
 import {PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
+import {commandForCall} from '../tools/permissions.js';
 import {commandSuggestions, type CommandSuggestion} from './commands.js';
 import {
   compactDisplayPath,
@@ -619,9 +620,8 @@ function MetaRow({glyph, label, detail, labelColor, width = 80}: {
 }
 
 function contextDegradationLabel(code: string): string {
-  if (code === 'contextengine-channels-degraded') return 'context/partial';
-  if (code === 'context-unavailable') return 'context/unavailable';
-  const reason = code.replace(/^contextengine-/u, '') || 'degraded';
+  if (code === 'local-retrieval-failed') return 'context/unavailable';
+  const reason = code.replace(/^local-/u, '') || 'degraded';
   return `fallback/${reason}`;
 }
 
@@ -762,13 +762,14 @@ function PermissionLine({marker, children}: {marker: string; children: React.Rea
   return <Box><Text color={theme.warning}>{marker} </Text>{children}</Box>;
 }
 
-export function PromptBar({busy, value, placeholder, width = 80, mode = 'chat', queueCount = 0, attachments = [], glyphMode = 'auto', children}: {
+export function PromptBar({busy, value, placeholder, width = 80, mode = 'chat', queueCount = 0, queuePreview, attachments = [], glyphMode = 'auto', children}: {
   busy: boolean;
   value: string;
   placeholder: string;
   width?: number;
   mode?: 'chat' | 'shell';
   queueCount?: number;
+  queuePreview?: string;
   attachments?: string[];
   glyphMode?: GlyphMode;
   children: React.ReactNode;
@@ -777,13 +778,25 @@ export function PromptBar({busy, value, placeholder, width = 80, mode = 'chat', 
   const glyphs = resolveGlyphs(glyphMode);
   const shell = mode === 'shell';
   const borderColor = shell ? theme.warning : busy ? theme.border : theme.borderFocus;
+  const rowWidth = safeWidth(width);
+  const innerWidth = Math.max(1, rowWidth - 2);
   const safePlaceholder = sanitizeInlineTerminalText(placeholder);
+  const busyHint = innerWidth < 24
+    ? `steer ${glyphs.separator} esc stop`
+    : innerWidth < 44
+      ? `enter steer ${glyphs.separator} esc stop`
+      : innerWidth < 72
+        ? `enter steer ${glyphs.separator} alt+enter queue ${glyphs.separator} esc stop`
+        : `enter steer ${glyphs.separator} alt+enter queue ${glyphs.separator} /queue manage ${glyphs.separator} esc stop`;
   const hint = busy
-    ? `enter steer ${glyphs.separator} alt+enter follow-up ${glyphs.separator} esc interrupt`
+    ? busyHint
     : value
       ? `enter send ${glyphs.separator} ctrl+j newline`
       : safePlaceholder;
   const hintText = `${hint}${queueCount ? ` ${glyphs.separator} ${width < 44 ? `q${queueCount}` : `${queueCount} follow-up${queueCount === 1 ? '' : 's'}`}` : ''}`;
+  const safeQueuePreview = sanitizeInlineTerminalText(queuePreview ?? '');
+  const queueLabel = `${glyphs.pending} ${queueCount} queued`;
+  const queuePreviewWidth = Math.max(1, innerWidth - displayWidth(queueLabel) - 1);
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Text color={borderColor}>{ruleLine(width, glyphs)}</Text>
@@ -793,12 +806,18 @@ export function PromptBar({busy, value, placeholder, width = 80, mode = 'chat', 
           <Text color={theme.muted}>{truncateDisplay(attachments.map((path) => `@${compactDisplayPath(sanitizeInlineTerminalText(path), 28)}`).join('  '), Math.max(1, safeWidth(width) - 4))}</Text>
         </Box>
       ) : null}
+      {queueCount && safeQueuePreview ? (
+        <Box paddingLeft={2}>
+          <Text color={theme.muted}>{queueLabel} </Text>
+          <Text color={theme.text}>{truncateDisplay(safeQueuePreview, queuePreviewWidth)}</Text>
+        </Box>
+      ) : null}
       <Box>
         <Text bold color={shell ? theme.warning : theme.accent}>{shell ? '! ' : `${glyphs.prompt} `}</Text>
         {children}
       </Box>
       <Box paddingLeft={2}>
-        <Text color={theme.muted}>{truncateDisplay(hintText, Math.max(1, safeWidth(width) - 2))}</Text>
+        <Text color={theme.muted}>{truncateDisplay(hintText, innerWidth)}</Text>
       </Box>
     </Box>
   );
@@ -1248,34 +1267,7 @@ function ThemePreview({name, width, glyphs}: {name: string; width: number; glyph
   );
 }
 
-// ANSI Shadow wordmark, baked in so the banner needs no runtime figlet
-// dependency. Box-drawing glyphs render as a bold product logotype in modern
-// terminal fonts; narrow and ASCII terminals fall back to a plain wordmark.
-const BRAND_WORDMARK = [
-  '\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2588\u2588\u2557  \u2588\u2588\u2557\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2588\u2588\u2557\u2588\u2588\u2588\u2557   \u2588\u2588\u2557',
-  '\u2588\u2588\u2554\u2550\u2550\u2550\u2550\u255d\u2588\u2588\u2551 \u2588\u2588\u2554\u255d\u2588\u2588\u2554\u2550\u2550\u2550\u2550\u255d\u2588\u2588\u2551\u2588\u2588\u2588\u2588\u2557  \u2588\u2588\u2551',
-  '\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2588\u2588\u2588\u2588\u2588\u2554\u255d \u2588\u2588\u2588\u2588\u2588\u2557  \u2588\u2588\u2551\u2588\u2588\u2554\u2588\u2588\u2557 \u2588\u2588\u2551',
-  '\u255a\u2550\u2550\u2550\u2550\u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2588\u2588\u2557 \u2588\u2588\u2554\u2550\u2550\u255d  \u2588\u2588\u2551\u2588\u2588\u2551\u255a\u2588\u2588\u2557\u2588\u2588\u2551',
-  '\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2551\u2588\u2588\u2551  \u2588\u2588\u2557\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2588\u2588\u2551\u2588\u2588\u2551 \u255a\u2588\u2588\u2588\u2588\u2551',
-  '\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u255d\u255a\u2550\u255d  \u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u255d\u255a\u2550\u255d\u255a\u2550\u255d  \u255a\u2550\u2550\u2550\u255d',
-];
-const BRAND_WORDMARK_WIDTH = 37;
-
-// Blend two #rrggbb colors so the wordmark can carry a subtle vertical gradient
-// that adapts to whatever theme is active instead of a hard-coded palette.
-function blendHex(from: string, to: string, t: number): string {
-  const parse = (hex: string): [number, number, number] => [
-    parseInt(hex.slice(1, 3), 16),
-    parseInt(hex.slice(3, 5), 16),
-    parseInt(hex.slice(5, 7), 16),
-  ];
-  const [ar, ag, ab] = parse(from);
-  const [br, bg, bb] = parse(to);
-  const mix = (a: number, b: number) => Math.round(a + (b - a) * t).toString(16).padStart(2, '0');
-  return `#${mix(ar, br)}${mix(ag, bg)}${mix(ab, bb)}`;
-}
-
-function Banner({model, engine, workspace, version, width, glyphs}: {
+function Banner({engine, workspace, version, width, glyphs}: {
   model: string;
   engine: string;
   workspace: string;
@@ -1285,62 +1277,28 @@ function Banner({model, engine, workspace, version, width, glyphs}: {
 }) {
   const theme = useTheme();
   const rowWidth = safeWidth(width);
-  // The entry panel is a bordered hero card so a fresh session opens on real
-  // structure. A baked ANSI Shadow wordmark gives it a genuine product
-  // logotype; narrow and ASCII terminals fall back to a bold plain wordmark so
-  // the card never overflows or renders broken glyphs.
-  const innerWidth = Math.max(1, rowWidth - 4);
-  const useAscii = glyphs.borderStyle === 'classic';
-  const showLogotype = !useAscii && innerWidth >= BRAND_WORDMARK_WIDTH;
-  const plainWordmark = `${glyphs.brand}  ${PRODUCT_NAME.toUpperCase().split('').join(' ')}`;
-  const tagline = `v${version} ${glyphs.separator} a terminal coding agent you can see through`;
-  // Aligned label column keeps the metadata reading like a spec sheet.
-  const metaRows = [
-    {label: 'model', value: sanitizeInlineTerminalText(model)},
-    {label: 'engine', value: sanitizeInlineTerminalText(engine)},
-    {label: 'cwd', value: compactDisplayPath(sanitizeInlineTerminalText(workspace), Math.max(12, innerWidth - 8))},
-  ];
-  const labelCol = 8;
-  const hint = `type a request ${glyphs.separator} /help for commands ${glyphs.separator} @ to attach files`;
+  const padding = rowWidth >= 24 ? 2 : 0;
+  const innerWidth = Math.max(1, rowWidth - padding);
+  const safeEngine = sanitizeInlineTerminalText(engine);
+  const meta = rowWidth >= 32
+    ? `v${version} ${glyphs.separator} ${safeEngine} context`
+    : `v${version}`;
+  const cwd = `cwd ${compactDisplayPath(sanitizeInlineTerminalText(workspace), Math.max(1, innerWidth - 4))}`;
+  const hint = rowWidth < 24
+    ? `@file ${glyphs.separator} /help`
+    : rowWidth < 48
+      ? `request ${glyphs.separator} @file ${glyphs.separator} /help`
+      : `Start with a request, @file, or /help.`;
 
   return (
     <Box
       marginBottom={1}
       flexDirection="column"
-      width={rowWidth}
-      borderStyle={glyphs.borderStyle}
-      borderColor={theme.border}
-      paddingX={1}
+      paddingLeft={padding}
     >
-      {showLogotype ? (
-        <Box flexDirection="column">
-          {BRAND_WORDMARK.map((line, index) => (
-            <Text
-              key={index}
-              bold
-              color={blendHex(theme.accent, theme.textStrong, (index / (BRAND_WORDMARK.length - 1)) * 0.55)}
-            >
-              {line}
-            </Text>
-          ))}
-        </Box>
-      ) : (
-        <Text bold color={theme.accent}>{truncateDisplay(plainWordmark, innerWidth)}</Text>
-      )}
-      <Box marginTop={showLogotype ? 1 : 0}>
-        <Text color={theme.muted}>{truncateDisplay(tagline, innerWidth)}</Text>
-      </Box>
-      <Box marginTop={1} flexDirection="column">
-        {metaRows.map((row) => (
-          <Box key={row.label}>
-            <Text color={theme.dim}>{padDisplay(row.label, labelCol)}</Text>
-            <Text color={theme.text}>{truncateDisplay(row.value, Math.max(1, innerWidth - labelCol))}</Text>
-          </Box>
-        ))}
-      </Box>
-      <Box marginTop={1}>
-        <Text color={theme.dim}>{truncateDisplay(hint, innerWidth)}</Text>
-      </Box>
+      <Text bold color={theme.textStrong}>{truncateDisplay(`New session ${glyphs.separator} ${meta}`, innerWidth)}</Text>
+      <Text color={theme.muted}>{truncateDisplay(cwd, innerWidth)}</Text>
+      <Text color={theme.dim}>{truncateDisplay(hint, innerWidth)}</Text>
     </Box>
   );
 }
@@ -1460,10 +1418,12 @@ export function toolDetail(call: ToolCall): string {
 }
 
 function permissionSummary(call: ToolCall): {label: string; value: string} {
+  const command = commandForCall(call);
+  if (command) return {label: 'command', value: truncateDisplay(redactPermissionText(command), 240)};
   for (const key of ['command', 'path', 'url', 'domain', 'query', 'pattern', 'task', 'title']) {
     const value = call.arguments[key];
     if (typeof value === 'string') {
-      return {label: key, value: isSensitiveKey(key) ? '[redacted]' : truncateDisplay(sanitizeInlineTerminalText(value), 240)};
+      return {label: key, value: isSensitiveKey(key) ? '[redacted]' : truncateDisplay(redactPermissionText(value), 240)};
     }
   }
   try {
@@ -1472,6 +1432,15 @@ function permissionSummary(call: ToolCall): {label: string; value: string} {
   } catch {
     return {label: 'args', value: toolDetail(call)};
   }
+}
+
+function redactPermissionText(value: string): string {
+  return sanitizeInlineTerminalText(value.slice(0, 4_096))
+    .replace(/(https?:\/\/)[^/\s:@]+(?::[^@\s/]*)?@/giu, '$1[redacted]@')
+    .replace(/\b(bearer|basic)\s+[^\s,;]+/giu, '$1 [redacted]')
+    .replace(/((?:api[_-]?key|authorization|cookie|password|secret|token)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu, '$1[redacted]')
+    .replace(/(--(?:api[_-]?key|password|secret|token)(?:=|\s+))[^\s]+/giu, '$1[redacted]')
+    .replace(/\b(?:sk-[A-Za-z0-9_-]{12,}|AIza[0-9A-Za-z_-]{20,})\b/gu, '[redacted]');
 }
 
 function isSensitiveKey(key: string): boolean {

@@ -9,12 +9,12 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current release: `0.3.0`.
+- Current repository version: `0.3.5`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
-- Retrieval: local BM25/path/symbol index with automatic ContextEngine-plugin
-  detection and fallback.
+- Retrieval: local BM25/path/symbol index with freshness validation and bounded
+  packing; no retrieval service is required.
 - Agent: provider-agnostic multi-turn runner for OpenAI, Anthropic, Gemini, and
   OpenAI-compatible endpoints; built-in tools, permissions, checkpoints,
   workflows, Skills, MCP, expert profiles, sessions, and memory are present.
@@ -47,7 +47,7 @@ archive it describes.
 The final verification included a fresh install and real PTY interaction for
 all three executable aliases, `/about`, a permission prompt, denial, and clean
 Ctrl+C exit. PTY coverage included 20, 24 ASCII, 40, 80, 120 columns and a
-40x10 short-height case. The current suite contains 34 test files and 317 tests.
+40x10 short-height case. The current 35-file test suite passes the full check.
 
 ## Recommended Order
 
@@ -140,53 +140,29 @@ Implementation progress:
   concrete paths involved. `skein doctor` surfaces this as `legacyCompatibility`
   so users see the removal timeline before aliases disappear.
 
-### P1: ContextEngine-Plugin Production Adapter
+### P1: Local Context Engine Reliability And Benchmarking
 
-Exercise the adapter against a real ContextEngine-plugin fixture, not only the
-local fallback. Cover capability negotiation, index progress, search/context
-packing, unavailable PostgreSQL/pgvector, stale indexes, multi-root workspaces,
-and a useful degraded-mode explanation in the TUI and headless output.
+Keep retrieval local and measurable as the repository grows. The next slice
+should add content hashes to index entries, a small generation-keyed query cache,
+overlap-aware packing, and language adapters for common declaration styles.
 
 Definition of done:
 
-- `auto` selects the external engine only when its health contract is valid.
-- A failed external query falls back without losing the user request.
-- Results preserve source paths, symbols, line ranges, scores, and token caps.
-- An integration fixture runs in CI without requiring a developer database.
+- Editing a file without changing its size cannot leave a stale hit in a prompt.
+- New, deleted, renamed, binary, symlinked, and out-of-root files are covered by
+  regression tests.
+- A benchmark reports Recall@5/10/20, MRR, stale-hit rate, useful-token ratio,
+  and cold/incremental/warm latency for curated multilingual queries.
+- `npm run check` and `npm run test:pty` pass without a service or downloaded
+  model.
 
 Implementation progress:
 
-- `auto` now negotiates the real 0.4 CLI boundary using `--version`, required
-  help flags, exit behavior, and strict required response fields. Capability
-  probes are coalesced, cached for ten seconds after completion, refreshable,
-  and recover when an executable is installed while Skein is running.
-- Compatible but unindexed workspaces use ContextEngine only for `index`;
-  `search` and `context` fall back locally. Explicit `contextengine` mode makes
-  missing, incompatible, unhealthy, and unindexed states hard failures, and
-  `doctor` treats that explicit requirement as required.
-- External index progress is parsed from the current CR/ANSI human stream and
-  finalized only after the JSON result validates. Multi-root aliases use
-  `main`, `workspace2`, and later numbered roots; single-root directories with
-  those literal names remain ordinary paths.
-- Search/context hits are schema-checked, realpath-bound, hash-checked, and
-  compared with current file lines. A stale or invalid hit rejects the entire
-  external response; empty auto-mode results are cross-checked locally so new
-  files are not missed. Synthetic commit-lineage hits are reconstructed with a
-  constrained read-only Git command. Skein ignores external `packedText` and
-  repacks verified current-file or commit-summary bytes under its own top-K and
-  token limits.
-- External processes use a private temporary working directory and a minimal
-  `CONTEXTENGINE_*`/proxy/certificate environment. Repository `.env` files and
-  generic chat-model credentials are not inherited. External failures and
-  unknown index fields are redacted or stripped before reaching output.
-- Structured degradation now reaches the TUI, headless text/final JSON,
-  `skein search/context`, and `doctor`; narrow TUI layouts show a separate
-  fallback reason and remediation row.
-- `test/fixtures/contextengine-cli.mjs` is a faithful CLI-boundary fixture, not
-  an embedded fake database. It covers unavailable PostgreSQL/pgvector,
-  unindexed and malformed contracts, stale/current/empty hits, commit-lineage
-  verification, multi-root mapping, oversized progress, credential redaction,
-  cache recovery, and degraded channels without requiring PostgreSQL in CI.
+- The public `pack/search/index/status` boundary is now a pure local façade.
+- Legacy external configuration is stripped at the config schema boundary and
+  no external executable or database is probed by the CLI.
+- Remaining work is content-hash freshness, cache invalidation, structured
+  chunking, and the reproducible benchmark.
 
 ### P1: Multi-Agent Scheduler And Team UX
 
@@ -284,6 +260,10 @@ Add a first-run catalog and inspection flow for bundled capabilities. Keep
 installation explicit and reviewable: show source, requested tools, filesystem
 scope, network scope, and trust state before activation. Add fixture servers and
 Skills that exercise timeout, malformed schema, disconnect, and version drift.
+Introduce lazy MCP schema discovery and declarative capability manifests before
+any marketplace. Do not load arbitrary plugin JavaScript in-process; package
+reusable extensions as data-only Skills/workflows plus explicitly trusted MCP
+servers, with an optional subprocess sandbox for stdio servers.
 
 ### P2: Memory Quality And User Control
 
@@ -323,8 +303,8 @@ deprecation window is complete.
   responsive panels.
 - `src/agent/runner.ts` — model/tool loop, context events, verification, and
   delegation boundaries.
-- `src/context/context-engine.ts` — external/local retrieval selection.
-- `src/context/local-index.ts` — offline fallback index.
+- `src/context/context-engine.ts` — local retrieval façade.
+- `src/context/local-index.ts` — persisted local index, scoring, and packing.
 - `src/mcp/manager.ts` — MCP lifecycle and tool registration.
 - `src/skills/catalog.ts` — Skills discovery and activation.
 - `src/memory/store.ts` and `src/tools/working-memory.ts` — durable and

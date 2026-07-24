@@ -65,8 +65,7 @@ proc await_frame {label} {
 spawn -noecho node dist/cli.js \
   --workspace $workspace \
   --provider compatible \
-  --base-url http://127.0.0.1:9/v1 \
-  --context-engine local
+  --base-url http://127.0.0.1:9/v1
 stty rows 24 columns $width < $spawn_out(slave,name)
 
 # Do not send input until Ink has entered raw input and bracketed-paste mode.
@@ -109,7 +108,7 @@ send -- $enter
 await_pattern {Permission} {the permission panel}
 await_frame {the permission panel frame}
 send -- $escape
-await_pattern {approved} {the denied permission result}
+await_pattern {Git diff was not} {the denied permission result}
 await_frame {the permission result frame}
 
 send -- $ctrl_r

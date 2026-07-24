@@ -95,7 +95,7 @@ function config(root: string): MosaicConfig {
   return {
     model: {provider: 'compatible', model: 'test', apiKey: 'test'},
     workspaceRoots: [root],
-    context: {engine: 'local', maxTokens: 4_000, topK: 4, contextEngineCommand: 'contextengine'},
+    context: {maxTokens: 4_000, topK: 4},
     permissions: {read: 'allow', write: 'deny', shell: 'deny', git: 'deny', network: 'deny', allowCommands: [], denyCommands: []},
     hooks: {},
     agent: {maxTurns: 2, maxSessionTokens: 20_000, autoVerify: false, verifyCommands: [], checkpointBeforeWrite: false},

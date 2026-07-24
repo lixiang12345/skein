@@ -34,7 +34,7 @@ describe('first-run onboarding state machine', () => {
 
   it('builds an explicit Anthropic-compatible relay without protocol guessing', () => {
     let state = createOnboardingState(missingConfig());
-    state = onboardingReducer(state, {type: 'MOVE', delta: 1, count: 3});
+    state = onboardingReducer(state, {type: 'MOVE', delta: 1, count: 2});
     state = onboardingReducer(state, {type: 'SELECT'}); // relay
     state = onboardingReducer(state, {type: 'MOVE', delta: 1, count: 2});
     state = onboardingReducer(state, {type: 'SELECT'}); // Anthropic-compatible
@@ -80,11 +80,11 @@ describe('first-run onboarding state machine', () => {
     expect(rejected.error).toContain('API key');
   });
 
-  it('supports back navigation and treats signed-in CLIs as delegated-agent guidance', () => {
+  it('supports back navigation without exposing a dead-end CLI login choice', () => {
     let state = createOnboardingState(missingConfig());
-    state = onboardingReducer(state, {type: 'MOVE', delta: -1, count: 3});
+    state = onboardingReducer(state, {type: 'MOVE', delta: 1, count: 2});
     state = onboardingReducer(state, {type: 'SELECT'});
-    expect(state.step).toBe('cli-info');
+    expect(state.step).toBe('relay-protocol');
     state = onboardingReducer(state, {type: 'BACK'});
     expect(state.step).toBe('method');
   });
@@ -144,7 +144,62 @@ describe('onboarding presentation', () => {
       {columns: 40},
     );
     expect(output.split('\n').length).toBeLessThanOrEqual(14);
-    expect(output).toContain('Official model API');
-    expect(output).toContain('Third-party relay');
+    expect(output).toContain('SETUP 1/4');
+    expect(output).toContain('Provider API key');
+    expect(output).toContain('Compatible endpoint');
+    expect(output).not.toContain('signed in to a CLI');
+  });
+
+  it.each([20, 32, 40, 80])('keeps the connection menu inside %i columns', (width) => {
+    const state = createOnboardingState(missingConfig());
+    const output = renderToString(
+      <OnboardingScreen state={state} dispatch={() => undefined} width={width} />,
+      {columns: width},
+    );
+
+    expect(output).toContain('SKEIN');
+    expect(output).toContain('CONNECTION');
+    for (const line of output.split('\n')) {
+      expect(displayWidth(line), `${width}-column onboarding row overflowed: ${JSON.stringify(line)}`)
+        .toBeLessThanOrEqual(width);
+    }
+  });
+
+  it.each([20, 32, 40, 80])('keeps credentials and review inside %i columns', (width) => {
+    const apiKey: OnboardingState = {
+      step: 'api-key',
+      history: ['method', 'official-provider', 'model'],
+      selected: 0,
+      draft: {
+        method: 'official',
+        provider: 'openai',
+        relayProtocol: undefined,
+        baseUrl: '',
+        model: 'gpt-5',
+        apiKey: 'a-secret-longer-than-the-narrow-input',
+      },
+      error: undefined,
+    };
+    const confirm = {...apiKey, step: 'confirm' as const};
+
+    for (const state of [apiKey, confirm]) {
+      const output = renderToString(
+        <OnboardingScreen state={state} dispatch={() => undefined} width={width} />,
+        {columns: width},
+      );
+      expect(output).not.toContain(apiKey.draft.apiKey);
+      for (const line of output.split('\n')) {
+        expect(displayWidth(line), `${width}-column onboarding row overflowed: ${JSON.stringify(line)}`)
+          .toBeLessThanOrEqual(width);
+      }
+    }
+
+    const keyOutput = renderToString(
+      <OnboardingScreen state={apiKey} dispatch={() => undefined} width={width} />,
+      {columns: width},
+    );
+    expect(keyOutput.match(/[•*]+/u)?.[0]).toBeTruthy();
+    expect(keyOutput).toContain('Enter');
+    expect(keyOutput.split('\n').filter((line) => /[╭╰]/u.test(line))).toHaveLength(2);
   });
 });

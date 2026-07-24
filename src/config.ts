@@ -133,10 +133,8 @@ const partialConfigSchema = z.object({
   }).partial().optional(),
   workspaceRoots: z.array(z.string()).optional(),
   context: z.object({
-    engine: z.enum(['auto', 'contextengine', 'local']).optional(),
     maxTokens: z.number().positive().optional(),
     topK: z.number().int().positive().optional(),
-    contextEngineCommand: z.string().optional(),
   }).partial().optional(),
   permissions: z.object({
     read: permissionSchema.optional(),
@@ -238,10 +236,8 @@ export function defaultConfig(workspace = process.cwd()): MosaicConfig {
     },
     workspaceRoots: [resolve(workspace)],
     context: {
-      engine: 'auto',
       maxTokens: 12_000,
       topK: 12,
-      contextEngineCommand: 'contextengine',
     },
     permissions: {...defaultPermissions},
     hooks: {},
@@ -582,7 +578,6 @@ function sanitizeProjectConfig(
     }
   }
   const context = update.context ? {...update.context} : undefined;
-  if (context) delete context.contextEngineCommand;
   const memory = update.memory ? {...update.memory} : undefined;
   if (memory) delete memory.databasePath;
   const agent = update.agent ? {...update.agent} : undefined;
@@ -676,7 +671,10 @@ export function configSummary(config: MosaicConfig): Record<string, unknown> {
     model: `${config.model.provider}/${config.model.model}`,
     endpoint: redactEndpoint(config.model.baseUrl),
     apiKey: config.model.apiKey ? 'configured' : 'missing',
-    contextEngine: config.context.engine,
+    context: {
+      maxTokens: config.context.maxTokens,
+      topK: config.context.topK,
+    },
     workspaceRoots: config.workspaceRoots,
     permissions: config.permissions,
     maxTurns: config.agent.maxTurns,

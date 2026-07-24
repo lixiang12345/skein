@@ -47,27 +47,14 @@ Sources:
 - [Sandboxing](https://geminicli.com/docs/cli/sandbox/)
 - [CLI reference](https://geminicli.com/docs/cli/cli-reference/)
 
-### ContextEngine-plugin
-
-ContextEngine-plugin provides the strongest open integration path for code
-retrieval: PostgreSQL FTS, symbols, paths, optional pgvector embeddings, graph
-expansion, reranking, and token-budgeted MMR packing. Its CLI contract maps well
-to an agent: `index`, `search`, `context`, and `status`.
-
-Sources:
-
-- [ContextEngine-plugin](https://github.com/lixiang12345/ContextEngine-plugin)
-- [Architecture](https://github.com/lixiang12345/ContextEngine-plugin/blob/main/ARCHITECTURE.md)
-- [Comparison with Augment](https://github.com/lixiang12345/ContextEngine-plugin/blob/main/COMPARISON.md)
-
 ## Product principles
 
 1. **Context before tools.** Every task begins with retrieval and explicit file
    mentions are merged into the evidence packet.
 2. **Open by default.** Headless automation is a core feature, not an enterprise
    entitlement.
-3. **Local first, not local only.** The built-in index works without a service;
-   ContextEngine is selected automatically when installed.
+3. **Local by default.** Retrieval is inspectable, offline-capable, and does not
+   require a database, daemon, embedding download, or external executable.
 4. **Bring your own model.** OpenAI, Anthropic, Gemini, and OpenAI-compatible
    endpoints share one agent contract.
 5. **Trust is visible.** Tool intent, permission category, result, changed files,
@@ -81,7 +68,7 @@ Sources:
 
 | Surface | Capability |
 |---|---|
-| Context | ContextEngine adapter, built-in BM25/path/symbol index, token packing, multi-root, `@file` mentions |
+| Context | Local BM25/path/symbol index, freshness checks, token packing, multi-root, `@file` mentions |
 | Models | OpenAI, Anthropic, Gemini, OpenAI-compatible endpoints |
 | Agent | Multi-turn tool loop, task plan, automatic verification, ask-only mode |
 | Tools | Read, list, search, write, patch, shell, Git, context search, task updates |

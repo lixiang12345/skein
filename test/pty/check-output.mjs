@@ -27,11 +27,17 @@ if (scenario === 'full' && width >= 80) required.push('Ctrl+R');
 for (const value of required) {
   if (!cleaned.includes(value)) throw new Error(`${path} did not render ${value}`);
 }
+if (!/Git diff was not\s+run; permission\s+denied\./u.test(cleaned)) {
+  throw new Error(`${path} did not render the complete denied Git diff receipt`);
+}
 if (widest > width) {
   throw new Error(`${path} rendered a ${widest}-column segment in a ${width}-column terminal`);
 }
 for (const value of ['Cannot update a component', 'Unknown command']) {
   if (cleaned.includes(value)) throw new Error(`${path} emitted ${value}`);
+}
+if (cleaned.includes('Denied git.')) {
+  throw new Error(`${path} emitted a duplicate Git permission denial`);
 }
 if (mode === 'ascii' && /[^\x00-\x7F]/u.test(cleaned)) {
   throw new Error(`${path} leaked non-ASCII terminal chrome in ASCII mode`);

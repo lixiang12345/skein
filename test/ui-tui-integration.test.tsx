@@ -152,6 +152,46 @@ describe('SkeinApp completion flows', () => {
     }
   });
 
+  it('dismisses busy file completion before Escape interrupts the active run', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-busy-escape-ui-'));
+    await mkdir(join(root, 'src'), {recursive: true});
+    await writeFile(join(root, 'src', 'agent.ts'), 'export const agent = true;\n');
+    const session = testSession(root);
+    let aborted = false;
+    const {runner, run} = mockRunner(root, session, [], {
+      run: async (_input, options) => new Promise<Session>((_resolve, reject) => {
+        const stop = () => {
+          aborted = true;
+          reject(options?.signal?.reason ?? new Error('aborted'));
+        };
+        if (options?.signal?.aborted) stop();
+        else options?.signal?.addEventListener('abort', stop, {once: true});
+      }),
+    });
+    const harness = await mountApp(runner, root);
+
+    try {
+      harness.stdin.write('start a long task\r');
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      harness.stdin.write('review @src/age');
+      await vi.waitFor(() => expect(harness.output()).toContain('@src/agent.ts'));
+
+      harness.stdin.write('\u001B');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await settleRender(harness.instance);
+      expect(aborted).toBe(false);
+      expect(harness.output()).not.toContain('Interrupt requested.');
+
+      harness.stdin.write('\r');
+      await vi.waitFor(() => expect(harness.output()).toContain('Queued follow-up 1.'));
+      harness.stdin.write('\u001B');
+      await vi.waitFor(() => expect(aborted).toBe(true));
+    } finally {
+      await harness.cleanup();
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
   it('keeps a multiline mention cursor stable while palette arrows select a file', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-arrow-ui-'));
     await mkdir(join(root, 'src'), {recursive: true});
@@ -197,6 +237,45 @@ describe('SkeinApp completion flows', () => {
 
       finishTurn?.(session);
       await vi.waitFor(() => expect(compactContext).toHaveBeenCalledTimes(1));
+    } finally {
+      await harness.cleanup();
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
+  it('lists, removes, and discards queued follow-ups during a long run', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-follow-up-queue-ui-'));
+    const session = testSession(root);
+    const {runner, run} = mockRunner(root, session, [], {
+      run: async (_input, options) => new Promise<Session>((_resolve, reject) => {
+        const stop = () => reject(options?.signal?.reason ?? new Error('aborted'));
+        if (options?.signal?.aborted) stop();
+        else options?.signal?.addEventListener('abort', stop, {once: true});
+      }),
+    });
+    const harness = await mountApp(runner, root);
+
+    try {
+      harness.stdin.write('start a long task\r');
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+
+      harness.stdin.write('verify tests\r');
+      await vi.waitFor(() => expect(harness.output()).toContain('Queued follow-up 1.'));
+      harness.stdin.write('summarize risks\r');
+      await vi.waitFor(() => expect(harness.output()).toContain('Queued follow-up 2.'));
+      expect(harness.output()).toContain('2 queued');
+
+      harness.stdin.write('/queue\r');
+      await vi.waitFor(() => expect(harness.output()).toContain('Queued follow-ups'));
+      expect(harness.output()).toContain('verify tests');
+      expect(harness.output()).toContain('summarize risks');
+
+      harness.stdin.write('/queue drop 1\r');
+      await vi.waitFor(() => expect(harness.output()).toContain('Removed queued follow-up 1: verify tests'));
+      harness.stdin.write('\u001B');
+      await vi.waitFor(() => expect(harness.output()).toContain('Interrupt requested; 1 queued follow-up will be discarded.'));
+      await vi.waitFor(() => expect(harness.output()).toContain('Discarded 1 queued follow-up.'));
+      expect(run).toHaveBeenCalledTimes(1);
     } finally {
       await harness.cleanup();
       await rm(root, {recursive: true, force: true});
@@ -363,7 +442,7 @@ async function mountApp(runner: AgentRunner, root: string, extensions?: Extensio
   const config = {
     ...base,
     model: {provider: 'compatible' as const, model: 'test-model', baseUrl: 'http://localhost'},
-    context: {...base.context, engine: 'local' as const},
+    context: {...base.context},
     ui: {...base.ui, color: false, compact: true},
   };
   const instance = render(<SkeinApp runner={runner} config={config} {...(extensions ? {extensions} : {})} />, {
@@ -387,7 +466,7 @@ async function mountApp(runner: AgentRunner, root: string, extensions?: Extensio
 }
 
 interface MockRunnerOptions {
-  run?: (input: string, options?: {onEvent?: (event: AgentEvent) => void; turnInstructions?: string; askMode?: boolean}) => Promise<Session>;
+  run?: (input: string, options?: {onEvent?: (event: AgentEvent) => void; turnInstructions?: string; askMode?: boolean; signal?: AbortSignal}) => Promise<Session>;
   compactContext?: (instructions?: string) => Promise<{omittedMessages: number; summaryTokens: number}>;
 }
 

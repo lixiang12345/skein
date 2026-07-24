@@ -31,7 +31,7 @@ export function displayPath(path: string, roots: string[]): string {
 }
 
 /**
- * Stable path labels shared with ContextEngine's multi-root contract.
+ * Stable path labels shared with the local retrieval multi-root contract.
  * Basenames are not sufficient because two workspace roots may have the same
  * directory name; `main` and `workspaceN` remain unambiguous in prompts and
  * can be passed back to WorkspaceAccess by the model.

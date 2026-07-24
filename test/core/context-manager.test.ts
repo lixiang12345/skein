@@ -8,7 +8,7 @@ function config(): MosaicConfig {
   return {
     model: {provider: 'compatible', model: 'test'},
     workspaceRoots: ['/tmp/example'],
-    context: {engine: 'local', maxTokens: 8_000, topK: 4, contextEngineCommand: 'contextengine'},
+    context: {maxTokens: 8_000, topK: 4},
     permissions: {read: 'allow', write: 'deny', shell: 'deny', git: 'deny', network: 'deny', allowCommands: [], denyCommands: []},
     hooks: {},
     agent: {maxTurns: 4, maxSessionTokens: 100_000, autoVerify: false, verifyCommands: [], checkpointBeforeWrite: false},

@@ -1,0 +1,22 @@
+[
+  {
+    "id": "typescript-symbol",
+    "query": "verifySessionToken",
+    "relevant": ["src/session.ts"]
+  },
+  {
+    "id": "python-unicode-symbol",
+    "query": "验证会话",
+    "relevant": ["src/配置.py"]
+  },
+  {
+    "id": "markdown-heading",
+    "query": "retry policy",
+    "relevant": ["docs/retry.md"]
+  },
+  {
+    "id": "sql-statement",
+    "query": "expired session cleanup",
+    "relevant": ["db/cleanup.sql"]
+  }
+]

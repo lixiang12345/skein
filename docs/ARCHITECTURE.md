@@ -14,8 +14,8 @@
                │                      │
 ┌──────────────▼─────────────┐  ┌─────▼────────────────────────┐
 │       Context fabric       │  │         Trust layer          │
-│ ContextEngine CLI          │  │ workspace boundary           │
-│ local BM25/path/symbol     │  │ allow / ask / deny           │
+│ local BM25/path/symbol     │  │ workspace boundary           │
+│ language-aware chunks      │  │ allow / ask / deny           │
 │ @file resolver             │  │ command policy · hooks       │
 │ token-budgeted packer      │  │ checkpoints · audit events   │
 └──────────────┬─────────────┘  └─────┬────────────────────────┘
@@ -34,7 +34,7 @@
 ## Agent turn
 
 1. Resolve `@path` mentions inside configured workspace roots.
-2. Ask the selected context engine for task-relevant spans under the configured
+2. Ask the local context engine for task-relevant spans under the configured
    token budget.
 3. Combine product rules, project rules, retrieved spans, mentions, current plan,
    and conversation history.
@@ -62,36 +62,37 @@ This lets providers reuse stable prompt prefixes while ensuring a changed plan
 or newly retrieved file is visible on the next turn. Every retrieved or generated
 state block is marked as untrusted context and cannot authorize a tool call.
 
-## Context selection
+## Local context selection
 
-`context.engine: auto` is the recommended setting.
+The context boundary is deliberately in-process and local:
 
 ```text
-              contextengine executable healthy?
-                         /          \
-                       yes          no
-                       /              \
-        hybrid external retrieval    local incremental index
-        symbols + vectors + graph     BM25 + path + symbol boosts
-                       \              /
-                        token-budget pack
+workspace files
+      |
+manifest + freshness checks
+      |
+language-aware chunks + BM25/path/symbol/CJK signals
+      |
+verified, diverse spans under token budget
+      |
+untrusted evidence block for the model
 ```
 
-The fallback is intentional. A missing database, embedding endpoint, or external
-binary should reduce retrieval quality, not make the coding agent unusable.
+Index state is persisted in the active project namespace. Search results are
+revalidated against current files before packing, so a stale index reduces
+recall rather than silently injecting old code.
 
 ## Storage
 
 Project-local data is kept in `.mosaic/` and ignored by default:
 
 - `config.json` — project overrides;
-- `index.json` — local fallback index;
+- `index.json` — local retrieval index;
 - `sessions/` — auditable conversation and tool state;
 - `checkpoints/` — pre-mutation file snapshots and manifests.
 
 No source content is sent anywhere except the model endpoint selected by the
-user. With local-compatible model and local retrieval endpoints, the complete
-stack can remain self-hosted.
+user. With a local-compatible model, the complete stack can remain self-hosted.
 
 Durable memory uses SQLite in WAL mode with FTS5 and bounded lexical fallback;
 it does not require a hosted vector service. Records carry scope, kind,
@@ -131,3 +132,33 @@ useful without silently accumulating guesses.
   `PATH` entries, and reports non-zero exits as failed tool results. Operations
   that can invoke transport, signing, merge, or checkout helpers also require
   shell permission.
+
+## Capability extension policy
+
+Skein keeps a small built-in tool kernel: read, list, search, write, patch,
+shell, Git, tasks, and working memory. Built-ins use closed input schemas,
+explicit permission categories, workspace-root resolution, bounded inputs and
+outputs, cancellation, checkpoints for known writes, and persisted audit
+events. New built-ins must satisfy the same contract; a convenience wrapper is
+not enough reason to enlarge the kernel.
+
+Skills and workflows are the preferred plugin surface for reusable guidance.
+They are data-only prompt additions, carry their source and trust state, and
+cannot grant permissions or execute code by being loaded. Arbitrary in-process
+JavaScript plugins are intentionally unsupported because they would share the
+CLI's full filesystem, environment, and process privileges.
+
+MCP is the interoperability boundary for external executable capabilities. It
+is disabled by default, removed from untrusted project configuration, exposes
+namespaced tools, treats server annotations as untrusted, and applies argument,
+schema, result, server-count, timeout, and transport limits. Every MCP call
+currently requires the network permission category. A configured stdio server
+is still an external program with the user's operating-system privileges; cwd
+and environment validation reduce accidental exposure but are not a sandbox.
+Only reviewed user-owned configuration should enable one.
+
+Before any marketplace-style plugin support, add a declarative capability
+manifest, first-run review, lazy tool-schema activation, per-server permission
+scopes, and an optional process sandbox. Plugin packages should compose Skills,
+workflows, and MCP servers rather than load arbitrary code into the Skein
+process.

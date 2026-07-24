@@ -20,7 +20,7 @@ import type {MosaicConfig, ToolCall} from '../src/types.js';
 const config: MosaicConfig = {
   model: {provider: 'compatible', model: 'local'},
   workspaceRoots: ['/tmp/workspace'],
-  context: {engine: 'local', maxTokens: 12_000, topK: 12, contextEngineCommand: 'contextengine'},
+  context: {maxTokens: 12_000, topK: 12},
   permissions: {
     read: 'allow', write: 'ask', shell: 'ask', git: 'ask', network: 'ask',
     allowCommands: [], denyCommands: [],

@@ -1,7 +1,7 @@
 import React from 'react';
 import {renderToString} from 'ink';
 import {describe, expect, it} from 'vitest';
-import {CommandPalette, ContextInspector, Footer, Header, PermissionCard, TaskRail, TeamCockpit, TeamWorkbench, Timeline} from '../src/ui/components.js';
+import {CommandPalette, ContextInspector, Footer, Header, PermissionCard, PromptBar, TaskRail, TeamCockpit, TeamWorkbench, Timeline} from '../src/ui/components.js';
 import {displayWidth, sanitizeTerminalText} from '../src/ui/text.js';
 import {detectTerminalAppearance, resolveTheme, resolveThemeWithColor} from '../src/ui/theme.js';
 import type {MosaicConfig, ToolCall} from '../src/types.js';
@@ -9,7 +9,7 @@ import type {MosaicConfig, ToolCall} from '../src/types.js';
 const config: MosaicConfig = {
   model: {provider: 'compatible', model: 'local'},
   workspaceRoots: ['/tmp/example'],
-  context: {engine: 'auto', maxTokens: 12000, topK: 12, contextEngineCommand: 'contextengine'},
+  context: {maxTokens: 12000, topK: 12},
   permissions: {
     read: 'allow', write: 'ask', shell: 'ask', git: 'ask', network: 'ask',
     allowCommands: [], denyCommands: [],
@@ -33,8 +33,8 @@ describe('terminal presentation', () => {
             hits: 3,
             tokens: 420,
             degradation: {
-              code: 'contextengine-not-installed',
-              summary: 'ContextEngine unavailable',
+              code: 'local-retrieval-failed',
+              summary: 'Local retrieval unavailable',
             },
           },
           {id: '3', kind: 'tool', name: 'read_file', detail: 'src/queue.ts', state: 'ok'},
@@ -45,7 +45,7 @@ describe('terminal presentation', () => {
     );
     expect(output).toContain('SKEIN');
     expect(output).toContain('◇ context');
-    expect(output).toContain('ContextEngine unavailable');
+    expect(output).toContain('Local retrieval unavailable');
     expect(output).toContain('✓ read_file');
     expect(output).toContain('Fix the queue');
     expect(output).toContain('Run tests');
@@ -63,16 +63,16 @@ describe('terminal presentation', () => {
             hits: 4,
             tokens: 640,
             degradation: {
-              code: 'contextengine-not-indexed',
-              summary: 'ContextEngine has no index for this workspace; used the local index.',
-              detail: 'Run `skein index` to build the external index.',
+              code: 'local-retrieval-failed',
+              summary: 'Local index is unavailable for this workspace.',
+              detail: 'Run `skein index` to build the local index.',
             },
           }]}
         />,
         {columns: width},
       );
 
-      expect(output).toContain('fallback/');
+      expect(output).toContain('context/');
       expect(output).toContain('Run');
       for (const line of output.split('\n')) {
         expect(displayWidth(line), `${width}-column context row overflowed: ${JSON.stringify(line)}`)
@@ -169,11 +169,11 @@ describe('terminal presentation', () => {
           ...config,
           workspaceRoots: ['/a/very/long/project/path'],
           model: {provider: 'compatible', model: 'a-model-with-a-very-long-name'},
-          context: {...config.context, engine: 'contextengine'},
+          context: {...config.context},
         }} askMode width={columns} />
         <Timeline width={columns} items={[
-          {id: 'context', kind: 'context', engine: 'contextengine', hits: 12, tokens: 8400},
-          {id: 'prompt', kind: 'prompt', intent: 'debug', sections: ['working-memory', 'code:contextengine'], tokens: 9300},
+          {id: 'context', kind: 'context', engine: 'local', hits: 12, tokens: 8400},
+          {id: 'prompt', kind: 'prompt', intent: 'debug', sections: ['working-memory', 'code:local'], tokens: 9300},
           {id: 'tool', kind: 'tool', name: 'apply_patch', detail: 'src/a/very/long/path/worker.ts', state: 'ok', durationMs: 123},
           {id: 'agent', kind: 'agent', profile: 'security-reviewer', task: 'Inspect all trust boundaries', state: 'ok', durationMs: 55},
         ]} />
@@ -202,6 +202,29 @@ describe('terminal presentation', () => {
     expect(output).not.toMatch(/workin\n|change\n|apply_\npatch/);
   });
 
+  it.each([20, 40, 80])('keeps stop controls and queued work visible while busy at %i columns', (columns) => {
+    const output = renderToString(
+      <PromptBar
+        busy
+        value=""
+        placeholder=""
+        width={columns}
+        queueCount={2}
+        queuePreview="verify the long-running migration and summarize risks"
+      >
+        <></>
+      </PromptBar>,
+      {columns},
+    );
+
+    expect(output).toContain('esc stop');
+    expect(output).toContain('2 queued');
+    if (columns >= 80) expect(output).toContain('/queue manage');
+    for (const line of output.split('\n')) {
+      expect(displayWidth(line), `${columns}-column busy composer overflowed: ${JSON.stringify(line)}`).toBeLessThanOrEqual(columns);
+    }
+  });
+
   it('renders an actionable permission state with semantic controls', () => {
     const call: ToolCall = {
       id: 'call-1',
@@ -214,6 +237,34 @@ describe('terminal presentation', () => {
     expect(output).toContain('y');
     expect(output).toContain('n');
     expect(output).not.toMatch(/[┌┐└┘╭╮╰╯│]/u);
+  });
+
+  it('renders direct Git arguments as a readable permission command', () => {
+    const call: ToolCall = {
+      id: 'call-git',
+      name: 'git',
+      arguments: {args: ['diff', '--']},
+    };
+    const output = renderToString(<PermissionCard call={call} category="git" />);
+    expect(output).toContain('command git diff --');
+    expect(output).not.toContain('{"args"');
+  });
+
+  it('redacts credentials embedded in readable permission commands', () => {
+    const output = renderToString(<>
+      <PermissionCard
+        call={{id: 'git-secret', name: 'git', arguments: {args: ['fetch', 'https://user:password@example.com/repo.git']}}}
+        category="network"
+      />
+      <PermissionCard
+        call={{id: 'shell-secret', name: 'shell', arguments: {command: 'deploy --token super-secret-token'}}}
+        category="shell"
+      />
+    </>);
+    expect(output).toContain('https://[redacted]@example.com/repo.git');
+    expect(output).toContain('--token [redacted]');
+    expect(output).not.toContain('user:password');
+    expect(output).not.toContain('super-secret-token');
   });
 
   it('surfaces approval and active experts in the stable footer', () => {
@@ -373,6 +424,26 @@ describe('terminal presentation', () => {
     expect(output).toContain('Start with a request, @file, or /help.');
     expect(output.trimEnd().split('\n')).toHaveLength(1);
     expect(output).not.toMatch(/[┌┐└┘╭╮╰╯│]/u);
+  });
+
+  it.each([20, 40, 80])('keeps the fresh-session summary compact at %i columns', (columns) => {
+    const output = renderToString(<Timeline width={columns} items={[{
+      id: 'banner',
+      kind: 'banner',
+      model: 'compatible/local-model',
+      engine: 'local',
+      workspace: '/workspace/with/a/long/project-name',
+      version: '0.3.5',
+    }]} />, {columns});
+
+    expect(output).toContain('New session');
+    expect(output).toContain('v0.3.5');
+    expect(output).toContain('cwd ');
+    expect(output.trimEnd().split('\n')).toHaveLength(3);
+    expect(output).not.toMatch(/[┌┐└┘╭╮╰╯│█]/u);
+    for (const line of output.split('\n')) {
+      expect(displayWidth(line), `${columns}-column session summary overflowed: ${JSON.stringify(line)}`).toBeLessThanOrEqual(columns);
+    }
   });
 
   it('offers a deterministic ASCII fallback for terminals with unsafe glyph widths', () => {

@@ -1,5 +1,6 @@
+import {createHash} from 'node:crypto';
 import {lstat, readFile, stat} from 'node:fs/promises';
-import {basename, dirname, join, resolve} from 'node:path';
+import {basename, dirname, extname, join, resolve} from 'node:path';
 import fg from 'fast-glob';
 import {z} from 'zod';
 import type {ContextHit, PackedContext} from '../types.js';
@@ -32,15 +33,30 @@ interface IndexedFile {
   absolutePath: string;
   mtimeMs: number;
   size: number;
+  contentHash: string;
   chunks: IndexedChunk[];
 }
 
 interface LocalIndexFile {
-  version: 1;
+  version: 2;
   createdAt: string;
+  generation: string;
   roots: string[];
   files: IndexedFile[];
 }
+
+interface DiscoveredFile {
+  root: string;
+  path: string;
+  absolutePath: string;
+}
+
+interface FileFingerprint {
+  mtimeMs: number;
+  size: number;
+}
+
+const contentHashSchema = z.string().regex(/^[a-f\d]{64}$/u);
 
 const indexedChunkSchema = z.object({
   id: z.string(),
@@ -60,18 +76,20 @@ const indexedFileSchema = z.object({
   absolutePath: z.string(),
   mtimeMs: z.number(),
   size: z.number().nonnegative(),
+  contentHash: contentHashSchema,
   chunks: z.array(indexedChunkSchema),
 }).strict();
 
 const localIndexSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   createdAt: z.string(),
+  generation: z.string().min(1),
   roots: z.array(z.string()),
   files: z.array(indexedFileSchema),
 }).strict();
 
 export interface IndexProgress {
-  phase: 'scan' | 'index' | 'embed' | 'write' | 'done';
+  phase: 'scan' | 'index' | 'write' | 'done';
   completed: number;
   total: number;
   path?: string;
@@ -89,9 +107,16 @@ const ignorePatterns = [
   '**/package-lock.json', '**/pnpm-lock.yaml', '**/yarn.lock',
 ];
 
+const MAX_FILE_BYTES = 1_500_000;
+const MAX_QUERY_CACHE_ENTRIES = 64;
+const CHUNK_LINES = 100;
+const CHUNK_OVERLAP = 15;
+const MIN_STRUCTURAL_CHUNK_LINES = 12;
+
 export class LocalContextIndex {
   private index?: LocalIndexFile;
   private readonly workspace: WorkspaceAccess;
+  private readonly queryCache = new Map<string, ContextHit[]>();
   readonly indexPath: string;
 
   constructor(private readonly roots: string[]) {
@@ -112,6 +137,7 @@ export class LocalContextIndex {
       const files: IndexedFile[] = [];
       for (const file of parsed.files) {
         try {
+          if (!this.roots.includes(file.root) || resolve(file.root, file.path) !== file.absolutePath) continue;
           const safe = await this.workspace.resolvePath(file.absolutePath, {expect: 'file'});
           if (safe !== file.absolutePath) continue;
           files.push({
@@ -129,10 +155,12 @@ export class LocalContextIndex {
         }
       }
       this.index = {...parsed, files};
+      this.queryCache.clear();
       return true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
       delete this.index;
+      this.queryCache.clear();
       return false;
     }
   }
@@ -142,42 +170,87 @@ export class LocalContextIndex {
     chunks: number;
     reused: number;
     durationMs: number;
+    generation: string;
   }> {
-    const workspace = this.roots[0] ?? process.cwd();
-    return withNamespaceLease(projectNamespacePaths(workspace).canonical, 'shared', async () => {
-      assertActiveProjectNamespacePath(workspace, dirname(this.indexPath));
-      return this.buildUnlocked(onProgress);
-    });
+    return this.buildWithOptions(onProgress, false);
   }
 
-  private async buildUnlocked(onProgress?: (progress: IndexProgress) => void): Promise<{
+  async search(query: string, topK = 12): Promise<ContextHit[]> {
+    await this.ensureCurrentIndex();
+    const limit = Math.max(1, Math.floor(topK));
+    let hits = this.getCachedHits(query, limit) ?? this.rank(query, limit);
+    if (!(await this.hitsAreCurrent(hits))) {
+      // A candidate may change without a reliable mtime/size signal. Rehashing
+      // the full manifest once keeps stale bytes out of both cache and prompts.
+      await this.buildWithOptions(undefined, true);
+      hits = this.rank(query, limit);
+      if (!(await this.hitsAreCurrent(hits))) return [];
+    }
+    this.cacheHits(query, limit, hits);
+    return cloneHits(hits);
+  }
+
+  async pack(query: string, topK: number, maxTokens: number): Promise<PackedContext> {
+    const hits = await this.search(query, topK);
+    return packContextHits(hits, this.roots, maxTokens, 'local');
+  }
+
+  status(): {
+    available: boolean;
+    path: string;
+    files: number;
+    chunks: number;
+    queryCacheEntries: number;
+    createdAt?: string;
+    generation?: string;
+  } {
+    return {
+      available: Boolean(this.index),
+      path: this.indexPath,
+      files: this.index?.files.length ?? 0,
+      chunks: this.index?.files.reduce((total, file) => total + file.chunks.length, 0) ?? 0,
+      queryCacheEntries: this.queryCache.size,
+      ...(this.index?.createdAt ? {createdAt: this.index.createdAt} : {}),
+      ...(this.index?.generation ? {generation: this.index.generation} : {}),
+    };
+  }
+
+  private async buildWithOptions(
+    onProgress: ((progress: IndexProgress) => void) | undefined,
+    verifyContentHashes: boolean,
+  ): Promise<{
     files: number;
     chunks: number;
     reused: number;
     durationMs: number;
+    generation: string;
+  }> {
+    const workspace = this.roots[0] ?? process.cwd();
+    return withNamespaceLease(projectNamespacePaths(workspace).canonical, 'shared', async () => {
+      assertActiveProjectNamespacePath(workspace, dirname(this.indexPath));
+      return this.buildUnlocked(onProgress, verifyContentHashes);
+    });
+  }
+
+  private async buildUnlocked(
+    onProgress: ((progress: IndexProgress) => void) | undefined,
+    verifyContentHashes: boolean,
+  ): Promise<{
+    files: number;
+    chunks: number;
+    reused: number;
+    durationMs: number;
+    generation: string;
   }> {
     const started = Date.now();
     if (!this.index) await this.load();
     const previous = new Map(
       (this.index?.files ?? []).map((file) => [file.absolutePath, file]),
     );
-    const discovered: Array<{root: string; path: string; absolutePath: string}> = [];
-    for (const root of this.roots) {
-      const paths = await fg(include, {
-        cwd: root,
-        onlyFiles: true,
-        dot: true,
-        unique: true,
-        followSymbolicLinks: false,
-        ignore: ignorePatterns,
-      });
-      for (const path of paths) {
-        discovered.push({root, path, absolutePath: resolve(root, path)});
-      }
-    }
-    discovered.sort((a, b) => a.absolutePath.localeCompare(b.absolutePath));
+    const discovered = await this.discoverFiles();
     onProgress?.({phase: 'scan', completed: discovered.length, total: discovered.length});
     const files: IndexedFile[] = [];
+    const seen = new Set<string>();
     let reused = 0;
     for (const [index, item] of discovered.entries()) {
       onProgress?.({
@@ -187,35 +260,65 @@ export class LocalContextIndex {
         path: item.path,
       });
       let safePath: string;
+      let info: Awaited<ReturnType<typeof stat>>;
       try {
         safePath = await this.workspace.resolvePath(item.absolutePath, {expect: 'file'});
+        if (seen.has(safePath)) continue;
+        seen.add(safePath);
+        info = await stat(safePath);
       } catch {
         continue;
       }
-      const info = await stat(safePath);
-      if (info.size > 1_500_000) continue;
+      if (info.size > MAX_FILE_BYTES) continue;
       const old = previous.get(safePath);
-      if (old && old.mtimeMs === info.mtimeMs && old.size === info.size) {
+      if (old && !verifyContentHashes && old.mtimeMs === info.mtimeMs && old.size === info.size) {
         files.push(old);
         reused += 1;
         continue;
       }
-      const content = await readFile(safePath, 'utf8');
+      let content: string;
+      try {
+        content = await readFile(safePath, 'utf8');
+      } catch {
+        continue;
+      }
       if (content.includes('\u0000')) continue;
+      const contentHash = hashContent(content);
       const safeItem = {...item, absolutePath: safePath};
+      if (old && !verifyContentHashes && old.contentHash === contentHash) {
+        files.push({
+          ...old,
+          ...safeItem,
+          mtimeMs: info.mtimeMs,
+          size: info.size,
+          contentHash,
+          chunks: old.chunks.map((chunk) => ({
+            ...chunk,
+            root: safeItem.root,
+            path: safeItem.path,
+            absolutePath: safePath,
+          })),
+        });
+        reused += 1;
+        continue;
+      }
       files.push({
         ...safeItem,
         mtimeMs: info.mtimeMs,
         size: info.size,
+        contentHash,
         chunks: chunkFile(safeItem, content),
       });
     }
+    const generation = createGeneration(files);
     this.index = {
-      version: 1,
+      version: 2,
       createdAt: new Date().toISOString(),
+      generation,
       roots: this.roots,
       files,
     };
+    this.queryCache.clear();
     onProgress?.({phase: 'write', completed: files.length, total: files.length});
     await ensureWorkspaceStorageDirectory(
       this.roots[0] ?? process.cwd(),
@@ -223,27 +326,70 @@ export class LocalContextIndex {
       {requireActiveNamespace: true},
     );
     await atomicWrite(this.indexPath, `${JSON.stringify(this.index)}\n`, 0o600);
+    onProgress?.({phase: 'done', completed: files.length, total: files.length});
     return {
       files: files.length,
       chunks: files.reduce((total, file) => total + file.chunks.length, 0),
       reused,
       durationMs: Date.now() - started,
+      generation,
     };
   }
 
-  async search(query: string, topK = 12): Promise<ContextHit[]> {
-    if (!this.index && !(await this.load())) await this.build();
+  private async ensureCurrentIndex(): Promise<void> {
+    if (!this.index && !(await this.load())) {
+      await this.build();
+      return;
+    }
+    if (await this.manifestChanged()) await this.build();
+  }
+
+  private async manifestChanged(): Promise<boolean> {
+    const current = new Map<string, FileFingerprint>();
+    for (const item of await this.discoverFiles()) {
+      try {
+        const safePath = await this.workspace.resolvePath(item.absolutePath, {expect: 'file'});
+        const info = await stat(safePath);
+        if (info.size <= MAX_FILE_BYTES) current.set(safePath, {mtimeMs: info.mtimeMs, size: info.size});
+      } catch {
+        // Inaccessible paths are omitted and cause an existing entry to refresh.
+      }
+    }
+    const indexed = this.index?.files ?? [];
+    if (current.size !== indexed.length) return true;
+    return indexed.some((file) => {
+      const actual = current.get(file.absolutePath);
+      return !actual || actual.mtimeMs !== file.mtimeMs || actual.size !== file.size;
+    });
+  }
+
+  private async discoverFiles(): Promise<DiscoveredFile[]> {
+    const discovered: DiscoveredFile[] = [];
+    for (const root of this.roots) {
+      const paths = await fg(include, {
+        cwd: root,
+        onlyFiles: true,
+        dot: true,
+        unique: true,
+        followSymbolicLinks: false,
+        ignore: ignorePatterns,
+      });
+      for (const path of paths) discovered.push({root, path, absolutePath: resolve(root, path)});
+    }
+    discovered.sort((left, right) => left.absolutePath.localeCompare(right.absolutePath));
+    return discovered;
+  }
+
+  private rank(query: string, topK: number): ContextHit[] {
     const chunks = (this.index?.files ?? []).flatMap((file) => file.chunks);
     if (!chunks.length) return [];
-    const terms = tokenize(query);
+    const terms = [...new Set(tokenize(query))];
     if (!terms.length) return [];
     const queryTerms = new Set(terms);
     const documentFrequency = new Map([...queryTerms].map((term) => [term, 0]));
     for (const chunk of chunks) {
       for (const term of new Set(chunk.tokens)) {
-        if (queryTerms.has(term)) {
-          documentFrequency.set(term, (documentFrequency.get(term) ?? 0) + 1);
-        }
+        if (queryTerms.has(term)) documentFrequency.set(term, (documentFrequency.get(term) ?? 0) + 1);
       }
     }
     const averageLength = chunks.reduce((sum, chunk) => sum + chunk.tokens.length, 0)
@@ -252,12 +398,13 @@ export class LocalContextIndex {
       .map((chunk) => ({chunk, score: scoreChunk(
         chunk,
         terms,
+        query,
         documentFrequency,
         chunks.length,
         averageLength,
       )}))
       .filter(({score}) => score > 0)
-      .sort((a, b) => b.score - a.score)
+      .sort((left, right) => right.score - left.score || left.chunk.absolutePath.localeCompare(right.chunk.absolutePath))
       .slice(0, topK)
       .map(({chunk, score}) => ({
         path: chunk.absolutePath,
@@ -270,19 +417,49 @@ export class LocalContextIndex {
       }));
   }
 
-  async pack(query: string, topK: number, maxTokens: number): Promise<PackedContext> {
-    const hits = await this.search(query, topK);
-    return packContextHits(hits, this.roots, maxTokens, 'local');
+  private async hitsAreCurrent(hits: ContextHit[]): Promise<boolean> {
+    const files = new Map((this.index?.files ?? []).map((file) => [file.absolutePath, file]));
+    for (const hit of hits) {
+      const indexed = files.get(hit.path);
+      if (!indexed) return false;
+      try {
+        const safePath = await this.workspace.resolvePath(hit.path, {expect: 'file'});
+        if (safePath !== hit.path) return false;
+        const content = await readFile(safePath, 'utf8');
+        if (content.includes('\u0000') || hashContent(content) !== indexed.contentHash) return false;
+        const lines = content.split('\n');
+        if (hit.startLine < 1 || hit.endLine < hit.startLine || hit.endLine > lines.length) return false;
+        const currentChunk = lines.slice(hit.startLine - 1, hit.endLine).join('\n');
+        if (currentChunk !== hit.content) return false;
+      } catch {
+        return false;
+      }
+    }
+    return true;
   }
 
-  status(): {available: boolean; path: string; files: number; chunks: number; createdAt?: string} {
-    return {
-      available: Boolean(this.index),
-      path: this.indexPath,
-      files: this.index?.files.length ?? 0,
-      chunks: this.index?.files.reduce((total, file) => total + file.chunks.length, 0) ?? 0,
-      ...(this.index?.createdAt ? {createdAt: this.index.createdAt} : {}),
-    };
+  private getCachedHits(query: string, topK: number): ContextHit[] | undefined {
+    const generation = this.index?.generation;
+    if (!generation) return undefined;
+    const key = `${generation}\u0000${topK}\u0000${query}`;
+    const cached = this.queryCache.get(key);
+    if (!cached) return undefined;
+    this.queryCache.delete(key);
+    this.queryCache.set(key, cached);
+    return cloneHits(cached);
+  }
+
+  private cacheHits(query: string, topK: number, hits: ContextHit[]): void {
+    const generation = this.index?.generation;
+    if (!generation) return;
+    const key = `${generation}\u0000${topK}\u0000${query}`;
+    this.queryCache.delete(key);
+    this.queryCache.set(key, cloneHits(hits));
+    while (this.queryCache.size > MAX_QUERY_CACHE_ENTRIES) {
+      const oldest = this.queryCache.keys().next().value;
+      if (oldest === undefined) break;
+      this.queryCache.delete(oldest);
+    }
   }
 }
 
@@ -292,28 +469,66 @@ export function packContextHits(
   maxTokens: number,
   engine: string,
 ): PackedContext {
+  const selected: ContextHit[] = [];
+  const perFile = new Map<string, number>();
+  const uniquePaths = new Set(hits.map((hit) => hit.path)).size;
   let estimatedTokens = 0;
   let truncated = false;
-  const selected: ContextHit[] = [];
   for (const hit of hits) {
-    const tokens = Math.ceil(hit.content.length / 4);
+    const count = perFile.get(hit.path) ?? 0;
+    if (uniquePaths > 1 && count >= 2) continue;
+    if (selected.some((candidate) => hasSubstantialOverlap(candidate, hit))) continue;
+    const tokens = estimateTokens(hit.content);
     if (estimatedTokens + tokens > maxTokens) {
       const remainingChars = Math.max(0, (maxTokens - estimatedTokens) * 4);
-      if (remainingChars > 200) {
+      if (remainingChars >= 32) {
         selected.push({...hit, content: hit.content.slice(0, remainingChars)});
+        perFile.set(hit.path, count + 1);
         estimatedTokens = maxTokens;
       }
       truncated = true;
       break;
     }
     selected.push(hit);
+    perFile.set(hit.path, count + 1);
     estimatedTokens += tokens;
   }
   const text = selected.map((hit) => {
     const shownPath = workspaceAliasPath(hit.path, roots);
-    return `<code path="${escapeAttribute(shownPath)}" lines="${hit.startLine}-${hit.endLine}" score="${hit.score.toFixed(3)}">\n${hit.content}\n</code>`;
+    const symbol = hit.symbol ? ` symbol="${escapeAttribute(hit.symbol)}"` : '';
+    return `<code path="${escapeAttribute(shownPath)}" lines="${hit.startLine}-${hit.endLine}" score="${hit.score.toFixed(3)}"${symbol}>\n${hit.content}\n</code>`;
   }).join('\n\n');
   return {text, hits: selected, estimatedTokens, engine, truncated};
+}
+
+function cloneHits(hits: ContextHit[]): ContextHit[] {
+  return hits.map((hit) => ({...hit}));
+}
+
+function hashContent(content: string): string {
+  return createHash('sha256').update(content, 'utf8').digest('hex');
+}
+
+function createGeneration(files: IndexedFile[]): string {
+  return createHash('sha256')
+    .update(files
+      .slice()
+      .sort((left, right) => left.absolutePath.localeCompare(right.absolutePath))
+      .map((file) => `${file.absolutePath}\u0000${file.contentHash}`)
+      .join('\n'), 'utf8')
+    .digest('hex')
+    .slice(0, 16);
+}
+
+function estimateTokens(content: string): number {
+  return Math.ceil(content.length / 4);
+}
+
+function hasSubstantialOverlap(left: ContextHit, right: ContextHit): boolean {
+  if (left.path !== right.path) return false;
+  const overlap = Math.max(0, Math.min(left.endLine, right.endLine) - Math.max(left.startLine, right.startLine) + 1);
+  const shorter = Math.min(left.endLine - left.startLine + 1, right.endLine - right.startLine + 1);
+  return overlap > 0 && overlap / Math.max(shorter, 1) >= 0.4;
 }
 
 function escapeAttribute(value: string): string {
@@ -327,33 +542,69 @@ function chunkFile(
   content: string,
 ): IndexedChunk[] {
   const lines = content.split('\n');
+  const starts = [...new Set([0, ...structuralStarts(file.path, lines)])]
+    .filter((start) => start >= 0 && start < lines.length)
+    .sort((left, right) => left - right);
   const chunks: IndexedChunk[] = [];
-  const size = 100;
-  const overlap = 15;
-  for (let start = 0; start < lines.length; start += size - overlap) {
-    const end = Math.min(lines.length, start + size);
-    const chunkContent = lines.slice(start, end).join('\n');
-    const symbol = detectSymbol(lines.slice(start, Math.min(end, start + 20)));
+  let sectionStart = starts[0] ?? 0;
+  for (const start of starts.slice(1)) {
+    if (start - sectionStart < MIN_STRUCTURAL_CHUNK_LINES) continue;
+    appendChunkRange(chunks, file, lines, sectionStart, start);
+    sectionStart = start;
+  }
+  appendChunkRange(chunks, file, lines, sectionStart, lines.length);
+  return chunks;
+}
+
+function appendChunkRange(
+  chunks: IndexedChunk[],
+  file: {root: string; path: string; absolutePath: string},
+  lines: string[],
+  rangeStart: number,
+  rangeEnd: number,
+): void {
+  for (let start = rangeStart; start < rangeEnd; start += CHUNK_LINES - CHUNK_OVERLAP) {
+    const end = Math.min(rangeEnd, start + CHUNK_LINES);
+    const content = lines.slice(start, end).join('\n');
+    const symbol = detectSymbol(lines.slice(start, Math.min(end, start + 24)));
     chunks.push({
       id: `${file.absolutePath}:${start + 1}`,
       ...file,
       startLine: start + 1,
       endLine: end,
-      content: chunkContent,
+      content,
       ...(symbol ? {symbol} : {}),
-      tokens: tokenize(`${file.path} ${symbol ?? ''} ${chunkContent}`),
+      tokens: tokenize(`${file.path} ${symbol ?? ''} ${content}`),
     });
-    if (end === lines.length) break;
+    if (end === rangeEnd) break;
   }
-  return chunks;
+}
+
+function structuralStarts(path: string, lines: string[]): number[] {
+  const extension = extname(path).toLocaleLowerCase();
+  return lines.flatMap((line, index) => isStructuralLine(line, extension) ? [index] : []);
+}
+
+function isStructuralLine(line: string, extension: string): boolean {
+  if (/^\s*#{1,6}\s+\S/u.test(line) && ['.md', '.mdx'].includes(extension)) return true;
+  if (/^\s*(?:query|mutation|subscription|fragment|type|interface|input|enum|schema|directive)\b/iu.test(line) && ['.graphql', '.gql'].includes(extension)) return true;
+  if (/^\s*(?:create|alter|drop|select|insert|update|delete|with)\b/iu.test(line) && extension === '.sql') return true;
+  if (/^\s*<(?:script|template|style)\b/iu.test(line) && ['.vue', '.svelte', '.html'].includes(extension)) return true;
+  if (/^\S[^:]*:\s*(?:$|[^/])/u.test(line) && ['.yaml', '.yml', '.toml'].includes(extension)) return true;
+  if (/^\s*(?:async\s+def|def|class|module)\s+/u.test(line) && ['.py', '.rb'].includes(extension)) return true;
+  if (/^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|struct|enum|trait|impl|mod)\s+/u.test(line) && extension === '.rs') return true;
+  if (/^\s*(?:func|type|var|const)\s+/u.test(line) && extension === '.go') return true;
+  if (/^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function|class|interface|type|enum|namespace|const|let|var)\s+/u.test(line)) return true;
+  return /^\s*(?:public|private|protected|internal|static|final|abstract|sealed|data|open|partial|record|class|interface|enum|struct|trait|impl|fun)\b/u.test(line);
 }
 
 function detectSymbol(lines: string[]): string | undefined {
+  const identifier = '([\\p{L}_$][\\p{L}\\p{N}_$]*)';
   const patterns = [
-    /(?:export\s+)?(?:async\s+)?(?:function|class|interface|type|enum)\s+([\w$]+)/,
-    /(?:def|class)\s+([\w_]+)/,
-    /(?:func|type)\s+([\w_]+)/,
-    /(?:const|let|var)\s+([\w$]+)\s*=/,
+    new RegExp(`(?:export\\s+)?(?:default\\s+)?(?:async\\s+)?(?:function|class|interface|type|enum|namespace)\\s+${identifier}`, 'u'),
+    new RegExp(`(?:async\\s+def|def|class|module|func|fn|fun)\\s+${identifier}`, 'u'),
+    new RegExp(`(?:const|let|var)\\s+${identifier}\\s*=`, 'u'),
+    new RegExp(`(?:struct|trait|impl|record)\\s+${identifier}`, 'u'),
   ];
   for (const line of lines) {
     for (const pattern of patterns) {
@@ -367,30 +618,32 @@ function detectSymbol(lines: string[]): string | undefined {
 export function tokenize(input: string): string[] {
   const normalized = input
     .replace(/([a-z\d])([A-Z])/g, '$1 $2')
+    .replace(/([\p{Ll}])([\p{Lu}])/gu, '$1 $2')
     .toLocaleLowerCase();
   const base = normalized.match(/[\p{L}\p{N}_-]+/gu) ?? [];
-  const output = new Set(base.flatMap((token) => [token, ...token.split(/[_-]/)]));
+  const output: string[] = [];
   for (const token of base) {
+    const variants = new Set([token, ...token.split(/[_-]/)]);
     if (/^[\p{Script=Han}]+$/u.test(token) && token.length > 1) {
       for (let index = 0; index < token.length - 1; index += 1) {
-        output.add(token.slice(index, index + 2));
+        variants.add(token.slice(index, index + 2));
       }
     }
+    output.push(...[...variants].filter((variant) => variant.length > 1));
   }
-  return [...output].filter((token) => token.length > 1);
+  return output;
 }
 
 function scoreChunk(
   chunk: IndexedChunk,
   terms: string[],
+  rawQuery: string,
   documentFrequency: Map<string, number>,
   documentCount: number,
   averageLength: number,
 ): number {
   const frequencies = new Map<string, number>();
-  for (const token of chunk.tokens) {
-    frequencies.set(token, (frequencies.get(token) ?? 0) + 1);
-  }
+  for (const token of chunk.tokens) frequencies.set(token, (frequencies.get(token) ?? 0) + 1);
   const k1 = 1.2;
   const b = 0.75;
   let score = 0;
@@ -404,10 +657,8 @@ function scoreChunk(
     if (chunk.path.toLocaleLowerCase().includes(term)) score += 1.5;
     if (chunk.symbol?.toLocaleLowerCase().includes(term)) score += 2.5;
   }
-  const queryPhrase = terms.join(' ');
-  if (queryPhrase.length > 3 && chunk.content.toLocaleLowerCase().includes(queryPhrase)) {
-    score += 3;
-  }
+  const phrase = rawQuery.trim().toLocaleLowerCase();
+  if (phrase.length > 3 && chunk.content.toLocaleLowerCase().includes(phrase)) score += 3;
   return score;
 }
 

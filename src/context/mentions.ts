@@ -273,8 +273,8 @@ export function invalidateMentionPathIndex(
 }
 
 /**
- * ContextEngine returns already realpath-validated hits. This adds a final
- * lexical boundary check, maps them to stable aliases, deduplicates, and ranks.
+ * Local retrieval returns realpath-validated hits. This adds a final lexical
+ * boundary check, maps them to stable aliases, deduplicates, and ranks.
  */
 export function contextHitMentionSuggestions(
   hits: readonly Pick<ContextHit, 'path'>[],

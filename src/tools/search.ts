@@ -11,7 +11,7 @@ const inputSchema = z.object({
   query: z.string().min(1).max(10_000),
   path: z.string().min(1).optional(),
   pattern: z.string().min(1).optional(),
-  mode: z.enum(['text', 'semantic']).optional(),
+  mode: z.enum(['text', 'ranked']).optional(),
   literal: z.boolean().optional(),
   case_sensitive: z.boolean().optional(),
   context_lines: z.number().int().min(0).max(20).optional(),
@@ -27,13 +27,13 @@ const ignore = [
 export const searchCodeTool: AgentTool = {
   definition: {
     name: 'search_code',
-    description: 'Search workspace code by exact/regex text or semantic relevance.',
+    description: 'Search workspace code by exact/regex text or local ranked relevance.',
     category: 'read',
     inputSchema: jsonSchema({
       query: {type: 'string'},
       path: {type: 'string', default: '.'},
       pattern: {type: 'string', default: '**/*'},
-      mode: {type: 'string', enum: ['text', 'semantic'], default: 'text'},
+      mode: {type: 'string', enum: ['text', 'ranked'], default: 'text'},
       literal: {type: 'boolean', default: true},
       case_sensitive: {type: 'boolean', default: false},
       context_lines: {type: 'integer', minimum: 0, maximum: 20, default: 1},
@@ -44,9 +44,9 @@ export const searchCodeTool: AgentTool = {
   async execute(arguments_, context) {
     const input = inputSchema.parse(arguments_);
     const directory = await context.workspace.resolveDirectory(input.path ?? '.');
-    if ((input.mode ?? 'text') === 'semantic') {
-      if (!context.contextEngine) throw new Error('Semantic context engine is unavailable.');
-      return semanticSearch(input.query, input.max_results ?? 20, directory, context);
+    if ((input.mode ?? 'text') === 'ranked') {
+      if (!context.contextEngine) throw new Error('Local ranked retrieval is unavailable.');
+      return rankedSearch(input.query, input.max_results ?? 20, directory, context);
     }
     const files = await fg(input.pattern ?? '**/*', {
       cwd: directory,
@@ -141,7 +141,7 @@ function createMatcher(
   return (line) => expression.exec(line)?.index ?? -1;
 }
 
-async function semanticSearch(
+async function rankedSearch(
   query: string,
   limit: number,
   directory: string,
@@ -156,7 +156,7 @@ async function semanticSearch(
       await context.workspace.resolvePath(hit.path, {expect: 'file'});
       safe.push(hit);
     } catch {
-      // External indexes may contain stale or out-of-workspace paths.
+      // A stale local index entry must not cross the workspace boundary.
     }
   }
   return {
@@ -165,7 +165,7 @@ async function semanticSearch(
         `${workspaceAliasPath(hit.path, context.workspace.roots)}:${hit.startLine}-${hit.endLine} ` +
         `[score ${hit.score.toFixed(3)}]\n${hit.content}`,
       ).join('\n\n')
-      : 'No semantic matches found.',
-    metadata: {count: safe.length, engine: safe[0]?.source ?? 'semantic'},
+      : 'No ranked matches found.',
+    metadata: {count: safe.length, engine: safe[0]?.source ?? 'local'},
   };
 }
