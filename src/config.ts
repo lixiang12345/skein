@@ -77,6 +77,10 @@ const agentTeamConfigSchema = z.object({
   maxAgentToolCalls: z.number().int().positive().max(1_000).optional(),
   agentTimeoutMs: z.number().int().positive().max(1_800_000).optional(),
   budgetMode: z.enum(['observe', 'guard', 'strict']).optional(),
+  writerEnabled: z.boolean().optional(),
+  writerProfile: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/).optional(),
+  writerReviewerProfile: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/).optional(),
+  maxWriterPatchBytes: z.number().int().positive().max(120_000).optional(),
   connections: z.record(agentConnectionNameSchema, agentConnectionSchema).optional(),
   routes: z.record(z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/), z.object({
     runtime: z.enum(['api', 'codex', 'claude', 'grok']).optional(),
@@ -218,9 +222,11 @@ export const defaultPermissions: PermissionConfig = {
 
 export function defaultConfig(workspace = process.cwd()): MosaicConfig {
   const provider = parseProvider(preferredEnv('SKEIN_PROVIDER', 'MOSAIC_PROVIDER'));
-  const apiKey = providerApiKey(provider);
   const model = preferredEnv('SKEIN_MODEL', 'MOSAIC_MODEL');
   const baseUrl = preferredEnv('SKEIN_BASE_URL', 'MOSAIC_BASE_URL');
+  const apiKey = shouldUseProviderEnvironmentKey(provider, baseUrl)
+    ? providerApiKey(provider)
+    : undefined;
   return {
     model: {
       provider,
@@ -273,6 +279,10 @@ export function defaultConfig(workspace = process.cwd()): MosaicConfig {
       cockpit: true,
       persistBoard: true,
       budgetMode: 'observe',
+      writerEnabled: false,
+      writerProfile: 'implementer',
+      writerReviewerProfile: 'reviewer',
+      maxWriterPatchBytes: 60_000,
       connections: {},
       routes: {},
     },
@@ -308,10 +318,15 @@ export function resolveRuntimeModel(
 ): ModelConfig {
   const provider = overrides.provider ?? current.provider;
   const providerChanged = provider !== current.provider;
+  const baseUrlChanged = overrides.baseUrl !== undefined && overrides.baseUrl !== current.baseUrl;
+  const transportChanged = providerChanged || baseUrlChanged;
   const {apiKey: _apiKey, baseUrl: _baseUrl, ...portable} = current;
-  const inherited = providerChanged ? portable : current;
-  const apiKey = providerChanged
-    ? providerApiKey(provider, environment)
+  const inherited = transportChanged ? portable : current;
+  const resolvedBaseUrl = overrides.baseUrl ?? (transportChanged ? undefined : current.baseUrl);
+  const apiKey = transportChanged
+    ? shouldUseProviderEnvironmentKey(provider, resolvedBaseUrl)
+      ? providerApiKey(provider, environment)
+      : undefined
     : current.apiKey ?? providerApiKey(provider, environment);
   return {
     ...inherited,
@@ -331,8 +346,10 @@ function mergeConfig(base: MosaicConfig, update: PartialConfig): MosaicConfig {
   );
   const providerChanged = update.model?.provider !== undefined &&
     update.model.provider !== base.model.provider;
+  const baseUrlChanged = update.model?.baseUrl !== undefined &&
+    update.model.baseUrl !== base.model.baseUrl;
   const {apiKey: _apiKey, baseUrl: _baseUrl, ...portableModel} = base.model;
-  const inheritedModel = providerChanged ? portableModel : base.model;
+  const inheritedModel = providerChanged || baseUrlChanged ? portableModel : base.model;
   return {
     ...base,
     ...update,
@@ -471,7 +488,9 @@ export async function loadConfig(
       projectConfig ? await constrainProjectRoots(update, resolve(workspace)) : update,
     );
   }
-  const envApiKey = providerApiKey(config.model.provider);
+  const envApiKey = shouldUseProviderEnvironmentKey(config.model.provider, config.model.baseUrl)
+    ? providerApiKey(config.model.provider)
+    : undefined;
   if (!config.model.apiKey && envApiKey) config.model.apiKey = envApiKey;
   const uiPreference = await readUiPreference();
   if (uiPreference) config = mergeConfig(config, {ui: uiPreference});
@@ -586,6 +605,10 @@ function sanitizeProjectConfig(
     delete agents.connections;
     delete agents.defaultConnection;
     delete agents.defaultModel;
+    delete agents.writerEnabled;
+    delete agents.writerProfile;
+    delete agents.writerReviewerProfile;
+    delete agents.maxWriterPatchBytes;
   }
   return {
     ...safeUpdate,
@@ -684,6 +707,10 @@ export function configSummary(config: MosaicConfig): Record<string, unknown> {
       maxAgentToolCalls: config.agents.maxAgentToolCalls,
       agentTimeoutMs: config.agents.agentTimeoutMs,
       budgetMode: config.agents.budgetMode,
+      writerEnabled: config.agents.writerEnabled,
+      writerProfile: config.agents.writerProfile,
+      writerReviewerProfile: config.agents.writerReviewerProfile,
+      maxWriterPatchBytes: config.agents.maxWriterPatchBytes,
       connections: Object.fromEntries(Object.entries(config.agents.connections ?? {}).map(([name, connection]) => [name, {
         provider: connection.provider,
         endpoint: redactEndpoint(connection.baseUrl),
@@ -731,4 +758,20 @@ function providerApiKey(
     if (value) return value;
   }
   return undefined;
+}
+
+/**
+ * Official provider environment keys are safe only with that provider's own
+ * endpoint. A custom OpenAI/Anthropic/Gemini base URL is a separate trust
+ * boundary and must carry an explicit relay credential in user-owned config.
+ * Compatible providers use the relay-specific SKEIN_API_KEY namespace.
+ */
+function shouldUseProviderEnvironmentKey(provider: ProviderName, baseUrl?: string): boolean {
+  if (provider === 'compatible' || !baseUrl) return true;
+  const official: Record<Exclude<ProviderName, 'compatible'>, string> = {
+    openai: 'https://api.openai.com/v1',
+    anthropic: 'https://api.anthropic.com/v1',
+    gemini: 'https://generativelanguage.googleapis.com/v1beta',
+  };
+  return baseUrl.replace(/\/+$/u, '') === official[provider];
 }

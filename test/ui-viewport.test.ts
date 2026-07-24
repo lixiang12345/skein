@@ -41,4 +41,23 @@ describe('timeline viewport budgeting', () => {
       {width: 80, rows: 20, compact: true, showToolOutput: true},
     )).toBe(4);
   });
+
+  it('budgets and clips update metadata within short viewports', () => {
+    const update: TimelineItem = {
+      id: 'update',
+      kind: 'update',
+      current: '0.2.3',
+      latest: '0.3.0',
+      command: 'npm i -g @skein-code/cli',
+      highlights: ['one', 'two', 'three', 'four'],
+    };
+    expect(estimateTimelineItemRows(update, {width: 80, rows: 20})).toBe(6);
+    const twoRows = fitTimelineToRows([update], {width: 80, rows: 2});
+    expect(twoRows[0]).toMatchObject({kind: 'update'});
+    expect((twoRows[0] as Extract<TimelineItem, {kind: 'update'}>).highlights).toBeUndefined();
+    expect(estimateTimelineItemRows(twoRows[0] as TimelineItem, {width: 80, rows: 2})).toBe(2);
+    const oneRow = fitTimelineToRows([update], {width: 40, rows: 1});
+    expect(oneRow[0]).toMatchObject({kind: 'notice', text: expect.stringContaining('Update available')});
+    expect(estimateTimelineItemRows(oneRow[0] as TimelineItem, {width: 40, rows: 1})).toBe(1);
+  });
 });

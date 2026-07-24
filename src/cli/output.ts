@@ -138,6 +138,11 @@ export class HeadlessReporter {
           process.stderr.write(this.paint.dim(`${this.glyphs.meta} plan ${this.glyphs.separator} ${completed}/${event.tasks.length} complete\n`));
         }
         break;
+      case 'writer_lane':
+        process.stderr.write(
+          `${event.status === 'ready' || event.status === 'integrated' ? this.paint.green(this.glyphs.success) : this.paint.red(this.glyphs.error)} writer ${event.id.slice(0, 8)} ${this.glyphs.separator} ${event.status} ${this.glyphs.separator} ${event.detail}\n`,
+        );
+        break;
       case 'usage':
       case 'permission':
       case 'skill':

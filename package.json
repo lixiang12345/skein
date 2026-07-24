@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -13,6 +13,13 @@
   ],
   "publishConfig": {
     "access": "public"
+  },
+  "skein": {
+    "releaseNotes": [
+      "Guided first-run setup for official APIs and third-party relays",
+      "Protocol-aware OpenAI-compatible and Anthropic-compatible routing",
+      "Update notices now include a bounded summary of what changed"
+    ]
   },
   "bin": {
     "skein": "dist/cli.js",

@@ -60,7 +60,7 @@ describe('doctor runtime checks', () => {
         };
       };
       expect(report.legacyCompatibility).toMatchObject({
-        phase: 'active',
+        phase: 'deprecated',
         deprecatedIn: '0.3.0',
         removedIn: '0.5.0',
         inUse: true,

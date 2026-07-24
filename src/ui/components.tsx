@@ -1,7 +1,7 @@
 import React from 'react';
 import {Box, Text} from 'ink';
 import {basename} from 'node:path';
-import type {ContextDegradation, ContextSource, MosaicConfig, SessionTask, ToolCall, ToolCategory, WorkingMemory} from '../types.js';
+import type {AgentPhase, ContextDegradation, ContextSource, MosaicConfig, SessionTask, ToolCall, ToolCategory, WorkingMemory} from '../types.js';
 import {PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
 import {commandSuggestions, type CommandSuggestion} from './commands.js';
 import {
@@ -21,7 +21,7 @@ export type TimelineItem =
   | {id: string; kind: 'tool'; name: string; detail: string; state: 'running' | 'ok' | 'error'; startedAt?: number; durationMs?: number; errorDetail?: string; output?: string; meta?: string}
   | {id: string; kind: 'skill'; name: string; description: string}
   | {id: string; kind: 'memory'; count: number; scope: string}
-  | {id: string; kind: 'agent'; profile: string; task: string; provider?: string; model?: string; phase?: 'work' | 'review' | 'revision'; stage?: 'context' | 'thinking' | 'tool' | 'response' | 'review'; activityDetail?: string; activeTool?: string; toolCalls?: number; inputTokens?: number; outputTokens?: number; summary?: string; alerts?: string[]; retryOf?: string; superseded?: boolean; state: 'queued' | 'running' | 'ok' | 'error' | 'cancelled'; cancelReason?: string; startedAt?: number; durationMs?: number}
+  | {id: string; kind: 'agent'; profile: string; task: string; provider?: string; model?: string; phase?: AgentPhase; stage?: 'context' | 'thinking' | 'tool' | 'response' | 'review'; activityDetail?: string; activeTool?: string; toolCalls?: number; inputTokens?: number; outputTokens?: number; summary?: string; alerts?: string[]; retryOf?: string; superseded?: boolean; state: 'queued' | 'running' | 'ok' | 'error' | 'cancelled'; cancelReason?: string; startedAt?: number; durationMs?: number}
   | {id: string; kind: 'agent-message'; from: string; to: string; text: string}
   | {id: string; kind: 'workflow'; name: string; step: string; status: SessionTask['status']}
   | {id: string; kind: 'compaction'; messages: number; tokens: number}
@@ -30,7 +30,7 @@ export type TimelineItem =
   | {id: string; kind: 'theme'; name: string}
   | {id: string; kind: 'banner'; model: string; engine: string; workspace: string; version: string}
   | {id: string; kind: 'notice'; text: string; tone?: 'info' | 'error' | 'success'}
-  | {id: string; kind: 'update'; current: string; latest: string; command: string};
+  | {id: string; kind: 'update'; current: string; latest: string; command: string; highlights?: string[]};
 
 export interface ListEntry {
   label: string;
@@ -423,7 +423,7 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
           return <Banner key={item.id} model={item.model} engine={item.engine} workspace={item.workspace} version={item.version} width={width} glyphs={glyphs} />;
         }
         if (item.kind === 'update') {
-          return <UpdateNotice key={item.id} current={item.current} latest={item.latest} command={item.command} width={width} glyphs={glyphs} />;
+          return <UpdateNotice key={item.id} current={item.current} latest={item.latest} command={item.command} width={width} glyphs={glyphs} {...(item.highlights ? {highlights: item.highlights} : {})} />;
         }
         const color = item.tone === 'error'
           ? theme.error
@@ -1270,18 +1270,25 @@ function Banner({model, engine, workspace, version, width, glyphs}: {
   );
 }
 
-function UpdateNotice({current, latest, command, width, glyphs}: {
+function UpdateNotice({current, latest, command, highlights, width, glyphs}: {
   current: string;
   latest: string;
   command: string;
+  highlights?: string[];
   width: number;
   glyphs: UiGlyphs;
 }) {
   const theme = useTheme();
-  // A single restrained line: the arrow-up marker draws the eye, the version
-  // delta reads left-to-right (dim old → green new), and the copy-paste upgrade
-  // command trails in dim so it never competes with the transcript below.
-  const parts = [
+  const availableWidth = safeWidth(width);
+  const compact = availableWidth < 48;
+  // Narrow terminals prioritise the actual version delta. The long explanatory
+  // copy and command must never push both version numbers beyond the viewport.
+  const parts = compact ? [
+    {text: `${glyphs.up} `, color: theme.accent, bold: true},
+    {text: `v${current}`, color: theme.dim, bold: false},
+    {text: ` ${glyphs.arrow} `, color: theme.muted, bold: false},
+    {text: `v${latest}`, color: theme.success, bold: true},
+  ] : [
     {text: glyphs.up, color: theme.accent, bold: true},
     {text: ' a new version is available  ', color: theme.text, bold: false},
     {text: `v${current}`, color: theme.dim, bold: false},
@@ -1289,17 +1296,32 @@ function UpdateNotice({current, latest, command, width, glyphs}: {
     {text: `v${latest}`, color: theme.success, bold: true},
     {text: `   ${command}`, color: theme.dim, bold: false},
   ];
-  const rendered = truncateDisplay(parts.map((part) => part.text).join(''), safeWidth(width));
+  const raw = parts.map((part) => part.text).join('');
+  const rendered = truncateDisplay(raw, availableWidth);
   // When the line fits, render the multi-colour spans; if truncation kicked in
   // we fall back to a single dim line so no span is left dangling mid-word.
-  const truncated = rendered.length < parts.map((part) => part.text).join('').length;
+  const truncated = rendered !== raw;
+  // Highlights are already sanitised and bounded (≤4 short lines) upstream; each
+  // reads as a dim bullet under the version delta and is truncated to the width
+  // so a long entry can never wrap into the transcript.
+  const bulletPrefix = `  ${glyphs.separator} `;
+  const bulletWidth = Math.max(0, safeWidth(width) - displayWidth(bulletPrefix));
+  const bullets = bulletWidth > 0
+    ? (highlights ?? []).map((line) => truncateDisplay(sanitizeInlineTerminalText(line), bulletWidth))
+    : [];
   return (
-    <Box marginBottom={1}>
-      {truncated
-        ? <Text color={theme.muted}>{rendered}</Text>
-        : parts.map((part, index) => (
-          <Text key={index} color={part.color} bold={part.bold}>{part.text}</Text>
-        ))}
+    <Box marginBottom={1} flexDirection="column">
+      <Box>
+        {truncated
+          ? <Text color={theme.muted}>{rendered}</Text>
+          : parts.map((part, index) => (
+            <Text key={index} color={part.color} bold={part.bold}>{part.text}</Text>
+          ))}
+      </Box>
+      {compact ? <Text color={theme.dim}>{truncateDisplay(`  run ${command}`, availableWidth)}</Text> : null}
+      {bullets.map((line, index) => (
+        <Text key={index} color={theme.dim}>{`${bulletPrefix}${line}`}</Text>
+      ))}
     </Box>
   );
 }

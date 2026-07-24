@@ -3,8 +3,10 @@
 Skein's team mode treats models as replaceable specialists, not fixed brand
 stereotypes. A project can route `frontend`, `backend`, `architect`, `research`,
 `security`, `tester`, and `reviewer` profiles to different providers. The main
-agent remains the only writer; specialists inspect independently, exchange
-bounded reports, and a reviewer accepts or requests one revision round.
+agent remains the only writer of the active workspace; specialists inspect
+independently, exchange bounded reports, and a reviewer accepts or requests one
+revision round. An opt-in writer lane may prepare a patch in a disposable Git
+worktree, but it cannot integrate that patch itself.
 
 ## Why This Shape
 
@@ -93,6 +95,49 @@ Set `agents.persistBoard` to `false` when a session must not retain team
 reports. The normal default is local persistence because it makes interrupted
 runs, reviewer disagreements, and delivery audits recoverable without sending
 the blackboard to a hosted service.
+
+Writer runs always persist their audit record even when ordinary council
+persistence is disabled. Integration depends on the recorded patch hash,
+review verdict, base commit, file list, cleanup result, and checkpoint.
+
+## Isolated Writer Lane
+
+The first writer lane is deliberately opt-in and single-lane:
+
+```json
+{
+  "agents": {
+    "writerEnabled": true,
+    "writerProfile": "implementer",
+    "writerReviewerProfile": "reviewer",
+    "maxWriterPatchBytes": 60000
+  }
+}
+```
+
+`writer_run` asks for write, Git, and shell permission, creates a detached
+worktree at the current `HEAD`, and gives the writer only `read_file`,
+`list_files`, `search_code`, `write_file`, and `apply_patch`. Shell, Git,
+network, hooks, MCP, memory, external CLI runtimes, workspace-authored writer
+profiles, and recursive agents remain unavailable. The reviewer must also use
+an API route so it receives the complete patch. The patch is rejected rather
+than truncated above `maxWriterPatchBytes` (60,000 by default; 120,000 maximum).
+
+The worktree is removed and pruned before the tool returns. Team Run v2 stores
+the Git `--binary` text patch, SHA-256, base commit, file list, writer and
+reviewer reports, cleanup result, and integration state. `skein agents show
+<run-id>` displays that evidence.
+
+`writer_integrate` is a separate main-agent action. It requires the accepted
+Team Run ID and patch SHA, reparses and bounds every path, requires the same
+`HEAD`, refuses dirty target files, runs `git apply --check`, and captures every
+target in a checkpoint. A failed apply restores that checkpoint; conflicts are
+reported without overwriting the active workspace. A successful result prints
+the exact `skein checkpoint restore <session> <checkpoint>` rollback command.
+
+Dirty main-workspace state is not mirrored into the writer worktree. Parallel
+writers, automatic merge or rebase, submodule mutation, and external CLI writer
+mode remain future increments.
 
 ## Configuration
 
@@ -321,7 +366,12 @@ activity, and reviewer decisions are the explainable artifacts.
 ## Current Safety Boundary
 
 - Specialist agents are read-only and cannot recursively delegate.
-- Only the main agent may mutate the active workspace.
+- Only the main agent may mutate the active workspace. An enabled writer can
+  mutate only its disposable worktree and returns a reviewed patch.
+- Writer and integration operations share a repo-scoped exclusive lease, while
+  Team Run and checkpoint storage retain their separate namespace leases.
+- Workspace-authored profiles cannot receive writer authority, and repository
+  config cannot enable or retarget the writer lane without explicit trust.
 - Peer messages are summaries capped before entering another context.
 - Review rounds are capped at three by schema and default to one.
 - Cancellation uses the parent abort signal.
@@ -334,7 +384,8 @@ activity, and reviewer decisions are the explainable artifacts.
    search without granting arbitrary shell/network authority.
 2. Persist a content-addressed team blackboard and compact provenance bundle.
 3. Add per-route cost accounting and user-confirmed spend controls.
-4. Add worktree-isolated writer agents with explicit merge/review gates.
+4. Add dependency-aware parallel writer worktrees after conflict-rate and
+   rollback evidence justify relaxing the single-lane gate.
 5. Score routes from project-local eval outcomes instead of relying on model
    brand assumptions.
 6. Add Gemini CLI and optional tmux/iTerm visible-pane hosts. Codex, Claude,

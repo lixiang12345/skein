@@ -34,7 +34,7 @@ import {
 } from './cli/output.js';
 import {resolveCliGlyphs} from './cli/glyphs.js';
 import {acquireCliNamespaceLeases, releaseCliNamespaceLeases} from './cli/namespace-leases.js';
-import {runInteractiveTui} from './ui/index.js';
+import {needsFirstRunOnboarding, runFirstRunOnboarding, runInteractiveTui} from './ui/index.js';
 import {ExtensionRuntime} from './runtime/index.js';
 import {SkillCatalog} from './skills/index.js';
 import {MemoryStore, type MemoryCandidate} from './memory/index.js';
@@ -246,7 +246,7 @@ program
     const update = await refreshUpdateCache(packageJson.version).catch(() => undefined);
     if (options.json === true) {
       const updateJson = update
-        ? {current: update.current, latest: update.latest, command: update.command}
+        ? {current: update.current, latest: update.latest, command: update.command, ...(update.highlights ? {highlights: update.highlights} : {})}
         : {current: packageJson.version, latest: null, command: upgradeCommand()};
       printObject({config: configSummary(config), context: status, namespace, update: updateJson}, true);
     } else {
@@ -595,12 +595,22 @@ agentsCommand
       ...message,
       contentText: await store.readArtifact(run.id, message.content),
     })));
-    if (options.json) printObject({...run, agents, messages}, true);
+    const writer = run.version === 2 && run.writer ? {
+      ...run.writer,
+      ...(run.writer.review ? {reviewText: await store.readArtifact(run.id, run.writer.review)} : {}),
+    } : undefined;
+    if (options.json) printObject({...run, agents, messages, writer}, true);
     else {
       process.stdout.write(`Team run ${run.id}\n${run.status}  ${run.createdAt}\n\n${run.objective}\n\n`);
       for (const agent of agents) {
         const tokens = (agent.usage?.inputTokens ?? 0) + (agent.usage?.outputTokens ?? 0);
         process.stdout.write(`## ${agent.profile} ${agent.phase} ${agent.provider}/${agent.model} ${agent.ok ? 'ok' : 'failed'}  ${tokens} tok  ${agent.toolCalls ?? 0} tools  ${agent.durationMs ?? 0}ms\n${agent.reportText}\n\n`);
+      }
+      if (writer) {
+        process.stdout.write(`Writer patch ${writer.patch.sha256}  ${writer.outcome}  ${writer.files.length} files  cleanup ${writer.worktreeCleaned ? 'verified' : 'failed'}\n`);
+        if (writer.integration) process.stdout.write(`Integration ${writer.integration.status}: ${writer.integration.detail}\n`);
+        if (writer.reviewText) process.stdout.write(`\nWriter review\n${writer.reviewText}\n`);
+        process.stdout.write('\n');
       }
       if (messages.length) {
         process.stdout.write('Peer handoffs\n');
@@ -935,7 +945,20 @@ async function runChat(prompts: string[], options: RootOptions): Promise<void> {
   const firstPrompt = [...prompts, stdinPrompt].filter(Boolean).join('\n\n').trim();
   if (shouldPrint && !firstPrompt) throw new Error('Provide a prompt argument or pipe input on stdin.');
   const workspace = resolve(options.workspace);
-  const config = await runtimeConfig(workspace, options);
+  let config = await runtimeConfig(workspace, options);
+  if (!shouldPrint && needsFirstRunOnboarding(config)) {
+    // An explicit config is caller-owned and may intentionally be incomplete;
+    // do not silently write a separate user config that the explicit path would
+    // not load. Normal first-run sessions use the guided user-level setup.
+    if (!options.config) {
+      const onboarding = await runFirstRunOnboarding(config);
+      if (onboarding.status === 'cancelled') return;
+      config = await runtimeConfig(workspace, options);
+    }
+  }
+  // Validate before SessionStore, provider, extensions, or AgentRunner creation.
+  // A cancelled or invalid preflight therefore leaves no empty session behind.
+  validateModelSetup(config);
   const store = new SessionStore(workspace);
   const selectedSession = options.resume !== undefined
     ? await loadSessionSelector(store, typeof options.resume === 'string' ? options.resume : undefined)
@@ -990,7 +1013,6 @@ async function runChat(prompts: string[], options: RootOptions): Promise<void> {
       : async (call: Parameters<typeof askConsolePermission>[0], category: Parameters<typeof askConsolePermission>[1]) =>
         askConsolePermission(call, category, colorOutput);
   try {
-    validateModelSetup(config);
     let session = await runner.run(firstPrompt, {
       askMode: options.ask === true || options.plan === true,
       ...(options.plan ? {turnInstructions: PLAN_MODE_INSTRUCTIONS} : {}),
@@ -1285,6 +1307,14 @@ function printStatusSummary(
   const storageReady = namespace.activeKind === 'canonical' || namespace.phase === 'active';
   line(storageReady ? 'ok' : 'warn', 'Storage', storageDetail);
   line(update ? 'warn' : 'ok', 'Version', update ? updateNoticeText(update) : `v${packageJson.version} (up to date)`);
+  // Render up to the cap of release highlights beneath the version line so an
+  // upgrade prompt explains *why* it's worth taking, degrading silently when the
+  // registry omits them.
+  if (update?.highlights?.length) {
+    for (const highlight of update.highlights) {
+      process.stdout.write(`  ${dim(`${cliGlyphs.separator} ${highlight}`)}\n`);
+    }
+  }
   process.stdout.write(`\n${dim(`Run ${PRODUCT_COMMAND} status --json for the full machine-readable record.`)}\n`);
 }
 

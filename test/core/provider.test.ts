@@ -7,6 +7,46 @@ import {parseServerSentEvents} from '../../src/providers/provider.js';
 afterEach(() => vi.unstubAllGlobals());
 
 describe('provider streaming helpers', () => {
+  it('uses OpenAI-compatible endpoint, bearer auth, and message format for compatible relays', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('https://relay.example/v1/chat/completions');
+      expect(init?.headers).toMatchObject({authorization: 'Bearer relay-key', 'content-type': 'application/json'});
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      expect(body).toMatchObject({model: 'relay-model', messages: [], max_tokens: 1024});
+      return new Response(JSON.stringify({choices: [{message: {content: 'ok'}, finish_reason: 'stop'}]}), {
+        headers: {'content-type': 'application/json'},
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const provider = new OpenAIProvider({
+      provider: 'compatible', model: 'relay-model', baseUrl: 'https://relay.example/v1', apiKey: 'relay-key', maxTokens: 1024,
+    });
+    expect((await provider.complete([], [])).content).toBe('ok');
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('uses Anthropic Messages endpoint and headers for Anthropic-compatible relays', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('https://relay.example/v1/messages');
+      expect(init?.headers).toMatchObject({
+        'x-api-key': 'relay-key',
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      });
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      expect(body).toMatchObject({model: 'relay-claude', messages: [], max_tokens: 2048});
+      return new Response(JSON.stringify({content: [{type: 'text', text: 'ok'}]}), {
+        headers: {'content-type': 'application/json'},
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const provider = new AnthropicProvider({
+      provider: 'anthropic', model: 'relay-claude', baseUrl: 'https://relay.example/v1', apiKey: 'relay-key', maxTokens: 2048,
+    });
+    expect((await provider.complete([], [])).content).toBe('ok');
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it('parses incremental SSE payloads, comments, multiline data, and a final unterminated event', async () => {
     const response = new Response([
       ': keep-alive\n',

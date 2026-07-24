@@ -47,6 +47,9 @@ zero-service fallback.
 - **Layered agent runtime:** progressive Skills, MCP tools, typed workflows,
   isolated read-only experts, working memory, compacted session state, and
   reviewed durable memory share one permission and audit model.
+- **Reviewed writer lane:** an opt-in API-backed writer can prepare a bounded
+  patch in a disposable Git worktree; only the main agent can explicitly
+  integrate it after review, conflict checks, and a recoverable checkpoint.
 
 The product rationale and competitor research are in
 [docs/PRODUCT.md](docs/PRODUCT.md); the implementation model is in
@@ -69,13 +72,14 @@ npm run build
 npm link
 ```
 
-To install the packaged artifact included with this checkout:
+To build, verify, and install a local package artifact from this checkout:
 
 ```bash
-npm install -g ./skein-code-cli-0.2.0.tgz
+npm run verify:package -- --output-dir artifacts/package
+npm install -g ./artifacts/package/skein-code-cli-0.3.0.tgz
 ```
 
-After the public package is published, install it from the registry with:
+To install the published package from npm:
 
 ```bash
 npm install -g @skein-code/cli
@@ -87,7 +91,13 @@ environment variables remain compatible with this release.
 
 ## Quick start
 
-Set credentials for one provider:
+On the first interactive `skein` run, an incomplete model configuration opens
+a keyboard-driven setup before any session is created. It offers an official
+API, a third-party relay, or an explanation of signed-in CLI support. OpenAI,
+Anthropic, and Gemini subscription logins are not API credentials; signed-in
+Codex, Claude Code, and Gemini CLIs are available only as delegated agents.
+
+For non-interactive setup, set credentials for one provider:
 
 ```bash
 export OPENAI_API_KEY=...
@@ -101,6 +111,21 @@ explicitly so Skein never guesses where workspace code should be sent:
 export SKEIN_API_KEY=... # omit when the local endpoint needs no authentication
 skein init --provider compatible --base-url http://localhost:11434/v1 --yes
 ```
+
+Relay protocol selection is explicit and is never inferred from the URL or
+model name:
+
+- OpenAI-compatible relays use `POST /chat/completions`, Bearer authentication,
+  and OpenAI message/tool-call shapes (`provider: compatible`).
+- Anthropic-compatible relays use `POST /messages`, `x-api-key`,
+  `anthropic-version`, and Anthropic content blocks (`provider: anthropic` with
+  a custom `baseUrl`).
+
+Remote relays must use HTTPS. Loopback endpoints may use HTTP. To prevent an
+official key from being sent to a third party, a custom OpenAI, Anthropic, or
+Gemini base URL does not inherit the provider's official environment key; enter
+the relay credential explicitly. The first-run flow writes its user config with
+owner-only permissions and never renders the secret unmasked.
 
 Create project configuration, index, and start the TUI:
 
@@ -297,6 +322,24 @@ See [examples/config.yaml](examples/config.yaml) for a ready-to-adapt file.
 Secrets should normally stay in environment variables instead of committed
 configuration.
 
+The isolated writer lane is disabled by default. Enable it only in user-owned
+or explicitly trusted configuration:
+
+```yaml
+agents:
+  writerEnabled: true
+  writerProfile: implementer
+  writerReviewerProfile: reviewer
+  maxWriterPatchBytes: 60000
+```
+
+`writer_run` requires write, Git, and shell approval because it creates a
+temporary worktree. It cannot change the active workspace. A reviewed patch is
+applied only through `writer_integrate`, which requires its Team Run ID and
+SHA-256, rejects HEAD drift or dirty targets, and records a checkpoint rollback
+command. See [docs/MULTI_MODEL_TEAMS.md](docs/MULTI_MODEL_TEAMS.md) for the full
+trust and lifecycle contract.
+
 `provider: compatible` must be paired with `model.baseUrl` (or the
 `--base-url` flag). Additional roots declared in project config are constrained
 to the project directory; use `--add-workspace` for an intentionally external
@@ -384,9 +427,10 @@ unattended agents.
 
 ## Project data
 
-Existing installations keep using `<workspace>/.mosaic/` until migration is
-explicitly requested. New canonical storage uses `<workspace>/.skein/` with
-the same layout:
+Existing installations and fresh projects on Skein 0.2.x keep using
+`<workspace>/.mosaic/` until migration is explicitly requested. The migration
+target—and the fresh-project default beginning with 0.3.0—is
+`<workspace>/.skein/`, with the same layout:
 
 ```text
 .skein/

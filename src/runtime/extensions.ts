@@ -105,6 +105,10 @@ export class ExtensionRuntime implements PromptContextProvider {
       this.delegation = delegation;
       registry.register(delegation.tool());
       registry.register(delegation.teamTool());
+      if (this.config.agents.writerEnabled) {
+        registry.register(delegation.writerTool());
+        registry.register(delegation.writerIntegrateTool());
+      }
     }
     registry.register(createWorkflowTool(this.workflows));
     this.initialized = true;

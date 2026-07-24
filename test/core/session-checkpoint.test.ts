@@ -17,7 +17,7 @@ describe('sessions and checkpoints', () => {
     roots.push(root);
     await expect(new SessionStore(root).list()).resolves.toEqual([]);
     await expect(new CheckpointStore(root).list('session-1')).resolves.toEqual([]);
-    await expect(access(join(root, '.mosaic'))).rejects.toMatchObject({code: 'ENOENT'});
+    await expect(access(join(root, '.skein'))).rejects.toMatchObject({code: 'ENOENT'});
   });
 
   it('persists and resumes an auditable session', async () => {
@@ -51,7 +51,7 @@ describe('sessions and checkpoints', () => {
     const root = await mkdtemp(join(tmpdir(), 'mosaic-storage-root-'));
     const outside = await mkdtemp(join(tmpdir(), 'mosaic-storage-outside-'));
     roots.push(root, outside);
-    await symlink(outside, join(root, '.mosaic'));
+    await symlink(outside, join(root, '.skein'));
     await expect(new SessionStore(root).list()).rejects.toThrow('symbolic link');
     await expect(new CheckpointStore(root).capture('session-1', [join(root, 'file.txt')]))
       .rejects.toThrow('symbolic link');
@@ -69,7 +69,7 @@ describe('sessions and checkpoints', () => {
     const secondEntry = manifest?.entries[1];
     await writeFile(first, 'first changed\n');
     await writeFile(second, 'second changed\n');
-    await unlink(join(root, '.mosaic', 'checkpoints', 'session-1', manifest?.id ?? '', 'blobs', secondEntry?.blob ?? ''));
+    await unlink(join(root, '.skein', 'checkpoints', 'session-1', manifest?.id ?? '', 'blobs', secondEntry?.blob ?? ''));
     await expect(store.restore('session-1', manifest?.id ?? '')).rejects.toThrow('blob');
     expect(await readFile(first, 'utf8')).toBe('first changed\n');
     expect(await readFile(second, 'utf8')).toBe('second changed\n');
@@ -83,7 +83,7 @@ describe('sessions and checkpoints', () => {
     await writeFile(file, 'before\n');
     const store = new CheckpointStore(root);
     await store.capture('session-1', [file]);
-    await symlink(outside, join(root, '.mosaic', 'checkpoints', 'session-1', 'redirect'));
+    await symlink(outside, join(root, '.skein', 'checkpoints', 'session-1', 'redirect'));
     await expect(store.load('session-1', 'redirect')).rejects.toThrow('symbolic link');
   });
 
@@ -97,7 +97,7 @@ describe('sessions and checkpoints', () => {
     const session = await store.create({
       id: 'session-1', title: 'Before', model: 'test', provider: 'compatible',
     });
-    await symlink(victim, join(root, '.mosaic', 'sessions', 'session-1.bak'));
+    await symlink(victim, join(root, '.skein', 'sessions', 'session-1.bak'));
     session.title = 'After';
     await expect(store.save(session)).rejects.toThrow('symbolic link');
     expect(await readFile(victim, 'utf8')).toBe('unchanged\n');
@@ -110,7 +110,7 @@ describe('sessions and checkpoints', () => {
     await store.create({
       id: 'session-1', title: 'Original', model: 'test', provider: 'compatible',
     });
-    const path = join(root, '.mosaic', 'sessions', 'session-1.json');
+    const path = join(root, '.skein', 'sessions', 'session-1.json');
     const stored = JSON.parse(await readFile(path, 'utf8')) as {id: string};
     stored.id = 'different-session';
     await writeFile(path, `${JSON.stringify(stored)}\n`);

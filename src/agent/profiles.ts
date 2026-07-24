@@ -64,6 +64,14 @@ export const builtInProfiles: AgentProfile[] = [
     source: 'built-in',
   },
   {
+    name: 'implementer',
+    description: 'Makes one bounded change inside an isolated writer worktree for explicit review and integration.',
+    prompt: 'Act as a careful implementation engineer inside a disposable Git worktree. Inspect the relevant files, make only the requested change, preserve established conventions, and finish with a concise summary of edits and remaining risks. You cannot run shell commands, use Git, access the network, or delegate.',
+    readOnly: false,
+    maxTurns: 16,
+    source: 'built-in',
+  },
+  {
     name: 'reviewer',
     description: 'Reviews changes for correctness, regressions, maintainability, and missing tests.',
     prompt: 'Act as a strict code reviewer. Lead with actionable findings ordered by severity. Ground every claim in files, lines, behavior, or test evidence. Explicitly report residual test gaps. Do not edit files.',

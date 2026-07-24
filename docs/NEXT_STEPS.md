@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current release: `0.2.1`.
+- Current release: `0.3.0`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -35,11 +35,11 @@ npm ci
 npm run check
 npm run test:pty
 npm audit --omit=dev
-npm pack
+npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package was `skein-code-cli-0.2.1.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.2.1.tgz.sha256`, and CI
+The latest verified package was `skein-code-cli-0.3.0.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.0.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
@@ -47,11 +47,11 @@ archive it describes.
 The final verification included a fresh install and real PTY interaction for
 all three executable aliases, `/about`, a permission prompt, denial, and clean
 Ctrl+C exit. PTY coverage included 20, 24 ASCII, 40, 80, 120 columns and a
-40x10 short-height case. The current suite contains 31 test files and 253 tests.
+40x10 short-height case. The current suite contains 34 test files and 317 tests.
 
 ## Recommended Order
 
-### P0: Continuous Integration And Release Reproducibility (Branch Rule Pending)
+### P0: Continuous Integration And Release Reproducibility
 
 `.github/workflows/ci.yml` now covers Node 22 on macOS and Linux. It runs
 typecheck, unit tests, build, smoke, the PTY suite when `expect` is available,
@@ -75,8 +75,11 @@ Implementation notes:
 - `npm run release:verify` reproduces the package from source, installs it into
   an isolated prefix, rejects packaged local state, and exercises `skein`,
   `mosaic`, and `mosaic-code`.
-- Configure the `main` branch rule to require the `check` status after the
-  workflow is present on GitHub.
+- The `main` branch rule requires the strict `check` status. The v0.2.3 CI and
+  release workflows completed successfully and npm published
+  `@skein-code/cli@0.2.3` under the `latest` tag. The v0.3.0 package was
+  reproduced and verified locally (34 test files, 317 tests, all three bin
+  aliases); its tag, CI run, and `npm publish` to `latest` follow this commit.
 
 ### P1: Skein Storage Namespace And Migration
 
@@ -261,9 +264,19 @@ Implementation progress:
   that is parsed into a structured conflict report and surfaced in the returned
   team summary. The TUI Team Cockpit and Workbench render the queued and
   cancelled states with distinct glyphs, colors, and the cancellation reason.
-- See `docs/MULTI_MODEL_TEAMS.md`. Writer worktrees, persistent blackboard
-  artifacts, cost controls, Gemini CLI, and optional tmux/iTerm pane hosts remain
-  next.
+- The first writer lane is implemented behind `agents.writerEnabled=false` by
+  default. `writer_run` creates one repo-leased disposable worktree, confines an
+  API writer to five path-safe read/write tools, requires an API Reviewer, and
+  persists a bounded patch plus lifecycle evidence in Team Run v2.
+- `writer_integrate` is the only main-workspace integration path. It gates on
+  patch SHA, accepted review, base `HEAD`, clean target paths, patch parsing,
+  `git apply --check`, and a mandatory checkpoint; failed applies restore the
+  checkpoint and conflicts never overwrite user work.
+- Writer regression coverage proves success and rollback, concurrent-lane
+  rejection, cancellation cleanup, oversize rejection, SHA and dirty-target
+  gates, simulated partial-apply recovery, workspace-profile rejection, and v1
+  Team Run compatibility. Parallel writers, external CLI writer mode, cost
+  controls, Gemini CLI, and optional tmux/iTerm pane hosts remain next.
 
 ### P2: MCP, Skills, And Workflow Trust UX
 
@@ -322,9 +335,7 @@ deprecation window is complete.
 
 ## Suggested Next Conversation Opening
 
-Start with: “Implement the first worktree-isolated writer lane from the P1
-multi-agent scheduler milestone. Preserve the current read-only council and
-review gate, serialize integration into the main workspace, and prove cancel,
-conflict, checkpoint, and rollback behavior before enabling parallel
-mutation.” Then inspect the scheduler, team-run persistence, permissions, and
-namespace lease boundaries before changing runtime behavior.
+Start with: “Audit the opt-in P1 writer lane against its Team Run v2 evidence,
+then decide whether the next increment should add external CLI writers or
+dependency-aware parallel worktrees. Keep active-workspace integration explicit
+and preserve SHA, review, clean-target, checkpoint, and rollback gates.”

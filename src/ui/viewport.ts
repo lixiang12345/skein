@@ -65,6 +65,15 @@ function clipTimelineItem(item: TimelineItem, options: TimelineViewportOptions):
   if (item.kind === 'notice') {
     return {...item, text: tailText(item.text, width, options.rows)};
   }
+  if (item.kind === 'update') {
+    const baseRows = width < 48 ? 3 : 2;
+    if (options.rows < baseRows) {
+      return {id: item.id, kind: 'notice', text: truncateDisplay(`Update available ${item.current} -> ${item.latest}`, width)};
+    }
+    const {highlights: _highlights, ...base} = item;
+    const highlights = item.highlights?.slice(0, Math.max(0, options.rows - baseRows));
+    return highlights?.length ? {...base, highlights} : base;
+  }
   if (item.kind === 'tool' && item.output && (options.showToolOutput || options.expandedToolId === item.id)) {
     const detailRows = width < 64 && (item.errorDetail || item.detail) ? 1 : 0;
     const outputRows = Math.max(1, options.rows - 1 - detailRows);
@@ -111,6 +120,7 @@ export function estimateTimelineItemRows(
     return 1 + richTextRows(item.text, Math.max(1, rowWidth - 2)) + (item.clipped ? 0 : gap);
   }
   if (item.kind === 'notice') return wrappedRows(item.text, rowWidth);
+  if (item.kind === 'update') return (rowWidth < 48 ? 3 : 2) + (item.highlights?.length ?? 0);
   if (item.kind === 'tool') {
     const narrow = rowWidth < 64;
     const detail = item.errorDetail || item.detail;

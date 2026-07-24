@@ -233,11 +233,11 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         if (existing) {
           if (existing.kind === 'update' && existing.latest === notice.latest) return items;
           return items.map((item) => (item === existing
-            ? {id: item.id, kind: 'update' as const, current: notice.current, latest: notice.latest, command: notice.command}
+            ? {id: item.id, kind: 'update' as const, current: notice.current, latest: notice.latest, command: notice.command, ...(notice.highlights ? {highlights: notice.highlights} : {})}
             : item));
         }
         const next = items.slice();
-        next.splice(bannerIndex + 1, 0, {id: nextId(), kind: 'update', current: notice.current, latest: notice.latest, command: notice.command});
+        next.splice(bannerIndex + 1, 0, {id: nextId(), kind: 'update', current: notice.current, latest: notice.latest, command: notice.command, ...(notice.highlights ? {highlights: notice.highlights} : {})});
         return next;
       });
     };
@@ -406,6 +406,14 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       case 'team_done':
         setTeamRun((current) => ({...current, id: current?.id ?? event.id, accepted: event.accepted, reviewRounds: event.reviewRounds}));
         append({id: nextId(), kind: 'notice', tone: event.accepted ? 'success' : 'error', text: `Team run ${event.id.slice(0, 8)} ${event.accepted ? 'accepted' : 'rejected'}${separator}${event.reviewRounds} revision round${event.reviewRounds === 1 ? '' : 's'}`});
+        break;
+      case 'writer_lane':
+        append({
+          id: nextId(),
+          kind: 'notice',
+          tone: event.status === 'ready' || event.status === 'integrated' ? 'success' : 'error',
+          text: `Writer ${event.id.slice(0, 8)} ${event.status}${separator}${event.detail}`,
+        });
         break;
       case 'agent_done':
         setTimeline((items) => updateAgent(items, event));
@@ -1204,14 +1212,10 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     }
     if (key.ctrl && inputKey.toLocaleLowerCase() === 'r') {
       if (!history.length) return;
-      if (historySearch) {
-        setHistorySearch((current) => current
-          ? moveHistorySearchSelection(current, 'older')
-          : current);
-      } else {
-        setHistorySearch(createHistorySearchState(history, input, input));
-        setHistoryIndex(-1);
-      }
+      setHistorySearch((current) => current
+        ? moveHistorySearchSelection(current, 'older')
+        : createHistorySearchState(history, input, input));
+      setHistoryIndex(-1);
       return;
     }
     if (key.escape) {

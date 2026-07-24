@@ -14,6 +14,8 @@ export interface ToolExecutionContext {
   readonly contextEngine?: ContextProvider;
   readonly signal?: AbortSignal;
   readonly emit?: (event: AgentEvent) => void | Promise<void>;
+  /** Pre-write checkpoint captured by the parent runner, when enabled. */
+  readonly checkpointId?: string;
 }
 
 export interface ToolExecution {

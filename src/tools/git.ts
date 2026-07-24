@@ -287,14 +287,26 @@ function parsePorcelainStatus(output: string): Map<string, string> {
   return status;
 }
 
-function runIsolatedGit(runtime: ExecutableRuntime, args: string[], cwd: string) {
+export function runIsolatedGit(
+  runtime: ExecutableRuntime,
+  args: string[],
+  cwd: string,
+  options: {
+    timeoutMs?: number;
+    maxOutputBytes?: number;
+    stdin?: string;
+    signal?: AbortSignal;
+  } = {},
+) {
   return runProcess(runtime.executable, args, {
     cwd,
-    timeoutMs: 15_000,
-    maxOutputBytes: 2_000_000,
+    timeoutMs: options.timeoutMs ?? 15_000,
+    maxOutputBytes: options.maxOutputBytes ?? 2_000_000,
     env: {...isolatedGitEnvironment, PATH: runtime.path},
     unsetEnv: unsafeInheritedGitEnvironment,
     unsetEnvPrefixes: ['GIT_'],
+    ...(options.stdin !== undefined ? {stdin: options.stdin} : {}),
+    ...(options.signal ? {signal: options.signal} : {}),
   });
 }
 

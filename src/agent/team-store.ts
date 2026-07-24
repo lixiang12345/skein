@@ -19,12 +19,14 @@ const artifactSchema = z.object({
   bytes: z.number().int().nonnegative().max(500_000),
 }).strict();
 
+const phaseSchema = z.enum(['work', 'review', 'revision', 'write']);
+
 const agentRecordSchema = z.object({
   id: z.string().uuid(),
   profile: z.string(),
   provider: z.string(),
   model: z.string(),
-  phase: z.enum(['work', 'review', 'revision']),
+  phase: phaseSchema,
   ok: z.boolean(),
   createdAt: z.string(),
   startedAt: z.string().optional(),
@@ -46,8 +48,30 @@ const messageRecordSchema = z.object({
   content: artifactSchema,
 }).strict();
 
-const manifestSchema = z.object({
-  version: z.literal(1),
+const writerIntegrationSchema = z.object({
+  status: z.enum(['ready', 'conflict', 'integrated']),
+  checkedAt: z.string(),
+  detail: z.string().max(20_000),
+  checkpoint: z.object({
+    sessionId: z.string(),
+    checkpointId: z.string(),
+  }).strict().optional(),
+  integratedAt: z.string().optional(),
+}).strict();
+
+const writerLaneSchema = z.object({
+  profile: z.string(),
+  reviewer: z.string(),
+  baseCommit: z.string().regex(/^[a-f0-9]{40,64}$/u),
+  outcome: z.enum(['accepted', 'rejected', 'failed', 'cancelled']),
+  patch: artifactSchema,
+  files: z.array(z.string().min(1).max(4_000)).max(2_000),
+  worktreeCleaned: z.boolean(),
+  review: artifactSchema.optional(),
+  integration: writerIntegrationSchema.optional(),
+}).strict();
+
+const manifestFields = {
   id: runIdSchema,
   workspace: z.string(),
   objective: z.string().max(30_000),
@@ -59,11 +83,26 @@ const manifestSchema = z.object({
   reviewRounds: z.number().int().min(0).max(3),
   agents: z.array(agentRecordSchema).max(256),
   messages: z.array(messageRecordSchema).max(512),
+};
+
+const manifestV1Schema = z.object({
+  version: z.literal(1),
+  ...manifestFields,
 }).strict();
+
+const manifestV2Schema = z.object({
+  version: z.literal(2),
+  ...manifestFields,
+  writer: writerLaneSchema.optional(),
+}).strict();
+
+const manifestSchema = z.discriminatedUnion('version', [manifestV1Schema, manifestV2Schema]);
 
 export type TeamRunManifest = z.infer<typeof manifestSchema>;
 export type TeamRunAgentRecord = z.infer<typeof agentRecordSchema>;
 export type TeamRunMessageRecord = z.infer<typeof messageRecordSchema>;
+export type TeamRunWriterRecord = z.infer<typeof writerLaneSchema>;
+export type TeamRunWriterIntegration = z.infer<typeof writerIntegrationSchema>;
 
 export interface TeamRunSummary {
   id: string;
@@ -96,7 +135,7 @@ export class TeamRunStore {
   async create(input: {objective: string; reviewer: string; maxReviewRounds: number}): Promise<TeamRunManifest> {
     const now = new Date().toISOString();
     const manifest = manifestSchema.parse({
-      version: 1,
+      version: 2,
       id: randomUUID(),
       workspace: this.workspace,
       objective: input.objective,
@@ -135,6 +174,52 @@ export class TeamRunStore {
     }));
   }
 
+  async recordWriterLane(runId: string, input: {
+    profile: string;
+    reviewer: string;
+    baseCommit: string;
+    outcome: TeamRunWriterRecord['outcome'];
+    patch: string;
+    files: string[];
+    worktreeCleaned: boolean;
+    review?: string;
+    integration?: TeamRunWriterIntegration;
+  }): Promise<void> {
+    await this.update(runId, async (manifest) => {
+      if (manifest.version !== 2) throw new Error('Writer lane records require a Team Run v2 manifest.');
+      const patch = await this.writeArtifact(runId, input.patch, false);
+      const review = input.review === undefined
+        ? undefined
+        : await this.writeArtifact(runId, input.review);
+      return {
+        ...manifest,
+        writer: {
+          profile: input.profile,
+          reviewer: input.reviewer,
+          baseCommit: input.baseCommit,
+          outcome: input.outcome,
+          patch,
+          files: [...input.files],
+          worktreeCleaned: input.worktreeCleaned,
+          ...(review ? {review} : {}),
+          ...(input.integration ? {integration: input.integration} : {}),
+        },
+      };
+    });
+  }
+
+  async recordWriterIntegration(runId: string, integration: TeamRunWriterIntegration): Promise<void> {
+    await this.update(runId, async (manifest) => {
+      if (manifest.version !== 2 || !manifest.writer) {
+        throw new Error('Writer lane integration requires a Team Run v2 writer record.');
+      }
+      if (manifest.writer.integration?.status === 'integrated' && integration.status !== 'integrated') {
+        throw new Error('An integrated writer record cannot be downgraded.');
+      }
+      return {...manifest, writer: {...manifest.writer, integration}};
+    });
+  }
+
   async complete(runId: string, input: {accepted: boolean; reviewRounds: number; failed?: boolean}): Promise<void> {
     await this.update(runId, async (manifest) => ({
       ...manifest,
@@ -157,6 +242,9 @@ export class TeamRunStore {
       for (const artifact of [
         ...manifest.agents.map((agent) => agent.report),
         ...manifest.messages.map((message) => message.content),
+        ...(manifest.version === 2 && manifest.writer
+          ? [manifest.writer.patch, ...(manifest.writer.review ? [manifest.writer.review] : [])]
+          : []),
       ]) await this.verifyArtifact(runId, artifact);
     }
     return manifest;
@@ -238,8 +326,12 @@ export class TeamRunStore {
     await atomicWrite(join(directory, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 0o600);
   }
 
-  private async writeArtifact(runId: string, content: string): Promise<{sha256: string; bytes: number}> {
-    const data = content.slice(0, 500_000);
+  private async writeArtifact(
+    runId: string,
+    content: string,
+    truncate = true,
+  ): Promise<{sha256: string; bytes: number}> {
+    const data = boundedArtifactText(content, 500_000, truncate);
     const bytes = Buffer.byteLength(data);
     const sha256 = createHash('sha256').update(data).digest('hex');
     const directory = join(this.runDirectory(runId), 'blobs');
@@ -299,6 +391,15 @@ export class TeamRunStore {
     const info = await lstat(path);
     if (!info.isFile() || info.isSymbolicLink()) throw new Error(`Team run file is not a regular file: ${path}`);
   }
+}
+
+function boundedArtifactText(content: string, maxBytes: number, truncate: boolean): string {
+  const encoded = Buffer.from(content, 'utf8');
+  if (encoded.byteLength <= maxBytes) return content;
+  if (!truncate) throw new Error(`Team artifact exceeds the ${maxBytes}-byte limit.`);
+  let end = maxBytes;
+  while (end > 0 && (encoded[end] ?? 0) >= 0x80 && (encoded[end] ?? 0) < 0xc0) end -= 1;
+  return encoded.subarray(0, end).toString('utf8');
 }
 
 function toSummary(manifest: TeamRunManifest): TeamRunSummary {

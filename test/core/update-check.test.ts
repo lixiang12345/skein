@@ -8,6 +8,7 @@ import {
   readUpdateCache,
   refreshUpdateCache,
   resolveCachedUpdateNotice,
+  sanitizeHighlights,
   updateCachePath,
   updateNoticeText,
   upgradeCommand,
@@ -60,6 +61,28 @@ describe('compareVersions', () => {
   it('degrades to a stable string compare for unparseable input', () => {
     expect(compareVersions('not-a-version', 'not-a-version')).toBe(0);
     expect(compareVersions('1.2', '1.2')).toBe(0);
+  });
+
+  it('compares arbitrarily large valid numeric identifiers without precision loss', () => {
+    expect(compareVersions('999999999999999999999.0.0', '999999999999999999998.9.9')).toBe(1);
+  });
+});
+
+describe('release highlight sanitization', () => {
+  it('removes ANSI, controls, bidi overrides, blank values, and caps the list', () => {
+    expect(sanitizeHighlights([
+      '\u001B[31mAdded setup\u001B[0m',
+      'line\n two',
+      'safe\u202Etext',
+      '',
+      42,
+      'four',
+      'five',
+    ])).toEqual(['Added setup', 'line two', 'safetext', 'four']);
+  });
+
+  it('drops overlong entries instead of presenting a misleading truncation', () => {
+    expect(sanitizeHighlights(['x'.repeat(101), 'usable'])).toEqual(['usable']);
   });
 });
 
@@ -118,6 +141,23 @@ describe('refreshUpdateCache', () => {
     const cache = JSON.parse(await readFile(join(home, 'update-check.json'), 'utf8')) as UpdateCache;
     expect(cache.latest).toBe('0.9.0');
     expect(typeof cache.checkedAt).toBe('number');
+    await rm(home, {recursive: true, force: true});
+  });
+
+  it('binds bounded release highlights to the fetched latest version', async () => {
+    const {env, home} = await isolatedEnv();
+    const fetchImpl = vi.fn(async () => jsonResponse({
+      version: '0.9.0',
+      skein: {releaseNotes: ['Guided setup', '\u001B[32mProtocol-aware relay\u001B[0m']},
+    }));
+    const notice = await refreshUpdateCache('0.2.2', {env, fetchImpl: fetchImpl as unknown as typeof fetch});
+    expect(notice?.highlights).toEqual(['Guided setup', 'Protocol-aware relay']);
+    const cache = JSON.parse(await readFile(join(home, 'update-check.json'), 'utf8')) as UpdateCache;
+    expect(cache).toMatchObject({
+      latest: '0.9.0',
+      highlightsFor: '0.9.0',
+      highlights: ['Guided setup', 'Protocol-aware relay'],
+    });
     await rm(home, {recursive: true, force: true});
   });
 
@@ -186,6 +226,33 @@ describe('refreshUpdateCache', () => {
     expect(notice).toBeUndefined();
     await rm(home, {recursive: true, force: true});
   });
+
+  it('rejects malformed semver even when string ordering would call it newer', async () => {
+    const {env, home} = await isolatedEnv();
+    const fetchImpl = vi.fn(async () => jsonResponse({version: 'z-not-a-version'}));
+    expect(await refreshUpdateCache('0.2.2', {env, fetchImpl: fetchImpl as unknown as typeof fetch})).toBeUndefined();
+    expect((await readUpdateCache(env))?.latest).toBeNull();
+    await rm(home, {recursive: true, force: true});
+  });
+
+  it('clears stale highlights when a newer registry document has no release metadata', async () => {
+    const {env, home} = await isolatedEnv();
+    const stale = Date.now() - CHECK_INTERVAL_MS - 1000;
+    await writeFile(join(home, 'update-check.json'), JSON.stringify({
+      checkedAt: stale,
+      latest: '0.8.0',
+      highlightsFor: '0.8.0',
+      highlights: ['Old release note'],
+    } satisfies UpdateCache));
+    const fetchImpl = vi.fn(async () => jsonResponse({version: '0.9.0'}));
+    const notice = await refreshUpdateCache('0.2.2', {env, fetchImpl: fetchImpl as unknown as typeof fetch});
+    expect(notice?.latest).toBe('0.9.0');
+    expect(notice?.highlights).toBeUndefined();
+    const cache = JSON.parse(await readFile(join(home, 'update-check.json'), 'utf8')) as UpdateCache;
+    expect(cache.highlights).toBeUndefined();
+    expect(cache.highlightsFor).toBeUndefined();
+    await rm(home, {recursive: true, force: true});
+  });
 });
 
 describe('resolveCachedUpdateNotice', () => {
@@ -194,6 +261,18 @@ describe('resolveCachedUpdateNotice', () => {
     await writeFile(join(home, 'update-check.json'), JSON.stringify({checkedAt: Date.now(), latest: '0.3.0'} satisfies UpdateCache));
     const notice = await resolveCachedUpdateNotice('0.2.2', env);
     expect(notice).toEqual({current: '0.2.2', latest: '0.3.0', command: upgradeCommand()});
+    await rm(home, {recursive: true, force: true});
+  });
+
+  it('surfaces cached highlights only when their version binding matches latest', async () => {
+    const {env, home} = await isolatedEnv();
+    await writeFile(join(home, 'update-check.json'), JSON.stringify({
+      checkedAt: Date.now(),
+      latest: '0.3.0',
+      highlightsFor: '0.2.9',
+      highlights: ['Wrong release'],
+    } satisfies UpdateCache));
+    expect((await resolveCachedUpdateNotice('0.2.2', env))?.highlights).toBeUndefined();
     await rm(home, {recursive: true, force: true});
   });
 
@@ -217,5 +296,21 @@ describe('readUpdateCache', () => {
     await writeFile(join(home, 'update-check.json'), '{not json');
     expect(await readUpdateCache(env)).toBeNull();
     await rm(home, {recursive: true, force: true});
+  });
+
+  it('returns null for non-finite timestamps and invalid cached versions', async () => {
+    const {env, home} = await isolatedEnv();
+    await writeFile(join(home, 'update-check.json'), JSON.stringify({checkedAt: null, latest: '9.9.9'}));
+    expect(await readUpdateCache(env)).toBeNull();
+    await writeFile(join(home, 'update-check.json'), JSON.stringify({checkedAt: Date.now(), latest: '01.2.3'}));
+    expect(await readUpdateCache(env)).toBeNull();
+    await rm(home, {recursive: true, force: true});
+  });
+
+  it('ships release metadata in package.json for future registry notices', async () => {
+    const manifest = JSON.parse(await readFile(join(process.cwd(), 'package.json'), 'utf8')) as {
+      skein?: {releaseNotes?: unknown};
+    };
+    expect(sanitizeHighlights(manifest.skein?.releaseNotes)?.length).toBeGreaterThan(0);
   });
 });

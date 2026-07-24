@@ -182,6 +182,8 @@ describe('namespace leases', () => {
 
   it('rejects writes from a store that cached the legacy project namespace', async () => {
     const root = await workspace();
+    await mkdir(join(root, '.mosaic'));
+    await writeFile(join(root, '.mosaic', 'config.json'), '{}');
     const store = new SessionStore(root);
     await store.create({id: 'before', title: 'Before', provider: 'openai', model: 'test'});
     await migrateProjectNamespace(root);

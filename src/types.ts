@@ -70,6 +70,14 @@ export interface AgentTeamConfig {
   maxAgentToolCalls?: number;
   agentTimeoutMs?: number;
   budgetMode?: 'observe' | 'guard' | 'strict';
+  /** Explicit opt-in for the isolated writer lane. Repository config cannot enable it. */
+  writerEnabled?: boolean;
+  /** Writable built-in or user profile used by writer_run. */
+  writerProfile?: string;
+  /** Read-only profile that must accept a writer patch before integration. */
+  writerReviewerProfile?: string;
+  /** Hard UTF-8 byte limit for a persisted Git patch. Oversize patches are rejected. */
+  maxWriterPatchBytes?: number;
 }
 
 export interface AgentConnectionConfig {
@@ -240,6 +248,16 @@ export interface WorkingMemory {
   lastUpdatedAt: string;
 }
 
+export type AgentPhase = 'work' | 'review' | 'revision' | 'write';
+
+export type WriterLaneStatus =
+  | 'ready'
+  | 'conflict'
+  | 'integrated'
+  | 'rejected'
+  | 'failed'
+  | 'cancelled';
+
 /**
  * A user-controlled context source. Unlike retrieved code (which is compacted
  * away as the conversation grows), a pinned source is read fresh from disk and
@@ -291,14 +309,15 @@ export type AgentEvent =
   | {type: 'tasks'; tasks: SessionTask[]}
   | {type: 'skill'; name: string; description: string}
   | {type: 'memory'; count: number; scope: string}
-  | {type: 'agent_queued'; id: string; profile: string; task: string; phase?: 'work' | 'review' | 'revision'}
-  | {type: 'agent_start'; id: string; profile: string; task: string; provider?: string; model?: string; phase?: 'work' | 'review' | 'revision'; retryOf?: string}
+  | {type: 'agent_queued'; id: string; profile: string; task: string; phase?: AgentPhase}
+  | {type: 'agent_start'; id: string; profile: string; task: string; provider?: string; model?: string; phase?: AgentPhase; retryOf?: string}
   | {type: 'agent_message'; id: string; from: string; to: string; content: string}
   | {type: 'agent_update'; id: string; profile: string; stage: 'context' | 'thinking' | 'tool' | 'response' | 'review'; detail?: string; tool?: string; toolCalls?: number; inputTokens?: number; outputTokens?: number}
-  | {type: 'agent_cancelled'; id: string; profile: string; phase?: 'work' | 'review' | 'revision'; reason: string; queued: boolean}
+  | {type: 'agent_cancelled'; id: string; profile: string; phase?: AgentPhase; reason: string; queued: boolean}
   | {type: 'team_start'; id: string; objective: string}
   | {type: 'team_done'; id: string; accepted: boolean; reviewRounds: number}
-  | {type: 'agent_done'; id: string; profile: string; ok: boolean; summary: string; provider?: string; model?: string; phase?: 'work' | 'review' | 'revision'; durationMs?: number; toolCalls?: number; usage?: {inputTokens: number; outputTokens: number}}
+  | {type: 'agent_done'; id: string; profile: string; ok: boolean; summary: string; provider?: string; model?: string; phase?: AgentPhase; durationMs?: number; toolCalls?: number; usage?: {inputTokens: number; outputTokens: number}}
+  | {type: 'writer_lane'; id: string; status: WriterLaneStatus; detail: string; files?: string[]; checkpointId?: string}
   | {type: 'workflow'; name: string; step: string; status: TaskStatus}
   | {type: 'context_compacted'; omittedMessages: number; summaryTokens: number}
   | {type: 'usage'; inputTokens: number; outputTokens: number}

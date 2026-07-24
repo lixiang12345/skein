@@ -42,6 +42,14 @@ agent:
     - npm test
   checkpointBeforeWrite: true
 
+agents:
+  enabled: true
+  # Enable only in user-owned or explicitly trusted project configuration.
+  writerEnabled: false
+  writerProfile: implementer
+  writerReviewerProfile: reviewer
+  maxWriterPatchBytes: 60000
+
 hooks:
   beforeTool: []
   afterTool: []

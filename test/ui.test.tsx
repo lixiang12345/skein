@@ -137,6 +137,26 @@ describe('terminal presentation', () => {
     expect(output).not.toContain('context-first coding agent');
   });
 
+  it.each([20, 32, 48, 80])('renders update highlights without overflowing at %i columns', (columns) => {
+    const output = renderToString(
+      <Timeline width={columns} items={[{
+        id: 'update',
+        kind: 'update',
+        current: '0.2.3',
+        latest: '0.3.0',
+        command: 'npm i -g @skein-code/cli',
+        highlights: ['Guided first-run provider setup', 'Protocol-aware third-party relay routing'],
+      }]} />,
+      {columns},
+    );
+    expect(output).toContain('0.2.3');
+    expect(output).toContain('Guided');
+    for (const line of output.split('\n')) {
+      expect(displayWidth(line), `${columns}-column update row overflowed: ${JSON.stringify(line)}`)
+        .toBeLessThanOrEqual(columns);
+    }
+  });
+
   it.each([20, 24, 32, 40, 50])('progressively collapses every live row at %i columns', (columns) => {
     const suggestions = Array.from({length: 6}, (_, index) => ({
       value: `/command-${index}`,

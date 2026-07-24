@@ -72,11 +72,14 @@ describe('SkeinApp completion flows', () => {
 
     try {
       harness.stdin.write('deploy');
-      await settle();
+      await settleRender(harness.instance);
+      // Exercise the real batched-input case: repeated Ctrl+R can arrive before
+      // React commits the first history-search state update.
       harness.stdin.write('\u0012');
       await settle();
+      harness.stdin.write('\u0012');
+      await settleRender(harness.instance);
       // Repeating Ctrl+R moves from the newest match to the older match.
-      harness.stdin.write('\u0012');
       await vi.waitFor(() => expect(harness.output()).toContain('History search: deploy'));
       harness.stdin.write('\t');
       await settleRender(harness.instance);

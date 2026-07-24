@@ -446,12 +446,15 @@ export class AgentRunner {
         });
         checkpointId = checkpoint?.id;
       }
+      const toolExecutionContext: ToolExecutionContext = checkpointId
+        ? {...executionContext, checkpointId}
+        : executionContext;
       const beforeHooks = await this.hooks.run('beforeTool', {
         sessionId: this.session.id,
         call,
       }, options.signal);
       throwIfAborted(options.signal);
-      const execution = await tool.execute(call.arguments, executionContext);
+      const execution = await tool.execute(call.arguments, toolExecutionContext);
       const changedFiles = await this.acceptChangedFiles(execution.changedFiles ?? []);
       const tasksBefore = JSON.stringify(this.session.tasks);
       let afterHookError: Error | undefined;
