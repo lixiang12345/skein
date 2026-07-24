@@ -8,6 +8,7 @@ import {
   compactDisplayPath,
   displayWidth,
   limitTerminalText,
+  padDisplay,
   sanitizeTerminalText,
   truncateDisplay,
 } from './text.js';
@@ -1073,22 +1074,29 @@ export function ListPanel({title, entries, width = 80, glyphMode = 'auto', hideT
         const entryDetail = entry.detail ? sanitizeInlineTerminalText(entry.detail) : undefined;
         const labelLimit = entryDetail ? Math.max(1, Math.min(28, innerWidth - 4)) : innerWidth;
         const label = truncateDisplay(`${glyphs.bullet} ${entryLabel}`, labelLimit);
+        // Pad each row to a stable inner width so incremental terminal
+        // repaints overwrite trailing cells; short rows must not leave ghost
+        // characters from a previously longer row at the same position.
         if (rowWidth < 52 && entryDetail) {
+          const detailText = `  ${truncateDisplay(entryDetail, Math.max(1, innerWidth - 2))}`;
           return (
             <Box key={`${entry.label}-${index}`} flexDirection="column">
-              <Text color={color}>{label}</Text>
-              <Text color={theme.muted}>{`  ${truncateDisplay(entryDetail, Math.max(1, innerWidth - 2))}`}</Text>
+              <Text color={color}>{padDisplay(label, innerWidth)}</Text>
+              <Text color={theme.muted}>{padDisplay(detailText, innerWidth)}</Text>
             </Box>
           );
         }
         const detailLimit = Math.max(1, innerWidth - displayWidth(label) - 2);
+        const detailText = entryDetail ? truncateDisplay(entryDetail, detailLimit) : '';
+        const trailing = Math.max(0, innerWidth - displayWidth(label) - (entryDetail ? 2 + displayWidth(detailText) : 0));
         return (
           <Box key={`${entry.label}-${index}`}>
             <Text color={color}>{label}</Text>
-            {entryDetail ? <Text color={theme.muted}>  {truncateDisplay(entryDetail, detailLimit)}</Text> : null}
+            {entryDetail ? <Text color={theme.muted}>{`  ${detailText}`}</Text> : null}
+            {trailing > 0 ? <Text>{' '.repeat(trailing)}</Text> : null}
           </Box>
         );
-      }) : <Text color={theme.dim}>{glyphs.bullet} none</Text>}
+      }) : <Text color={theme.dim}>{padDisplay(`${glyphs.bullet} none`, innerWidth)}</Text>}
     </Box>
   );
 }

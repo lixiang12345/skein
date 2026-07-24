@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,9 +16,8 @@
   },
   "skein": {
     "releaseNotes": [
-      "Guided first-run setup for official APIs and third-party relays",
-      "Protocol-aware OpenAI-compatible and Anthropic-compatible routing",
-      "Update notices now include a bounded summary of what changed"
+      "Fix ghost characters left in /theme list and other list panels",
+      "List rows now pad to a stable width so incremental repaints overwrite stale cells"
     ]
   },
   "bin": {

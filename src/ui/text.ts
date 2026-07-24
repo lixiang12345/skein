@@ -53,6 +53,19 @@ export function sliceDisplay(value: string, maxWidth: number): string {
   return output;
 }
 
+/**
+ * Right-pad a string with spaces to fill `width` display columns, truncating
+ * (with an ellipsis) when the value is wider. Padding to a stable width lets
+ * incremental terminal repaints overwrite stale trailing cells so a shorter
+ * row cannot leave ghost characters from a previously longer row.
+ */
+export function padDisplay(value: string, width: number): string {
+  if (width <= 0) return '';
+  const truncated = truncateDisplay(value, width);
+  const pad = Math.max(0, width - displayWidth(truncated));
+  return truncated + ' '.repeat(pad);
+}
+
 export function compactDisplayPath(path: string, maxWidth = 54): string {
   if (displayWidth(path) <= maxWidth) return path;
   const parts = path.split('/').filter(Boolean);
