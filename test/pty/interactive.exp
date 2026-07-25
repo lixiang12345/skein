@@ -116,6 +116,38 @@ set escape "\033"
 set ctrl_c "\003"
 set ctrl_r "\022"
 
+send -- "/memory privacy"
+await_pattern {/memory privacy} {the memory privacy command}
+await_frame {the memory privacy command frame}
+send -- $enter
+await_pattern {Memory privacy} {the memory privacy review}
+await_frame {the memory privacy review frame}
+
+send -- "/skills"
+await_pattern {/skills} {the skills command}
+await_frame {the skills command frame}
+send -- $enter
+await_pattern {Skills} {the Skill trust list}
+await_pattern {blocked} {the blocked workspace Skill state}
+await_frame {the Skill trust list frame}
+
+send -- "/workflow"
+await_pattern {/workflow} {the workflow command}
+await_frame {the workflow command frame}
+send -- $enter
+await_pattern {Workflows} {the workflow trust list}
+await_pattern {read-only} {the workflow catalog boundary}
+await_frame {the workflow trust list frame}
+
+if {$mode eq "unicode"} {
+  send -- "review 项目"
+  await_pattern {项目} {the CJK composer text}
+  await_frame {the CJK composer frame}
+  send -- $ctrl_c
+  await_pattern {Type a request} {the composer after CJK input}
+  await_frame {the cleared CJK composer frame}
+}
+
 send -- "/hotkeys"
 await_pattern {/hotkeys} {the hotkey command}
 await_frame {the hotkey command frame}

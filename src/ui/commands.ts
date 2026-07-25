@@ -19,7 +19,7 @@ export const commandDefinitions: CommandDefinition[] = [
   command('workflow', 'Run a typed implementation, debug, review, or refactor flow', '/workflow <name> <task>'),
   command('context', 'Inspect context; pin/unpin/mute files that survive compaction', '/context [pin|unpin|mute|list|compact] [path]'),
   command('compact', 'Compact older session context', '/compact [instructions]'),
-  command('memory', 'Search durable memory or review proposed facts', '/memory [query|list|candidates|approve|reject|archive|forget]'),
+  command('memory', 'Search durable memory, review privacy, or manage proposed facts', '/memory [query|list|privacy|candidates|approve|reject|archive|forget]'),
   command('remember', 'Save a non-secret workspace memory', '/remember <fact or preference>'),
   command('skills', 'List discovered task playbooks'),
   command('agents', 'List built-in and installed expert profiles'),
@@ -146,6 +146,7 @@ export function commandSuggestions(
     const query = argument.trim().toLocaleLowerCase();
     return [
       {name: 'stats', description: 'Show active, archived, and pending memory counts'},
+      {name: 'privacy', description: 'Show a content-free retention and storage privacy review'},
       {name: 'list', description: 'Show recent durable memories'},
       {name: 'candidates', description: 'Review memory facts waiting for approval'},
       {name: 'approve', description: 'Approve a memory candidate by id'},
@@ -153,7 +154,7 @@ export function commandSuggestions(
       {name: 'archive', description: 'Archive a memory by id'},
       {name: 'forget', description: 'Permanently remove a memory by id'},
     ].filter((item) => item.name.includes(query)).map((item) => ({
-      value: `/memory ${item.name}${['stats', 'list', 'candidates'].includes(item.name) ? '' : ' '}`,
+      value: `/memory ${item.name}${['stats', 'privacy', 'list', 'candidates'].includes(item.name) ? '' : ' '}`,
       label: item.name,
       description: item.description,
     }));

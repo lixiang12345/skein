@@ -2,7 +2,7 @@ import {createInterface} from 'node:readline/promises';
 import {stdin as input, stdout as output} from 'node:process';
 import {lstat, readFile, writeFile} from 'node:fs/promises';
 import {existsSync} from 'node:fs';
-import {basename, resolve} from 'node:path';
+import {basename, isAbsolute, relative, resolve} from 'node:path';
 import {Command, Option} from 'commander';
 import chalk from 'chalk';
 import {
@@ -48,6 +48,7 @@ import {createProvider} from './providers/index.js';
 import {SessionStore, ToolArtifactStore, type SessionSummary} from './session/index.js';
 import {CheckpointStore} from './checkpoint/index.js';
 import {createDefaultToolRegistry} from './tools/index.js';
+import {atomicWrite} from './tools/write.js';
 import {runDoctor} from './cli/doctor.js';
 import {
   askConsolePermission,
@@ -64,8 +65,13 @@ import {
   runWorkspacePreparation,
 } from './ui/index.js';
 import {ExtensionRuntime} from './runtime/index.js';
-import {SkillCatalog} from './skills/index.js';
-import {MemoryStore, type MemoryCandidate} from './memory/index.js';
+import {SkillCatalog, type SkillDescriptor} from './skills/index.js';
+import {
+  MemoryStore,
+  type MemoryCandidate,
+  type MemoryPrivacyReview,
+  type MemorySelectionOptions,
+} from './memory/index.js';
 import {McpManager} from './mcp/index.js';
 import {WorkflowCatalog} from './workflows/index.js';
 import type {MosaicConfig, ProviderName, Session} from './types.js';
@@ -552,16 +558,80 @@ skillsCommand
   .option('--config <path>', 'explicit config file')
   .option('--json', 'print JSON')
   .action(async (options: ConfigOptions) => {
-    const config = await runtimeConfig(workspaceOption(options.workspace), runtimeOptions(options));
-    const catalog = new SkillCatalog(config.workspaceRoots[0] ?? process.cwd(), config.skills ?? {
-      enabled: false, directories: [], autoActivate: false, maxActive: 1, maxCharsPerSkill: 32_000,
-    });
-    const skills = await catalog.discover();
+    const {skills, workspace} = await discoverSkills(options);
     if (options.json) printObject(skills, true);
     else if (!skills.length) process.stdout.write('No skills discovered.\n');
     else for (const skill of skills) {
-      process.stdout.write(`${skill.name.padEnd(22)} ${skill.scope.padEnd(10)} ${skill.description}\n`);
+      process.stdout.write(
+        `${skill.name.padEnd(22)} ${skill.scope.padEnd(10)} ${skill.trust.padEnd(10)} ` +
+        `${skill.effect.padEnd(13)} ${displaySkillSource(workspace, skill.path)}  ${skill.description}\n`,
+      );
     }
+  });
+skillsCommand
+  .command('inspect <name>')
+  .description('Inspect a skill source, exact fingerprint, trust, and activation effect')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--json', 'print JSON')
+  .action(async (name: string, options: ConfigOptions) => {
+    const {skills, workspace} = await discoverSkills(options);
+    const skill = skills.find((candidate) => candidate.name === name);
+    if (!skill) throw new Error(`Unknown skill: ${name}`);
+    if (options.json) printObject(skill, true);
+    else printSkillReview(skill, workspace);
+  });
+skillsCommand
+  .command('trust <name>')
+  .description('Trust one exact workspace skill fingerprint after review')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--yes', 'confirm the trust decision')
+  .action(async (name: string, options: ConfigOptions & {yes?: boolean}) => {
+    const {catalog, skills, workspace} = await discoverSkills(options);
+    const skill = skills.find((candidate) => candidate.name === name);
+    if (!skill) throw new Error(`Unknown skill: ${name}`);
+    printSkillReview(skill, workspace);
+    if (skill.trustSource === 'source') {
+      process.stdout.write('This user-owned or explicitly configured external source is already trusted.\n');
+      return;
+    }
+    if (!options.yes) {
+      const accepted = await confirm(`Trust skill ${name} at this exact source and fingerprint?`);
+      if (!accepted) {
+        if (!process.stdin.isTTY || !process.stdout.isTTY) {
+          throw new Error('Skill trust requires explicit --yes confirmation in non-interactive mode.');
+        }
+        process.stdout.write('Skill trust cancelled.\n');
+        return;
+      }
+    }
+    const trusted = await catalog.trust(name);
+    process.stdout.write(`Trusted ${trusted.name} (${trusted.fingerprint.slice(0, 12)}); effect=${trusted.effect}.\n`);
+  });
+skillsCommand
+  .command('revoke <name>')
+  .description('Revoke persisted trust for a workspace skill')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--yes', 'confirm revocation')
+  .action(async (name: string, options: ConfigOptions & {yes?: boolean}) => {
+    const {catalog, skills, workspace} = await discoverSkills(options);
+    const skill = skills.find((candidate) => candidate.name === name);
+    if (!skill) throw new Error(`Unknown skill: ${name}`);
+    printSkillReview(skill, workspace);
+    if (!options.yes) {
+      const accepted = await confirm(`Revoke trust for skill ${name}?`);
+      if (!accepted) {
+        if (!process.stdin.isTTY || !process.stdout.isTTY) {
+          throw new Error('Skill revocation requires explicit --yes confirmation in non-interactive mode.');
+        }
+        process.stdout.write('Skill revocation cancelled.\n');
+        return;
+      }
+    }
+    const revoked = await catalog.revoke(name);
+    process.stdout.write(`Revoked ${revoked.name}; effect=${revoked.effect}.\n`);
   });
 
 const agentsCommand = program.command('agents').description('Inspect specialized agent profiles');
@@ -973,7 +1043,10 @@ workflowCommand
     const workflows = new WorkflowCatalog().list();
     if (options.json) printObject(workflows, true);
     else for (const workflow of workflows) {
-      process.stdout.write(`${workflow.name.padEnd(12)} ${workflow.steps.length} steps  ${workflow.description}\n`);
+      process.stdout.write(
+        `${workflow.name.padEnd(12)} ${workflow.source.padEnd(8)} trusted  catalog=${workflow.catalogAccess} ` +
+        `execution=${workflow.execution}  ${workflow.steps.length} steps  ${workflow.description}\n`,
+      );
     }
   });
 workflowCommand
@@ -986,6 +1059,9 @@ workflowCommand
     if (options.json) printObject(workflow, true);
     else {
       process.stdout.write(`${workflow.name} - ${workflow.description}\n`);
+      process.stdout.write(
+        `  Source: ${workflow.source}  Trust: trusted  Catalog: ${workflow.catalogAccess}  Execution: ${workflow.execution}\n`,
+      );
       for (const step of workflow.steps) {
         process.stdout.write(`  ${step.id.padEnd(12)} ${step.kind.padEnd(10)} ${step.title}${step.expert ? ` [${step.expert}]` : ''}\n`);
       }
@@ -1067,6 +1143,91 @@ memoryCommand
     const config = await runtimeConfig(workspaceOption(options.workspace), runtimeOptions(options));
     const store = await openMemoryStore(config);
     try { printObject(store.stats(), options.json === true); } finally { store.close(); }
+  });
+memoryCommand
+  .command('privacy')
+  .description('Review content-free memory retention and local storage privacy')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--json', 'print JSON')
+  .action(async (options: ConfigOptions) => {
+    const config = await runtimeConfig(workspaceOption(options.workspace), runtimeOptions(options));
+    const store = await openMemoryStore(config);
+    try {
+      const review = await store.privacyReview();
+      if (options.json) printObject(review, true);
+      else printMemoryPrivacyReview(review);
+    } finally {
+      store.close();
+    }
+  });
+memoryCommand
+  .command('export [file]')
+  .description('Export reviewed memory as JSON to stdout or an owner-only file')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .addOption(new Option('--scope <scope>', 'user, workspace, or all')
+    .choices(['user', 'workspace', 'all']).default('workspace'))
+  .action(async (file: string | undefined, options: ConfigOptions & {scope: string}) => {
+    const config = await runtimeConfig(workspaceOption(options.workspace), runtimeOptions(options));
+    const store = await openMemoryStore(config);
+    try {
+      const workspace = config.workspaceRoots[0] ?? process.cwd();
+      const bundle = store.exportData(memorySelection(options.scope, workspace));
+      const serialized = `${JSON.stringify(bundle, null, 2)}\n`;
+      if (!file) {
+        process.stdout.write(serialized);
+        return;
+      }
+      const path = resolve(file);
+      await assertMemoryExportTarget(path);
+      await atomicWrite(path, serialized, 0o600);
+      process.stdout.write(
+        `Exported ${bundle.records.length} records and ${bundle.candidates.length} candidates to ${path} (owner-only).\n`,
+      );
+    } finally {
+      store.close();
+    }
+  });
+memoryCommand
+  .command('clear')
+  .description('Permanently delete memory records and candidates in a selected scope')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .addOption(new Option('--scope <scope>', 'user, workspace, or all')
+    .choices(['user', 'workspace', 'all']).default('workspace'))
+  .option('--yes', 'confirm permanent deletion')
+  .option('--json', 'print JSON')
+  .action(async (options: ConfigOptions & {scope: string; yes?: boolean}) => {
+    const config = await runtimeConfig(workspaceOption(options.workspace), runtimeOptions(options));
+    const store = await openMemoryStore(config);
+    try {
+      const workspace = config.workspaceRoots[0] ?? process.cwd();
+      if (!options.yes) {
+        const accepted = await confirm(
+          `Permanently delete ${options.scope} memory records and candidates? This cannot be undone.`,
+        );
+        if (!accepted) {
+          if (!process.stdin.isTTY || !process.stdout.isTTY) {
+            throw new Error('Memory clear requires explicit --yes confirmation in non-interactive mode.');
+          }
+          process.stdout.write('Memory clear cancelled.\n');
+          return;
+        }
+      }
+      const result = store.clear(memorySelection(options.scope, workspace));
+      if (options.json) printObject({...result, scope: options.scope}, true);
+      else {
+        process.stdout.write(
+          `Deleted ${result.records} records and ${result.candidates} candidates from ${options.scope} memory.\n`,
+        );
+        if (!result.compacted) {
+          process.stdout.write('Warning: logical deletion succeeded, but SQLite compaction could not finish; close other Skein processes and run clear again.\n');
+        }
+      }
+    } finally {
+      store.close();
+    }
   });
 memoryCommand
   .command('candidates')
@@ -2057,6 +2218,84 @@ function printMcpManifest(review: {
   for (const tool of manifest.tools) {
     process.stdout.write(`  ${tool.name}: ${tool.permissions.join('+')}  evidence=${tool.completionEvidence}\n`);
     process.stdout.write(`    network=${tool.network.join(', ') || 'unspecified'} commands=${tool.commands.join(', ') || 'none'} paths=${tool.paths.join(', ') || 'none'} sensitive=${tool.sensitiveFields.join(', ') || 'none'}\n`);
+  }
+}
+
+async function discoverSkills(options: ConfigOptions): Promise<{
+  catalog: SkillCatalog;
+  skills: SkillDescriptor[];
+  workspace: string;
+}> {
+  const requestedWorkspace = workspaceOption(options.workspace);
+  const config = await runtimeConfig(requestedWorkspace, runtimeOptions(options));
+  const workspace = config.workspaceRoots[0] ?? requestedWorkspace;
+  const catalog = new SkillCatalog(workspace, config.skills ?? {
+    enabled: false, directories: [], autoActivate: false, maxActive: 1, maxCharsPerSkill: 32_000,
+  });
+  return {catalog, skills: await catalog.discover(), workspace};
+}
+
+function displaySkillSource(workspace: string, source: string): string {
+  const normalized = resolve(source);
+  const workspaceRelative = relative(resolve(workspace), normalized);
+  if (!workspaceRelative.startsWith('..') && !isAbsolute(workspaceRelative)) {
+    return `<workspace>/${workspaceRelative || '.'}`;
+  }
+  return normalized;
+}
+
+function printSkillReview(skill: SkillDescriptor, workspace: string): void {
+  process.stdout.write(`Skill ${skill.name}\n`);
+  process.stdout.write(`  Source: ${displaySkillSource(workspace, skill.path)}\n`);
+  process.stdout.write(`  Scope: ${skill.scope}\n`);
+  process.stdout.write(`  Trust: ${skill.trust} (${skill.trustSource})\n`);
+  process.stdout.write(`  Effect: ${skill.effect}\n`);
+  process.stdout.write(`  Fingerprint: ${skill.fingerprint}\n`);
+  process.stdout.write(`  Description: ${skill.description}\n`);
+}
+
+function memorySelection(scope: string, workspace: string): MemorySelectionOptions {
+  if (scope === 'all') return {};
+  if (scope === 'user') return {scopes: [{scope: 'user', scopeKey: 'default'}]};
+  return {scopes: [{scope: 'workspace', scopeKey: workspace}]};
+}
+
+async function assertMemoryExportTarget(path: string): Promise<void> {
+  try {
+    const info = await lstat(path);
+    if (info.isSymbolicLink()) throw new Error(`Memory export target cannot be a symbolic link: ${path}`);
+    if (!info.isFile()) throw new Error(`Memory export target must be a regular file: ${path}`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
+  }
+}
+
+function printMemoryPrivacyReview(review: MemoryPrivacyReview): void {
+  const ownerOnly = review.storage.ownerOnly === null
+    ? 'not verifiable on this platform'
+    : review.storage.ownerOnly ? 'yes' : 'no';
+  process.stdout.write('Memory privacy review (content-free)\n');
+  process.stdout.write(`  Storage: local SQLite / WAL  owner-only=${ownerOnly}  encrypted-at-rest=no\n`);
+  process.stdout.write(
+    `  Records: ${review.totals.active} active  ${review.totals.archived} archived  ` +
+    `${review.totals.candidates.pending} pending candidates\n`,
+  );
+  process.stdout.write(
+    `  Retention: ${review.lifecycle.neverExpires} no-expiry  ${review.lifecycle.expiring} expiring  ` +
+    `${review.lifecycle.expired} expired  ${review.lifecycle.unverified} unverified\n`,
+  );
+  process.stdout.write(
+    `  Scopes: user=${review.recordsByScope.user} workspace=${review.recordsByScope.workspace} ` +
+    `session=${review.recordsByScope.session} agent=${review.recordsByScope.agent}\n`,
+  );
+  if (!review.findings.length) {
+    process.stdout.write('  Findings: none\n');
+    return;
+  }
+  process.stdout.write('  Findings:\n');
+  for (const finding of review.findings) {
+    process.stdout.write(`    ${finding.severity} ${finding.code} (${finding.count}) - ${finding.action}\n`);
   }
 }
 

@@ -238,6 +238,25 @@ the durable table and can archive a conflicting older fact. Rejected or expired
 candidates never enter retrieval. This write → manage → read loop keeps memory
 useful without silently accumulating guesses.
 
+The governance plane separates content-free review from contentful export.
+`memory privacy` exposes only aggregate scope, kind, lifecycle, candidate,
+provenance-risk, and owner-only file-permission facts; content, tags, scope keys,
+and the database path are absent by construction. `memory export` selects
+`user`, one exact workspace, or all scopes and writes atomically with owner-only
+permissions after rejecting destination symlinks. `memory clear` applies the
+same scope selector, requires explicit headless confirmation, enables SQLite
+`secure_delete`, and attempts FTS optimization, WAL truncation, and `VACUUM`.
+Logical deletion remains successful if compaction is temporarily busy and that
+distinction is reported. SQLite contents are not encrypted by Skein at rest.
+
+Workspace Skills are another persisted trust boundary. Discovery hashes the
+exact `SKILL.md`; activation requires a user-owned decision bound to the
+resolved workspace, source-path hash, and content hash. Source or content drift
+becomes `changed`, revocation becomes `revoked`, and both states fail closed.
+User-owned and explicitly configured external locations remain trusted by
+source. The workflow catalog is built in, trusted, and read-only; each workflow
+declares whether running it stays read-only or enters the single-writer lane.
+
 ## Relay transport and model catalog
 
 New primary connections target third-party compatible relays only. A named

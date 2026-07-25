@@ -85,6 +85,13 @@ set enter "\r"
 set escape "\033"
 set ctrl_c "\003"
 
+send -- "/memory privacy"
+await_pattern {/memory privacy} {the compact memory privacy command}
+await_frame {the compact memory privacy command frame}
+send -- $enter
+await_pattern {Memory privacy} {the compact memory privacy review}
+await_frame {the compact memory privacy frame}
+
 send -- "/context"
 await_pattern {/context} {the context command}
 await_frame {the context command frame}

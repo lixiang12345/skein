@@ -1,4 +1,4 @@
-import {mkdtemp, rm} from 'node:fs/promises';
+import {mkdtemp, rm, stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
@@ -241,6 +241,65 @@ describe('MemoryStore', () => {
       expect(augmentation.text).toContain('authorization="none"');
     } finally {
       await runtime.close();
+    }
+  });
+
+  it('exports explicit content, reports privacy without content, and securely clears selected scopes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-memory-governance-'));
+    roots.push(root);
+    const path = join(root, 'memory.sqlite');
+    const store = await new MemoryStore(path).open();
+    try {
+      const user = store.remember({
+        scope: 'user', scopeKey: 'default', content: 'Prefer concise release summaries.',
+        source: 'interactive:test',
+      });
+      const workspace = store.remember({
+        scope: 'workspace', scopeKey: '/private/repository', content: 'Run the private release checklist.',
+        source: 'interactive:test',
+      });
+      store.archive(workspace.id);
+      store.propose({
+        scope: 'workspace', scopeKey: '/private/repository', content: 'Candidate private release detail.',
+        source: 'model:test', rationale: 'Observed in the repository.',
+      });
+
+      const review = await store.privacyReview();
+      const serializedReview = JSON.stringify(review);
+      expect(review).toMatchObject({
+        contentIncluded: false,
+        scopeKeysIncluded: false,
+        databasePathIncluded: false,
+        totals: {records: 2, active: 1, archived: 1, candidates: {pending: 1}},
+        recordsByScope: {user: 1, workspace: 1},
+      });
+      expect(serializedReview).not.toContain('private release');
+      expect(serializedReview).not.toContain('/private/repository');
+      expect(serializedReview).not.toContain(path);
+      if (process.platform !== 'win32') {
+        expect(review.storage.ownerOnly).toBe(true);
+        expect((await stat(path)).mode & 0o777).toBe(0o600);
+      }
+
+      const exported = store.exportData({
+        scopes: [{scope: 'workspace', scopeKey: '/private/repository'}],
+      });
+      expect(exported.records).toEqual([expect.objectContaining({id: workspace.id, status: 'archived'})]);
+      expect(exported.candidates[0]?.content).toContain('Candidate private release detail');
+      expect(JSON.stringify(exported)).not.toContain(user.id);
+
+      const cleared = store.clear({
+        scopes: [{scope: 'workspace', scopeKey: '/private/repository'}],
+      });
+      expect(cleared).toMatchObject({records: 1, candidates: 1, compacted: true});
+      expect(store.get(workspace.id)).toBeUndefined();
+      expect(store.get(user.id)?.status).toBe('active');
+      expect(store.exportData().candidates).toEqual([]);
+
+      expect(store.clear()).toMatchObject({records: 1, candidates: 0, compacted: true});
+      expect(store.stats()).toMatchObject({active: 0, archived: 0, candidates: 0});
+    } finally {
+      store.close();
     }
   });
 

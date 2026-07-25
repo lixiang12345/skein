@@ -22,17 +22,23 @@ const lines = cleaned.split('\n');
 const contentLines = lines.filter((line) => line.trim());
 const widest = Math.max(0, ...contentLines.map((line) => stringWidth(line)));
 const required = scenario === 'short'
-  ? ['Inspecting', 'verified', 'Type a request', 'Context', 'Permission', 'Commands']
+  ? ['Inspecting', 'verified', 'Type a request', 'Memory privacy', 'Context', 'Permission', 'Commands']
   : [
       'Inspecting',
       'verified',
       'SKEIN',
+      'Memory privacy',
+      'Skills',
+      'blocked',
+      'Workflows',
+      'read-only',
       'Keyboard',
       'Permission',
       'History search',
       'Files',
       '@src/ui/tui.tsx',
     ];
+if (scenario === 'full' && mode === 'unicode') required.push('项目');
 if (scenario === 'full' && width >= 48) required.push('context runs automatically', '@file pins');
 if (scenario === 'full' && width >= 80) required.push('Ctrl+R');
 if (scenario === 'full' && width >= 96) {

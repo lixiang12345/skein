@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto';
 import {lstat, readFile, readdir, realpath} from 'node:fs/promises';
 import {homedir} from 'node:os';
 import {basename, join, resolve} from 'node:path';
@@ -5,6 +6,7 @@ import {parse as parseYaml} from 'yaml';
 import type {SkillConfig} from '../types.js';
 import {isInside} from '../utils/path.js';
 import {resolveHomeNamespace, resolveProjectNamespaceSync} from '../utils/namespace.js';
+import {SkillTrustStore, type SkillTrustState} from './trust-store.js';
 
 export type SkillScope = 'user' | 'workspace' | 'configured';
 
@@ -14,6 +16,10 @@ export interface SkillDescriptor {
   path: string;
   scope: SkillScope;
   trusted: boolean;
+  trust: SkillTrustState;
+  trustSource: 'source' | 'decision' | 'none';
+  effect: 'auto-activate' | 'explicit-only' | 'blocked';
+  fingerprint: string;
 }
 
 export interface LoadedSkill extends SkillDescriptor {
@@ -26,12 +32,17 @@ interface Frontmatter {
   description?: unknown;
 }
 
+interface DiscoveredSkill extends Pick<SkillDescriptor, 'name' | 'description' | 'path' | 'scope' | 'fingerprint'> {
+  intrinsicTrusted: boolean;
+}
+
 export class SkillCatalog {
   private skills: SkillDescriptor[] = [];
 
   constructor(
     private readonly workspace: string,
     private readonly config: SkillConfig,
+    private readonly trustStore = new SkillTrustStore(),
   ) {}
 
   async discover(): Promise<SkillDescriptor[]> {
@@ -40,18 +51,18 @@ export class SkillCatalog {
       return [];
     }
     const locations = discoveryLocations(this.workspace, this.config.directories);
-    const discovered = new Map<string, SkillDescriptor>();
+    const discovered = new Map<string, DiscoveredSkill>();
     for (const location of locations) {
       const entries = await safeDirectories(location.path);
       for (const entry of entries) {
         const skillPath = join(location.path, entry, 'SKILL.md');
         const metadata = await readMetadata(skillPath);
         if (!metadata) continue;
-        const descriptor: SkillDescriptor = {
+        const descriptor: DiscoveredSkill = {
           ...metadata,
           path: skillPath,
           scope: location.scope,
-          trusted: location.trusted,
+          intrinsicTrusted: location.trusted,
         };
         const existing = discovered.get(descriptor.name);
         if (!existing || precedence(descriptor.scope) >= precedence(existing.scope)) {
@@ -59,7 +70,21 @@ export class SkillCatalog {
         }
       }
     }
-    this.skills = [...discovered.values()].sort((left, right) => left.name.localeCompare(right.name));
+    const selected = [...discovered.values()].sort((left, right) => left.name.localeCompare(right.name));
+    const decisions = await this.trustStore.states(this.workspace, selected
+      .filter((skill) => !skill.intrinsicTrusted)
+      .map((skill) => ({skill: skill.name, source: skill.path, fingerprint: skill.fingerprint})));
+    this.skills = selected.map(({intrinsicTrusted, ...skill}) => {
+      const trust = intrinsicTrusted ? 'trusted' : decisions.get(skill.name) ?? 'untrusted';
+      const trusted = trust === 'trusted';
+      return {
+        ...skill,
+        trusted,
+        trust,
+        trustSource: intrinsicTrusted ? 'source' : trusted ? 'decision' : 'none',
+        effect: trusted ? this.config.autoActivate ? 'auto-activate' : 'explicit-only' : 'blocked',
+      };
+    });
     return this.list();
   }
 
@@ -71,15 +96,38 @@ export class SkillCatalog {
     return this.skills.find((skill) => skill.name === name);
   }
 
+  async trust(name: string): Promise<SkillDescriptor> {
+    if (!this.skills.length) await this.discover();
+    const skill = this.get(name);
+    if (!skill) throw new Error(`Unknown skill: ${name}`);
+    if (skill.trusted) return skill;
+    await this.trustStore.trust(this.workspace, skill.name, skill.path, skill.fingerprint);
+    await this.discover();
+    return this.get(name) as SkillDescriptor;
+  }
+
+  async revoke(name: string): Promise<SkillDescriptor> {
+    if (!this.skills.length) await this.discover();
+    const skill = this.get(name);
+    if (!skill) throw new Error(`Unknown skill: ${name}`);
+    if (skill.trustSource === 'source') {
+      throw new Error('User-owned or explicitly configured external skills are trusted by source; remove or disable that source instead.');
+    }
+    await this.trustStore.revoke(this.workspace, skill.name, skill.path, skill.fingerprint);
+    await this.discover();
+    return this.get(name) as SkillDescriptor;
+  }
+
   async activate(input: string, explicit: string[] = []): Promise<LoadedSkill[]> {
     if (!this.skills.length) await this.discover();
     const requested = explicit.length ? explicit : explicitSkillNames(input);
+    const eligible = this.skills.filter((skill) => skill.trusted);
     const candidates = requested.length
-      ? this.skills
+      ? eligible
         .filter((skill) => requested.includes(skill.name))
         .map((skill) => ({skill, score: 1_000}))
       : this.config.autoActivate
-        ? this.skills.map((skill) => ({skill, score: relevance(input, skill)}))
+        ? eligible.map((skill) => ({skill, score: relevance(input, skill)}))
           .filter((candidate) => candidate.score > 0)
           .sort((left, right) => right.score - left.score)
         : [];
@@ -141,7 +189,7 @@ async function safeDirectories(path: string): Promise<string[]> {
   }
 }
 
-async function readMetadata(path: string): Promise<Pick<SkillDescriptor, 'name' | 'description'> | undefined> {
+async function readMetadata(path: string): Promise<Pick<SkillDescriptor, 'name' | 'description' | 'fingerprint'> | undefined> {
   const raw = await safeRead(path, 80_000);
   if (!raw) return undefined;
   const {frontmatter} = splitFrontmatter(raw);
@@ -152,7 +200,7 @@ async function readMetadata(path: string): Promise<Pick<SkillDescriptor, 'name' 
   if (!/^[a-z][a-z0-9_-]{0,63}$/.test(name) || !description || description.length > 1_000) {
     return undefined;
   }
-  return {name, description};
+  return {name, description, fingerprint: createHash('sha256').update(raw).digest('hex')};
 }
 
 async function readSkill(path: string, maxChars: number): Promise<string | undefined> {

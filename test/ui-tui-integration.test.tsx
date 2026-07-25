@@ -693,6 +693,95 @@ describe('SkeinApp completion flows', () => {
       await rm(root, {recursive: true, force: true});
     }
   });
+
+  it('renders content-free memory privacy and explicit Skill/workflow trust metadata', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-governance-ui-'));
+    const session = testSession(root);
+    const {runner} = mockRunner(root, session);
+    const privateContent = 'Never print this retained memory content.';
+    const privateDatabasePath = join(root, '.private', 'memory.sqlite');
+    const extensions = {
+      memory: {},
+      memoryStats: () => ({active: 2, archived: 1, candidates: 1, path: privateDatabasePath}),
+      memoryPrivacyReview: async () => ({
+        schemaVersion: 1 as const,
+        generatedAt: '2026-07-26T00:00:00.000Z',
+        contentIncluded: false as const,
+        scopeKeysIncluded: false as const,
+        databasePathIncluded: false as const,
+        storage: {
+          kind: 'local-sqlite' as const,
+          journalMode: 'wal' as const,
+          encryptedAtRest: false as const,
+          ownerOnly: true,
+          filesChecked: 3,
+        },
+        totals: {
+          records: 3, active: 2, archived: 1,
+          candidates: {pending: 1, approved: 0, rejected: 0},
+        },
+        recordsByScope: {user: 1, workspace: 2, session: 0, agent: 0},
+        recordsByKind: {semantic: 2, episodic: 0, procedural: 1},
+        lifecycle: {
+          expiring: 1, expired: 0, neverExpires: 2, unverified: 0, directInferred: 0, superseding: 0,
+        },
+        findings: [{
+          code: 'unencrypted-local-store', severity: 'info' as const, count: 3,
+          action: 'Protect the device and backups; the SQLite store is not encrypted by Skein.',
+        }],
+      }),
+      listSkills: () => [{
+        name: 'workspace-release',
+        description: 'Review release artifacts.',
+        path: join(root, '.agents', 'skills', 'release', 'SKILL.md'),
+        scope: 'workspace' as const,
+        trusted: false,
+        trust: 'changed' as const,
+        trustSource: 'none' as const,
+        effect: 'blocked' as const,
+        fingerprint: 'a'.repeat(64),
+      }],
+      listWorkflows: () => [{
+        name: 'review', description: 'Review without mutating the catalog.', steps: [],
+        source: 'builtin' as const, trusted: true as const, catalogAccess: 'read-only' as const,
+        execution: 'read-only' as const,
+      }],
+      mcpStatus: () => [],
+    } as unknown as ExtensionRuntime;
+    const harness = await mountApp(runner, root, extensions);
+
+    try {
+      harness.stdin.write('/memory privacy\r');
+      await vi.waitFor(() => expect(harness.output()).toContain('Memory privacy'));
+      const privacyOutput = stripAnsi(harness.output());
+      expect(privacyOutput).toContain('content-free');
+      expect(privacyOutput).toContain('3 retained records');
+      expect(privacyOutput).toContain('not encrypted by Skein');
+      expect(privacyOutput).toContain('No content, tags, scope k');
+      expect(privacyOutput).not.toContain(privateContent);
+      expect(privacyOutput).not.toContain(privateDatabasePath);
+
+      harness.stdin.write('/skills\r');
+      await vi.waitFor(() => expect(harness.output()).toContain('workspace-release'));
+      const skillsOutput = stripAnsi(harness.output());
+      expect(skillsOutput).toContain('workspace');
+      expect(skillsOutput).toContain('changed');
+      expect(skillsOutput).toContain('blocked');
+      expect(skillsOutput).toContain('aaaaaaaaaaaa');
+
+      harness.stdin.write('/workflow\r');
+      await vi.waitFor(() => expect(harness.output()).toContain('Review without mutating'));
+      const workflowOutput = stripAnsi(harness.output());
+      expect(workflowOutput).toContain('review');
+      expect(workflowOutput).toContain('builtin');
+      expect(workflowOutput).toContain('trusted');
+      expect(workflowOutput).toContain('read-only catalog');
+      expect(workflowOutput).toContain('read-only execution');
+    } finally {
+      await harness.cleanup();
+      await rm(root, {recursive: true, force: true});
+    }
+  });
 });
 
 type MockInput = PassThrough & {

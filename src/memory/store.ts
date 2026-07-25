@@ -62,6 +62,60 @@ export interface MemorySearchOptions {
   touch?: boolean;
 }
 
+export interface MemorySelectionOptions {
+  scopes?: Array<{scope: MemoryScope; scopeKey: string}>;
+}
+
+export interface MemoryExportBundle {
+  schemaVersion: 1;
+  exportedAt: string;
+  records: MemoryRecord[];
+  candidates: MemoryCandidate[];
+}
+
+export interface MemoryClearResult {
+  records: number;
+  candidates: number;
+  compacted: boolean;
+}
+
+export interface MemoryPrivacyReview {
+  schemaVersion: 1;
+  generatedAt: string;
+  contentIncluded: false;
+  scopeKeysIncluded: false;
+  databasePathIncluded: false;
+  storage: {
+    kind: 'local-sqlite';
+    journalMode: 'wal';
+    encryptedAtRest: false;
+    ownerOnly: boolean | null;
+    filesChecked: number;
+  };
+  totals: {
+    records: number;
+    active: number;
+    archived: number;
+    candidates: Record<MemoryCandidate['status'], number>;
+  };
+  recordsByScope: Record<MemoryScope, number>;
+  recordsByKind: Record<MemoryKind, number>;
+  lifecycle: {
+    expiring: number;
+    expired: number;
+    neverExpires: number;
+    unverified: number;
+    directInferred: number;
+    superseding: number;
+  };
+  findings: Array<{
+    code: string;
+    severity: 'info' | 'warning' | 'error';
+    count: number;
+    action: string;
+  }>;
+}
+
 export interface MemoryCandidate {
   id: string;
   scope: MemoryScope;
@@ -177,7 +231,7 @@ export class MemoryStore {
       database = new DatabaseSync(this.path);
       const previousSchemaVersion = (database.prepare('PRAGMA user_version').get() as
         {user_version?: number} | undefined)?.user_version ?? 0;
-      database.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;');
+      database.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON;');
       database.exec(`
         CREATE TABLE IF NOT EXISTS memories (
           rowid INTEGER PRIMARY KEY,
@@ -259,7 +313,11 @@ export class MemoryStore {
       }
       this.database = database;
       this.namespaceLease = lease;
-      await chmod(this.path, 0o600).catch(() => undefined);
+      await Promise.all([
+        this.path,
+        `${this.path}-wal`,
+        `${this.path}-shm`,
+      ].map((path) => chmod(path, 0o600).catch(() => undefined)));
       return this;
     } catch (error) {
       database?.close();
@@ -586,6 +644,140 @@ export class MemoryStore {
     return result.changes > 0;
   }
 
+  exportData(options: MemorySelectionOptions = {}): MemoryExportBundle {
+    const database = this.requireDatabase();
+    const selection = buildSelection(options.scopes);
+    const records = database.prepare(
+      `SELECT * FROM memories${selection.sql} ORDER BY created_at ASC, id ASC`,
+    ).all(...selection.parameters) as unknown as MemoryRow[];
+    const candidates = database.prepare(
+      `SELECT * FROM memory_candidates${selection.sql} ORDER BY created_at ASC, id ASC`,
+    ).all(...selection.parameters) as unknown as CandidateRow[];
+    return {
+      schemaVersion: 1,
+      exportedAt: new Date().toISOString(),
+      records: records.map(toRecord),
+      candidates: candidates.map(toCandidate),
+    };
+  }
+
+  clear(options: MemorySelectionOptions = {}): MemoryClearResult {
+    const database = this.requireDatabase();
+    const selection = buildSelection(options.scopes);
+    database.exec('BEGIN IMMEDIATE');
+    try {
+      const candidates = database.prepare(
+        `DELETE FROM memory_candidates${selection.sql}`,
+      ).run(...selection.parameters);
+      const records = database.prepare(
+        `DELETE FROM memories${selection.sql}`,
+      ).run(...selection.parameters);
+      database.exec('COMMIT');
+      let compacted = true;
+      try {
+        database.exec("INSERT INTO memory_fts(memory_fts) VALUES('optimize');");
+        const before = database.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get() as
+          {busy?: number} | undefined;
+        if ((before?.busy ?? 0) !== 0) throw new Error('Memory checkpoint is busy.');
+        database.exec('VACUUM;');
+        const after = database.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get() as
+          {busy?: number} | undefined;
+        if ((after?.busy ?? 0) !== 0) throw new Error('Memory checkpoint is busy.');
+      } catch {
+        compacted = false;
+      }
+      return {
+        records: Number(records.changes),
+        candidates: Number(candidates.changes),
+        compacted,
+      };
+    } catch (error) {
+      database.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  async privacyReview(): Promise<MemoryPrivacyReview> {
+    const database = this.requireDatabase();
+    const recordStatuses = database.prepare(
+      'SELECT status, COUNT(*) AS count FROM memories GROUP BY status',
+    ).all() as unknown as Array<{status: MemoryRecord['status']; count: number}>;
+    const candidateStatuses = database.prepare(
+      'SELECT status, COUNT(*) AS count FROM memory_candidates GROUP BY status',
+    ).all() as unknown as Array<{status: MemoryCandidate['status']; count: number}>;
+    const scopeRows = database.prepare(
+      'SELECT scope, COUNT(*) AS count FROM memories GROUP BY scope',
+    ).all() as unknown as Array<{scope: MemoryScope; count: number}>;
+    const kindRows = database.prepare(
+      'SELECT kind, COUNT(*) AS count FROM memories GROUP BY kind',
+    ).all() as unknown as Array<{kind: MemoryKind; count: number}>;
+    const now = new Date().toISOString();
+    const count = (where: string, ...parameters: string[]): number => {
+      const row = database.prepare(`SELECT COUNT(*) AS count FROM memories WHERE ${where}`)
+        .get(...parameters) as {count: number};
+      return Number(row.count);
+    };
+    const active = Number(recordStatuses.find((row) => row.status === 'active')?.count ?? 0);
+    const archived = Number(recordStatuses.find((row) => row.status === 'archived')?.count ?? 0);
+    const candidates = {
+      pending: Number(candidateStatuses.find((row) => row.status === 'pending')?.count ?? 0),
+      approved: Number(candidateStatuses.find((row) => row.status === 'approved')?.count ?? 0),
+      rejected: Number(candidateStatuses.find((row) => row.status === 'rejected')?.count ?? 0),
+    };
+    const expiring = count('expires_at IS NOT NULL');
+    const expired = count('expires_at IS NOT NULL AND expires_at <= ?', now);
+    const neverExpires = count('expires_at IS NULL');
+    const unverified = count('last_verified_at IS NULL');
+    const directInferred = count(
+      "source <> 'user' AND source NOT LIKE 'interactive:%' AND source NOT LIKE 'approved:%'",
+    );
+    const superseding = count('supersedes_id IS NOT NULL');
+    const permissions = await memoryFilePermissions(this.path);
+    const findings: MemoryPrivacyReview['findings'] = [
+      {
+        code: 'unencrypted-local-store', severity: 'info', count: active + archived,
+        action: 'Protect the device and backups; the SQLite store is not encrypted by Skein.',
+      },
+      ...(permissions.ownerOnly === false ? [{
+        code: 'non-owner-only-files' as const, severity: 'error' as const,
+        count: permissions.nonOwnerOnly,
+        action: 'Restrict the memory database and sidecars to the current operating-system user.',
+      }] : []),
+      ...(archived ? [{
+        code: 'archived-content-retained' as const, severity: 'info' as const, count: archived,
+        action: 'Export if needed, then permanently forget or clear records that should no longer be retained.',
+      }] : []),
+      ...(candidates.pending ? [{
+        code: 'pending-candidate-review' as const, severity: 'warning' as const, count: candidates.pending,
+        action: 'Approve or reject pending candidates; they are not active retrieval memory.',
+      }] : []),
+      ...(expired ? [{
+        code: 'expired-records-retained' as const, severity: 'warning' as const, count: expired,
+        action: 'Run the normal memory lifecycle sweep or clear expired records.',
+      }] : []),
+      ...(directInferred ? [{
+        code: 'direct-inferred-records' as const, severity: 'warning' as const, count: directInferred,
+        action: 'Review legacy inferred records; current model writes enter candidates instead.',
+      }] : []),
+    ];
+    return {
+      schemaVersion: 1,
+      generatedAt: now,
+      contentIncluded: false,
+      scopeKeysIncluded: false,
+      databasePathIncluded: false,
+      storage: {
+        kind: 'local-sqlite', journalMode: 'wal', encryptedAtRest: false,
+        ownerOnly: permissions.ownerOnly, filesChecked: permissions.filesChecked,
+      },
+      totals: {records: active + archived, active, archived, candidates},
+      recordsByScope: countMap(['user', 'workspace', 'session', 'agent'], scopeRows),
+      recordsByKind: countMap(['semantic', 'episodic', 'procedural'], kindRows),
+      lifecycle: {expiring, expired, neverExpires, unverified, directInferred, superseding},
+      findings,
+    };
+  }
+
   stats(): {active: number; archived: number; candidates: number; path: string} {
     const rows = this.requireDatabase().prepare(
       'SELECT status, COUNT(*) AS count FROM memories GROUP BY status',
@@ -674,6 +866,48 @@ function buildMemoryFilters(options: MemorySearchOptions): {
     sql: clauses.length ? ` AND ${clauses.join(' AND ')}` : '',
     parameters,
   };
+}
+
+function buildSelection(scopes: MemorySelectionOptions['scopes']): {
+  sql: string;
+  parameters: string[];
+} {
+  if (!scopes?.length) return {sql: '', parameters: []};
+  return {
+    sql: ` WHERE ${scopes.map(() => '(scope = ? AND scope_key = ?)').join(' OR ')}`,
+    parameters: scopes.flatMap((item) => [item.scope, item.scopeKey]),
+  };
+}
+
+function countMap<Key extends string>(
+  keys: readonly Key[],
+  rows: Array<{count: number} & Partial<Record<'scope' | 'kind', string>>>,
+): Record<Key, number> {
+  return Object.fromEntries(keys.map((key) => [
+    key,
+    Number(rows.find((row) => row.scope === key || row.kind === key)?.count ?? 0),
+  ])) as Record<Key, number>;
+}
+
+async function memoryFilePermissions(path: string): Promise<{
+  ownerOnly: boolean | null;
+  filesChecked: number;
+  nonOwnerOnly: number;
+}> {
+  const files = [];
+  for (const candidate of [path, `${path}-wal`, `${path}-shm`]) {
+    try {
+      const info = await lstat(candidate);
+      if (info.isFile()) files.push(info);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+  if (process.platform === 'win32') {
+    return {ownerOnly: null, filesChecked: files.length, nonOwnerOnly: 0};
+  }
+  const nonOwnerOnly = files.filter((info) => (info.mode & 0o077) !== 0).length;
+  return {ownerOnly: nonOwnerOnly === 0, filesChecked: files.length, nonOwnerOnly};
 }
 
 function toRecord(row: MemoryRow): MemoryRecord {

@@ -909,12 +909,22 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     if (command === 'skills') {
       const skills = extensions?.listSkills() ?? [];
       appendList('Skills', skills.length
-        ? skills.map((skill) => ({
-          label: `${skill.name}  ${skill.scope}${skill.trusted ? '' : `${separator}untrusted`}`,
-          detail: `${skill.description}${separator}${relative(runner.workspace.primaryRoot, skill.path) || skill.path}`,
-          tone: skill.trusted ? 'normal' as const : 'warning' as const,
-        }))
-        : [{label: 'No skills discovered.', detail: 'Add SKILL.md playbooks under .agents/skills, .claude/skills, or a configured directory.'}]);
+        ? [
+          ...skills.map((skill) => ({
+            label: skill.name,
+            detail: `${skill.effect}${separator}${skill.trust}${separator}${skill.scope}${separator}` +
+              `${skill.fingerprint.slice(0, 12)}${separator}${skill.description}${separator}` +
+              `${relative(runner.workspace.primaryRoot, skill.path) || skill.path}`,
+            tone: skill.trusted ? 'normal' as const : 'warning' as const,
+          })),
+          ...(skills.some((skill) => !skill.trusted) ? [{
+            label: `Review trust with ${PRODUCT_COMMAND} skills inspect/trust`,
+            detail: 'Trust is bound to the exact workspace, source path, and content fingerprint.',
+            tone: 'warning' as const,
+          }] : []),
+        ]
+        : [{label: 'No skills discovered.', detail: 'Add SKILL.md playbooks under .agents/skills, .claude/skills, or a configured directory.'},
+          {label: `Trust workspace skills with ${PRODUCT_COMMAND} skills inspect/trust`, detail: 'Trust is bound to the exact source and content fingerprint.'}]);
       return true;
     }
     if (command === 'mcp') {
@@ -1099,7 +1109,10 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     if (command === 'workflow') {
       const [name = '', ...taskParts] = argument.split(/\s+/);
       if (!name) {
-        appendList('Workflows', workflows.map((workflow) => ({label: workflow.name, detail: workflow.description})));
+        appendList('Workflows', workflows.map((workflow) => ({
+          label: `${workflow.name}${separator}${workflow.source}${separator}trusted`,
+          detail: `${workflow.catalogAccess} catalog${separator}${workflow.execution} execution${separator}${workflow.description}`,
+        })));
         return true;
       }
       const task = taskParts.join(' ').trim();
@@ -1213,7 +1226,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     append({id: nextId(), kind: 'notice', tone: 'error', text: `Unknown command: /${command}`});
     return true;
 
-    function runMemoryCommand(argumentText: string): LocalCommandResult {
+    async function runMemoryCommand(argumentText: string): Promise<LocalCommandResult> {
       if (!extensions?.memory) {
         append({id: nextId(), kind: 'notice', tone: 'error', text: 'Memory is disabled.'});
         return true;
@@ -1228,6 +1241,44 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
           {label: `${stats.candidates} pending`, detail: 'candidate facts awaiting approval', tone: stats.candidates ? 'warning' : 'normal'},
           {label: stats.path, detail: 'local SQLite store'},
         ] : [{label: 'Memory is disabled.', tone: 'error'}]);
+        return true;
+      }
+      if (normalized === 'privacy') {
+        const review = await extensions.memoryPrivacyReview();
+        if (!review) {
+          append({id: nextId(), kind: 'notice', tone: 'error', text: 'Memory privacy review is unavailable.'});
+          return true;
+        }
+        const ownerOnly = review.storage.ownerOnly === null
+          ? 'not verifiable'
+          : review.storage.ownerOnly ? 'owner-only' : 'permissions need review';
+        appendList(`Memory privacy ${separator} content-free`, [
+          {
+            label: `${review.totals.records} retained records`,
+            detail: `${review.totals.active} active${separator}${review.totals.archived} archived${separator}${review.totals.candidates.pending} pending`,
+          },
+          {
+            label: `local SQLite${separator}${ownerOnly}`,
+            detail: `not encrypted by Skein${separator}${review.storage.filesChecked} storage files checked`,
+            tone: review.storage.ownerOnly === false ? 'error' : 'warning',
+          },
+          {
+            label: `${review.lifecycle.neverExpires} no-expiry${separator}${review.lifecycle.expiring} expiring`,
+            detail: `${review.lifecycle.expired} expired${separator}${review.lifecycle.unverified} unverified${separator}${review.lifecycle.directInferred} legacy direct-inferred`,
+            tone: review.lifecycle.expired || review.lifecycle.directInferred ? 'warning' : 'normal',
+          },
+          ...review.findings.map((finding) => ({
+            label: `${finding.severity}${separator}${finding.code}${separator}${finding.count}`,
+            detail: finding.action,
+            tone: finding.severity === 'error' ? 'error' as const
+              : finding.severity === 'warning' ? 'warning' as const : 'normal' as const,
+          })),
+          {
+            label: 'No content, tags, scope keys, or database path shown',
+            detail: `Use ${PRODUCT_COMMAND} memory export for an explicit owner-only JSON export.`,
+            tone: 'success',
+          },
+        ]);
         return true;
       }
       if (normalized === 'list') {

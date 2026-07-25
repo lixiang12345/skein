@@ -10,8 +10,16 @@ artifacts="${SKEIN_PTY_ARTIFACTS:-.mosaic/pty-artifacts}"
 workspace=$(mktemp -d "${TMPDIR:-/tmp}/skein-pty.XXXXXX")
 trap 'rm -rf "$workspace"' EXIT HUP INT TERM
 
-mkdir -p "$artifacts" "$workspace/src/ui"
+mkdir -p "$artifacts" "$workspace/src/ui" "$workspace/.agents/skills/pty-audit"
 printf '%s\n' 'export const ptyFixture = true;' > "$workspace/src/ui/tui.tsx"
+printf '%s\n' \
+  '---' \
+  'name: pty-audit' \
+  'description: Inspect terminal release surfaces.' \
+  '---' \
+  '# PTY audit' \
+  'Review terminal output without side effects.' \
+  > "$workspace/.agents/skills/pty-audit/SKILL.md"
 
 for width in 20 24 40 80 120; do
   mode=unicode

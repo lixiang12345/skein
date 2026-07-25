@@ -15,6 +15,7 @@ import {
   createMemoryTools,
   MemoryStore,
   type MemoryCandidate,
+  type MemoryPrivacyReview,
   type MemoryRecord,
 } from '../memory/index.js';
 import {SkillCatalog, formatSkillsForPrompt, type SkillDescriptor} from '../skills/index.js';
@@ -204,6 +205,10 @@ export class ExtensionRuntime implements PromptContextProvider {
 
   memoryStats() {
     return this.memory?.stats();
+  }
+
+  async memoryPrivacyReview(): Promise<MemoryPrivacyReview | undefined> {
+    return this.memory?.privacyReview();
   }
 
   mcpStatus(): McpServerStatus[] {

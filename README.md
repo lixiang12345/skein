@@ -298,7 +298,9 @@ Build mode is the only mode that can mutate under the configured policy.
 toggles one live inspector for the active transcript, mutable working memory,
 compacted session summary, and durable retrieval layer separately. Model-
 suggested durable memories can be reviewed with `/memory candidates` and then
-approved or rejected.
+approved or rejected. `/memory privacy` shows content-free retention,
+provenance-risk, lifecycle, and file-permission aggregates; it never shows
+memory text, tags, scope keys, or the database path.
 
 Tool output has three explicit boundaries. Shell capture is bounded while the
 process runs; completed MCP responses are reduced to a 5 MiB adapter result
@@ -334,6 +336,18 @@ Remote mutations without a Skein-bound checkpoint plus changed-file, artifact,
 and completion receipts remain explicitly `unresolved`. Use `skein mcp disable`
 or `skein mcp revoke --yes` (and the matching `/mcp` commands) to unload schemas
 and persist the decision.
+
+Skills have a separate local trust boundary. User-owned and explicitly
+configured external Skill directories are trusted by source. Workspace-owned
+`SKILL.md` files are blocked until `skein skills inspect <name>` is reviewed and
+`skein skills trust <name> --yes` records the exact workspace, source-path, and
+content fingerprint. Any content or source change produces `changed` and blocks
+activation until a new review; `skein skills revoke <name> --yes` persists an
+explicit revocation. `/skills` exposes scope, trust, activation effect, and a
+short fingerprint without injecting Skill content into the status view.
+Built-in workflows are a read-only trusted catalog; `skein workflow list` and
+`/workflow` disclose whether execution is read-only or uses the single-writer
+lane.
 
 At 96 columns and wider, a fresh session uses a two-column welcome surface. The
 left side keeps Skein's brand, workspace path, and next actions close to the
@@ -736,6 +750,24 @@ person approves it with `/memory candidates` and `/memory approve <id>`. The
 interactive `/remember` command and `skein memory add` are explicit user writes.
 This prevents retrieved text from becoming an unreviewed instruction or
 permission grant.
+
+Memory governance is explicit:
+
+```bash
+skein memory privacy --json
+skein memory export backup.json --scope workspace
+skein memory clear --scope workspace --yes --json
+```
+
+`privacy` is content-free, while `export` is intentionally contentful and
+writes an owner-only `0600` JSON file when a destination is provided. Export
+destinations cannot be symbolic links. `clear` permanently deletes records and
+candidates only in the selected `user`, `workspace`, or `all` scope and requires
+`--yes` in non-interactive use. The store enables SQLite `secure_delete`,
+truncates WAL state, and vacuums after deletion when no competing process keeps
+the database busy. These measures reduce remanence but are not encryption:
+Skein does not encrypt the SQLite database at rest, so device and backup
+protection remain the operator's responsibility.
 
 Add both `.mosaic/` and `.skein/` to `.gitignore` unless the team intentionally
 shares a sanitized configuration file elsewhere.

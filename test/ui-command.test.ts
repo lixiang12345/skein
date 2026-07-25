@@ -27,7 +27,8 @@ describe('terminal command and width helpers', () => {
       value: '/theme graphite',
     });
     expect(commandSuggestions('/workflow de', {workflows: [{
-      name: 'debug', description: 'Debug safely', steps: [],
+      name: 'debug', description: 'Debug safely', steps: [], source: 'builtin', trusted: true,
+      catalogAccess: 'read-only', execution: 'read-only',
     }]})[0]).toMatchObject({value: '/workflow debug '});
     expect(commandSuggestions('/mode a')[0]).toMatchObject({value: '/mode ask', label: 'ask'});
     expect(commandSuggestions('/mode p')[0]).toMatchObject({value: '/mode plan', label: 'plan'});
@@ -38,6 +39,7 @@ describe('terminal command and width helpers', () => {
     expect(commandSuggestions('/review w')[0]).toMatchObject({value: '/review working-tree', label: 'working-tree'});
     expect(commandSuggestions('/review c')[0]).toMatchObject({value: '/review commit ', label: 'commit'});
     expect(commandSuggestions('/recover r').map((item) => item.value)).toEqual(['/recover retry', '/recover resume', '/recover rollback']);
+    expect(commandSuggestions('/memory pri')[0]).toMatchObject({value: '/memory privacy', label: 'privacy'});
   });
 
   it('truncates Chinese and emoji by terminal cells instead of UTF-16 length', () => {

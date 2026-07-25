@@ -17,9 +17,13 @@ export interface WorkflowDefinition {
   name: string;
   description: string;
   steps: WorkflowStep[];
+  source: 'builtin';
+  trusted: true;
+  catalogAccess: 'read-only';
+  execution: 'read-only' | 'single-writer';
 }
 
-export const builtInWorkflows: WorkflowDefinition[] = [
+const workflowTemplates: Array<Omit<WorkflowDefinition, 'source' | 'trusted' | 'catalogAccess' | 'execution'>> = [
   {
     name: 'implement',
     description: 'Inspect, plan, implement with one writer, review, verify, and finalize.',
@@ -68,6 +72,14 @@ export const builtInWorkflows: WorkflowDefinition[] = [
     ],
   },
 ];
+
+export const builtInWorkflows: WorkflowDefinition[] = workflowTemplates.map((workflow) => ({
+  ...workflow,
+  source: 'builtin',
+  trusted: true,
+  catalogAccess: 'read-only',
+  execution: workflow.steps.some((step) => !step.readOnly) ? 'single-writer' : 'read-only',
+}));
 
 export class WorkflowCatalog {
   private readonly workflows = new Map(builtInWorkflows.map((workflow) => [workflow.name, workflow]));
@@ -121,7 +133,14 @@ export function createWorkflowTool(catalog: WorkflowCatalog): AgentTool {
       if (!workflow) return {ok: false, content: `Unknown workflow: ${input.name}`};
       return {
         content: catalog.prompt(input.name, input.task),
-        metadata: {workflow: workflow.name, steps: workflow.steps.length},
+        metadata: {
+          workflow: workflow.name,
+          steps: workflow.steps.length,
+          source: workflow.source,
+          trusted: workflow.trusted,
+          catalogAccess: workflow.catalogAccess,
+          execution: workflow.execution,
+        },
       };
     },
   };
