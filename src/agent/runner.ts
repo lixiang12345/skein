@@ -74,6 +74,7 @@ import {
   toggleMuteContextSource,
   unpinContextSource,
 } from '../context/context-sources.js';
+import {evaluateReuseGate} from './reuse-gate.js';
 
 export interface AgentRunnerOptions {
   config: MosaicConfig;
@@ -109,6 +110,7 @@ export class AgentRunner {
   private changeSequence = 0;
   private steering: string[] = [];
   private readonly sessionApprovals = new Set<string>();
+  private activeReuseGate: {requestId: string; request: string; attempted: boolean} | undefined;
 
   constructor(options: AgentRunnerOptions) {
     this.config = options.config;
@@ -221,6 +223,7 @@ export class AgentRunner {
       }
       this.contextManager.startTurn(this.session, request);
       const userMessage = message('user', request);
+      this.activeReuseGate = {requestId: userMessage.id, request, attempted: false};
       this.session.messages.push(userMessage);
       await this.persist();
 
@@ -521,6 +524,7 @@ export class AgentRunner {
     } finally {
       this.running = false;
       this.steering = [];
+      this.activeReuseGate = undefined;
     }
   }
 
@@ -644,6 +648,28 @@ export class AgentRunner {
       ...(options.signal ? {signal: options.signal} : {}),
     };
     try {
+      let reuseReceipt: Awaited<ReturnType<typeof evaluateReuseGate>>['receipt'];
+      let reuseWarning: string | undefined;
+      if (categories.includes('write') && this.activeReuseGate && !this.activeReuseGate.attempted &&
+        (call.name === 'write_file' || call.name === 'apply_patch')) {
+        this.activeReuseGate.attempted = true;
+        try {
+          const gate = await evaluateReuseGate({
+            requestId: this.activeReuseGate.requestId,
+            request: this.activeReuseGate.request,
+            changeSequence: this.changeSequence,
+            call,
+            context: this.contextEngine,
+            workspace: this.workspace,
+          });
+          reuseReceipt = gate.receipt;
+          reuseWarning = gate.warning;
+          if (!gate.triggered) this.activeReuseGate.attempted = false;
+        } catch {
+          this.activeReuseGate.attempted = false;
+          reuseWarning = 'Reuse check (warning-only) was inconclusive.';
+        }
+      }
       let checkpointId: string | undefined;
       if (this.config.agent.checkpointBeforeWrite && categories.includes('write') &&
         tool.affectedPaths) {
@@ -679,16 +705,19 @@ export class AgentRunner {
       let completeContent = afterHookError
         ? `${execution.content}\n\nTool succeeded, but afterTool hook failed: ${afterHookError.message}`
         : execution.content;
+      if (reuseWarning) completeContent = `${reuseWarning}\n\n${completeContent}`;
       const metadata: Record<string, unknown> = {
         ...(execution.metadata ?? {}),
         ...(changedFiles.length ? {changedFiles} : {}),
         ...(checkpointId ? {checkpointId} : {}),
+        ...(reuseReceipt ? {reuseReceipt} : {}),
         ...(beforeHooks.length || afterHooks.length
           ? {hooks: {before: beforeHooks.length, after: afterHooks.length}}
           : {}),
         ...(afterHookError ? {toolSucceeded: true, hookError: afterHookError.message} : {}),
       };
       const ok = execution.ok !== false && !afterHookError;
+      if (!ok && reuseReceipt && this.activeReuseGate) this.activeReuseGate.attempted = false;
       if (!ok) {
         const failureClass = options.signal?.aborted
           ? 'cancelled'

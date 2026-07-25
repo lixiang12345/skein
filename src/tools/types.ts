@@ -1,5 +1,5 @@
 import type {AgentEvent, MosaicConfig, Session, ToolCategory, ToolDefinition} from '../types.js';
-import type {ContextHit, ContextPackOptions, PackedContext} from '../types.js';
+import type {ContextDegradation, ContextHit, ContextPackOptions, PackedContext} from '../types.js';
 import type {ToolArtifactStore} from '../session/tool-artifacts.js';
 import type {WorkspaceAccess} from './workspace.js';
 
@@ -10,6 +10,8 @@ export interface ContextProvider {
   invalidate?(paths: string[]): void;
   /** Make dirty paths queryable before the next retrieval boundary. */
   flushDirty?(): Promise<ContextRefreshResult>;
+  /** Last retrieval degradation, when the provider can expose it without I/O. */
+  lastDegradation?(): ContextDegradation | undefined;
 }
 
 export type ContextRefreshResult =

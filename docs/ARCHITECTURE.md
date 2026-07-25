@@ -52,7 +52,10 @@
    receives one bounded recovery turn; the runtime persists `verified`,
    `unverified`, or `verification_failed` instead of trusting completion claims
    in model text.
-10. Persist the outcome and expose the same status through the TUI, text, JSON,
+10. Before the first substantive write, run the warning-only repository reuse
+    gate. It binds current candidate/read evidence to the request, index
+    generation, and change sequence without retaining source text.
+11. Persist the outcome and expose the same status through the TUI, text, JSON,
     and JSONL surfaces.
 
 ## Interactive startup gate

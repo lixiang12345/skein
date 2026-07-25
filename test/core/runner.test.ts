@@ -188,6 +188,36 @@ describe('AgentRunner', () => {
     });
   });
 
+  it('attaches a warning-only reuse receipt to the first substantive write', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-runner-reuse-'));
+    roots.push(root);
+    const helper = join(root, 'helper.ts');
+    await writeFile(helper, 'export function parseThing(value: string) { return value.trim(); }\n');
+    const provider = new QueueProvider([
+      {content: '', toolCalls: [{id: 'reuse-write', name: 'write_file', arguments: {
+        path: 'parser.ts', content: 'export function parseThing(value: string) { return value.trim(); }\n',
+      }}]},
+      {content: 'Done.', toolCalls: []},
+    ]);
+    const events: AgentEvent[] = [];
+    const runner = new AgentRunner({
+      config: config(root), provider,
+      contextEngine: {
+        ...context,
+        async search() { return [{path: helper, startLine: 1, endLine: 1, content: 'private', score: 0.9, source: 'local', symbol: 'parseThing'}]; },
+        async flushDirty() { return {status: 'current', generation: 'g-runner', paths: 0}; },
+      },
+    });
+    await runner.run('add parser helper', {onEvent: (event) => { events.push(event); }});
+    const result = events.find((event): event is Extract<AgentEvent, {type: 'tool_result'}> =>
+      event.type === 'tool_result' && event.result.name === 'write_file');
+    expect(result?.result.metadata?.reuseReceipt).toMatchObject({decision: 'reuse', warningOnly: true});
+    expect(result?.result.content).toContain('Reuse check (warning-only)');
+    expect(runner.getSession().audit).toEqual(expect.arrayContaining([
+      expect.objectContaining({metadata: expect.objectContaining({reuseReceipt: expect.objectContaining({warningOnly: true})})}),
+    ]));
+  });
+
   it('does not expose mutation tools in ask mode', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mosaic-ask-'));
     roots.push(root);

@@ -27,6 +27,14 @@ export function toolMetaSummary(metadata?: Record<string, unknown>): string | un
   if (typeof metadata.checkpointId === 'string' && metadata.checkpointId) {
     parts.push(`checkpoint ${metadata.checkpointId.slice(0, 12)}`);
   }
+  const reuse = metadata.reuseReceipt;
+  if (reuse && typeof reuse === 'object') {
+    const decision = (reuse as {decision?: unknown}).decision;
+    const status = (reuse as {status?: unknown}).status;
+    if (typeof decision === 'string') {
+      parts.push(`reuse ${decision}${status === 'unresolved' ? ' (incomplete)' : ' (warning)'}`);
+    }
+  }
   const hooks = metadata.hooks;
   if (hooks && typeof hooks === 'object') {
     const before = Number((hooks as {before?: unknown}).before ?? 0);

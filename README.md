@@ -43,6 +43,9 @@ inspectable index for code retrieval and no retrieval service dependency.
   source spans, and rebuild it explicitly when needed.
 - **Visible trust:** per-category permissions, deny rules, hooks, workspace path
   enforcement, changed-file telemetry, and persisted tool results.
+- **Repository reuse guard:** the first substantive implementation addition gets a warning-only,
+  content-free receipt of current helper candidates and read evidence; docs,
+  config, fixtures, generated files, deletions, and local edits stay quiet.
 - **Bounded tool context:** large tool results cannot crowd the task out of the
   model window. Skein keeps a token-budgeted head/tail receipt and, when the
   producer captured the complete result, retains a redacted session-scoped
@@ -86,7 +89,7 @@ To build, verify, and install a local package artifact from this checkout:
 
 ```bash
 npm run verify:package -- --output-dir artifacts/package
-npm install -g ./artifacts/package/skein-code-cli-0.3.13.tgz
+npm install -g ./artifacts/package/skein-code-cli-0.3.14.tgz
 ```
 
 To install the published package from npm:

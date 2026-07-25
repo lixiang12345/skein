@@ -248,6 +248,35 @@ export interface ContextHit {
   symbol?: string;
 }
 
+export type ReuseDecision = 'reuse' | 'extend' | 'new' | 'unresolved';
+export type ReuseReceiptStatus = 'warning' | 'skipped' | 'unresolved';
+
+/**
+ * Content-free runtime evidence captured before a substantive new write.
+ * The receipt is deliberately bounded so it can be persisted in audit/session
+ * metadata without retaining prompts, source text, or credentials.
+ */
+export interface ReuseReceipt {
+  requestId: string;
+  queryHash: string;
+  targetPaths: string[];
+  trigger: 'new-file' | 'new-symbol';
+  decision: ReuseDecision;
+  candidates: Array<{
+    path: string;
+    symbol?: string;
+    score: number;
+    read: 'current' | 'unreadable';
+  }>;
+  selectedPath?: string;
+  selectedSymbol?: string;
+  rationale: string;
+  indexGeneration?: string;
+  changeSequence: number;
+  status: ReuseReceiptStatus;
+  warningOnly: true;
+}
+
 export type ContextBudgetTier = 'none' | 'focused' | 'standard' | 'broad' | 'maximum';
 
 export interface ContextPackOptions {

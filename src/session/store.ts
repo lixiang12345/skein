@@ -47,6 +47,34 @@ const taskSchema = z.object({
   status: z.enum(['pending', 'in_progress', 'completed']),
 }).strict();
 
+const reuseReceiptSchema = z.object({
+  requestId: z.string().uuid(),
+  queryHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  targetPaths: z.array(z.string()).max(8),
+  trigger: z.enum(['new-file', 'new-symbol']),
+  decision: z.enum(['reuse', 'extend', 'new', 'unresolved']),
+  candidates: z.array(z.object({
+    path: z.string(),
+    symbol: z.string().optional(),
+    score: z.number().finite(),
+    read: z.enum(['current', 'unreadable']),
+  }).strict()).max(5),
+  selectedPath: z.string().optional(),
+  selectedSymbol: z.string().optional(),
+  rationale: z.string().max(500),
+  indexGeneration: z.string().optional(),
+  changeSequence: z.number().int().nonnegative(),
+  status: z.enum(['warning', 'skipped', 'unresolved']),
+  warningOnly: z.literal(true),
+}).strict();
+
+const auditMetadataSchema = z.record(z.string(), z.unknown()).superRefine((metadata, ctx) => {
+  const receipt = metadata.reuseReceipt;
+  if (receipt !== undefined && !reuseReceiptSchema.safeParse(receipt).success) {
+    ctx.addIssue({code: 'custom', message: 'Invalid reuse receipt'});
+  }
+});
+
 const auditSchema = z.object({
   id: z.string(),
   createdAt: z.string(),
@@ -56,7 +84,7 @@ const auditSchema = z.object({
   category: z.enum(['read', 'write', 'shell', 'git', 'network']).optional(),
   outcome: z.enum(['allow', 'deny', 'success', 'failure']),
   reason: z.string().optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
+  metadata: auditMetadataSchema.optional(),
 }).strict();
 
 const contextSourceSchema = z.object({

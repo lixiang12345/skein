@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.13`.
+- Current repository version: `0.3.14`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -41,8 +41,8 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.13.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.13.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.14.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.14.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
@@ -53,6 +53,20 @@ short-height case. The current full-suite count is recorded from the latest
 `npm run check` in the release evidence.
 
 ## Recommended Order
+
+### P0-D: Warning-only repository reuse gate
+
+Version `0.3.14` adds the first runtime reuse slice. The prompt states a short
+repository-first ladder, while `src/agent/reuse-gate.ts` evaluates only the
+first substantive `write_file` or `apply_patch` addition. It flushes the local
+index, re-reads ranked candidates, and persists a bounded `ReuseReceipt` with
+hashed query metadata, paths, symbols, scores, read status, generation, and
+change sequence. The receipt never stores source or prompt text. This release
+is intentionally warning-only; an unavailable index is `unresolved`, not a
+false pass, and legitimate docs/config/test/generated/deletion/local-edit
+changes are exempt. The next slice is deterministic function extraction and
+post-write duplication audit; high-confidence blocking waits for fixture-based
+precision calibration.
 
 ### P0: Continuous Integration And Release Reproducibility
 
