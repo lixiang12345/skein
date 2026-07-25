@@ -135,7 +135,11 @@ describe('agents capability CLI', () => {
       'agents', 'capability', 'reset', '--workspace', workspace, '--yes', '--json',
     ], environment);
     expect(JSON.parse(reset.stdout)).toMatchObject({version: 2, epochs: [], observations: [], pins: [], health: []});
-  }, 30_000);
+  // This scenario intentionally starts ten source CLI processes. Cold tsx
+  // startup on shared Linux runners can take 3–4 seconds per process, so the
+  // default integration-test budget is too small even when every command
+  // completes successfully.
+  }, 60_000);
 
   it('keeps off-mode inspection read-only and retains the static route', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'skein-capability-off-workspace-'));
