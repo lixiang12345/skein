@@ -277,6 +277,40 @@ export interface ReuseReceipt {
   warningOnly: true;
 }
 
+export interface FunctionFingerprint {
+  path: string;
+  symbol: string;
+  startLine: number;
+  endLine: number;
+  tokenCount: number;
+  exactHash: string;
+  fingerprints: string[];
+}
+
+/** Ephemeral pre-write baseline. It contains hashes and locations, never source. */
+export interface DuplicationBaseline {
+  generation: string;
+  functions: FunctionFingerprint[];
+}
+
+export interface DuplicationAuditReceipt {
+  baselineGeneration: string;
+  changeSequence: number;
+  status: 'clear' | 'warning' | 'unresolved';
+  warningOnly: true;
+  checkedFunctions: number;
+  skippedSmallFunctions: number;
+  matches: Array<{
+    changedPath: string;
+    changedSymbol: string;
+    candidatePath: string;
+    candidateSymbol: string;
+    kind: 'type-1-or-2' | 'type-3';
+    similarity: number;
+  }>;
+  rationale: string;
+}
+
 export type ContextBudgetTier = 'none' | 'focused' | 'standard' | 'broad' | 'maximum';
 
 export interface ContextPackOptions {

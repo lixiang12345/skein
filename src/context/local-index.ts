@@ -3,7 +3,7 @@ import {lstat, readFile, stat} from 'node:fs/promises';
 import {basename, dirname, extname, isAbsolute, join, relative, resolve, sep} from 'node:path';
 import fg from 'fast-glob';
 import {z} from 'zod';
-import type {ContextHit, PackedContext} from '../types.js';
+import type {ContextHit, DuplicationBaseline, PackedContext} from '../types.js';
 import {WorkspaceAccess} from '../tools/workspace.js';
 import {atomicWrite} from '../tools/write.js';
 import {assertNoSymlinkPath, ensureWorkspaceStorageDirectory} from '../utils/storage.js';
@@ -15,6 +15,7 @@ import {
   resolveProjectNamespaceSync,
 } from '../utils/namespace.js';
 import {withNamespaceLease} from '../utils/namespace-lease.js';
+import {extractFunctionFingerprints} from './function-fingerprint.js';
 
 interface IndexedChunk {
   id: string;
@@ -148,6 +149,7 @@ export class LocalContextIndex {
   private index?: LocalIndexFile;
   private readonly workspace: WorkspaceAccess;
   private readonly queryCache = new Map<string, ContextHit[]>();
+  private fingerprintCache: DuplicationBaseline | undefined;
   private readonly dirtyPaths = new Set<string>();
   private refreshState: LocalIndexStatus['refreshState'] = 'current';
   private refreshError: string | undefined;
@@ -192,6 +194,7 @@ export class LocalContextIndex {
       }
       this.index = {...parsed, files};
       this.queryCache.clear();
+      this.fingerprintCache = undefined;
       this.refreshState = this.dirtyPaths.size ? 'dirty' : 'current';
       this.refreshError = undefined;
       return true;
@@ -199,6 +202,7 @@ export class LocalContextIndex {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
       delete this.index;
       this.queryCache.clear();
+      this.fingerprintCache = undefined;
       return false;
     }
   }
@@ -326,6 +330,7 @@ export class LocalContextIndex {
           files: nextFiles,
         };
         this.queryCache.clear();
+        this.fingerprintCache = undefined;
         await ensureWorkspaceStorageDirectory(workspace, dirname(this.indexPath), {
           requireActiveNamespace: true,
         });
@@ -344,6 +349,26 @@ export class LocalContextIndex {
   async pack(query: string, topK: number, maxTokens: number): Promise<PackedContext> {
     const hits = await this.search(query, topK);
     return packContextHits(hits, this.roots, maxTokens, 'local');
+  }
+
+  async functionFingerprints(): Promise<DuplicationBaseline> {
+    await this.flushDirty();
+    await this.ensureCurrentIndex();
+    const index = this.index;
+    if (!index) throw new Error('The local context index is unavailable.');
+    if (this.fingerprintCache?.generation === index.generation) {
+      return cloneDuplicationBaseline(this.fingerprintCache);
+    }
+    const functions = index.files.flatMap((file) => {
+      const content = reconstructIndexedContent(file.chunks);
+      if (hashContent(content) !== file.contentHash) {
+        throw new Error('The fingerprint baseline could not reconstruct current indexed files.');
+      }
+      return extractFunctionFingerprints(file.absolutePath, content)
+        .map(({normalizedTokens: _tokens, ...fingerprint}) => fingerprint);
+    });
+    this.fingerprintCache = {generation: index.generation, functions};
+    return cloneDuplicationBaseline(this.fingerprintCache);
   }
 
   status(): LocalIndexStatus {
@@ -456,6 +481,7 @@ export class LocalContextIndex {
       files,
     };
     this.queryCache.clear();
+    this.fingerprintCache = undefined;
     onProgress?.({phase: 'write', completed: files.length, total: files.length});
     await ensureWorkspaceStorageDirectory(
       this.roots[0] ?? process.cwd(),
@@ -776,6 +802,26 @@ export function packContextHits(
 
 function cloneHits(hits: ContextHit[]): ContextHit[] {
   return hits.map((hit) => ({...hit}));
+}
+
+function cloneDuplicationBaseline(baseline: DuplicationBaseline): DuplicationBaseline {
+  return {
+    generation: baseline.generation,
+    functions: baseline.functions.map((item) => ({...item, fingerprints: [...item.fingerprints]})),
+  };
+}
+
+function reconstructIndexedContent(chunks: IndexedChunk[]): string {
+  const ordered = chunks.slice().sort((left, right) => left.startLine - right.startLine);
+  const totalLines = ordered.reduce((maximum, chunk) => Math.max(maximum, chunk.endLine), 0);
+  const lines = Array.from<string | undefined>({length: totalLines});
+  for (const chunk of ordered) {
+    for (const [offset, line] of chunk.content.split('\n').entries()) {
+      const index = chunk.startLine - 1 + offset;
+      if (lines[index] === undefined) lines[index] = line;
+    }
+  }
+  return lines.map((line) => line ?? '').join('\n');
 }
 
 function hashContent(content: string): string {

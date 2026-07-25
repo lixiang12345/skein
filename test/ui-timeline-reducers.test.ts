@@ -1,9 +1,18 @@
 import {describe, expect, it} from 'vitest';
-import {updateContractProgress} from '../src/ui/timeline-reducers.js';
+import {toolMetaSummary, updateContractProgress} from '../src/ui/timeline-reducers.js';
 import type {TaskContract} from '../src/types.js';
 import type {TimelineItem} from '../src/ui/components.js';
 
 describe('timeline reducers', () => {
+  it('summarizes warning-only reuse and duplication receipts', () => {
+    expect(toolMetaSummary({
+      reuseReceipt: {decision: 'extend', status: 'warning'},
+      duplicationAudit: {status: 'warning', matches: [{}, {}]},
+    })).toBe('reuse extend (warning) · duplicates 2 (warning)');
+    expect(toolMetaSummary({duplicationAudit: {status: 'unresolved', matches: []}}))
+      .toBe('duplicates incomplete');
+  });
+
   it('keeps one Contract row and removes it after acceptance', () => {
     const initial: TimelineItem[] = [{id: 'banner', kind: 'notice', text: 'Ready'}];
     const draft = updateContractProgress(initial, contract('draft', ['pending', 'pending']));

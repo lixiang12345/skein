@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.14",
+  "version": "0.3.15",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,6 +16,9 @@
   },
   "skein": {
     "releaseNotes": [
+      "Warning-only TS/JS duplication audit compares new functions with the pre-write index generation",
+      "Deterministic Type-1/2 and Type-3 receipts retain only hashes, locations, scores, and bounded counts",
+      "Ordinary edits, renames, moves, deletions, small functions, tests, generated paths, and failed writes stay quiet",
       "Warning-only Reuse Gate records content-free candidate evidence before the first substantive write",
       "Reuse receipts surface unresolved index/read failures instead of claiming a safe new implementation",
       "Prompt and timeline diagnostics expose the repository-first reuse ladder without blocking legitimate writes",

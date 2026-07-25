@@ -212,6 +212,41 @@ describe('HeadlessReporter', () => {
     expect(lines[1]).toMatchObject({type: 'session', session: {lastRun: {status: 'verified'}}});
   });
 
+  it('retains content-free duplication audit receipts in JSON and JSONL tool results', () => {
+    const receipt = {
+      baselineGeneration: 'g-before',
+      changeSequence: 1,
+      status: 'warning' as const,
+      warningOnly: true as const,
+      checkedFunctions: 1,
+      skippedSmallFunctions: 0,
+      matches: [{
+        changedPath: '/tmp/reporter-test/copy.ts', changedSymbol: 'copy',
+        candidatePath: '/tmp/reporter-test/helper.ts', candidateSymbol: 'helper',
+        kind: 'type-1-or-2' as const, similarity: 1,
+      }],
+      rationale: 'One deterministic duplicate candidate found.',
+    };
+
+    for (const format of ['json', 'stream-json'] as const) {
+      const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+      const reporter = new HeadlessReporter({format});
+      reporter.onEvent({
+        type: 'tool_result',
+        result: {
+          toolCallId: 'write-copy', name: 'write_file', ok: true, content: 'Created copy.ts.',
+          metadata: {duplicationAudit: receipt},
+        },
+      });
+      reporter.finish(session);
+      const serialized = stdout.mock.calls.map(([chunk]) => String(chunk)).join('');
+      expect(serialized).toContain('duplicationAudit');
+      expect(serialized).toContain('type-1-or-2');
+      expect(serialized).not.toContain('normalizedTokens');
+      stdout.mockRestore();
+    }
+  });
+
   it('keeps unresolved Contract acceptance non-successful in JSON', () => {
     const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const reporter = new HeadlessReporter({format: 'json'});

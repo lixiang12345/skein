@@ -35,6 +35,13 @@ export function toolMetaSummary(metadata?: Record<string, unknown>): string | un
       parts.push(`reuse ${decision}${status === 'unresolved' ? ' (incomplete)' : ' (warning)'}`);
     }
   }
+  const duplication = metadata.duplicationAudit;
+  if (duplication && typeof duplication === 'object') {
+    const status = (duplication as {status?: unknown}).status;
+    const matches = Number((duplication as {matches?: unknown[]}).matches?.length ?? 0);
+    if (status === 'warning') parts.push(`duplicates ${matches} (warning)`);
+    else if (status === 'unresolved') parts.push('duplicates incomplete');
+  }
   const hooks = metadata.hooks;
   if (hooks && typeof hooks === 'object') {
     const before = Number((hooks as {before?: unknown}).before ?? 0);

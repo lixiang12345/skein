@@ -7,7 +7,15 @@ import {createSession, SessionStore} from '../../src/session/store.js';
 import {CheckpointStore} from '../../src/checkpoint/store.js';
 import type {ContextProvider} from '../../src/tools/types.js';
 import type {ModelProvider} from '../../src/providers/provider.js';
-import type {AgentEvent, ChatMessage, MosaicConfig, ModelResponse, ToolResult} from '../../src/types.js';
+import type {
+  AgentEvent,
+  ChatMessage,
+  DuplicationBaseline,
+  MosaicConfig,
+  ModelResponse,
+  ToolResult,
+} from '../../src/types.js';
+import {extractFunctionFingerprints} from '../../src/context/function-fingerprint.js';
 
 const roots: string[] = [];
 
@@ -216,6 +224,116 @@ describe('AgentRunner', () => {
     expect(runner.getSession().audit).toEqual(expect.arrayContaining([
       expect.objectContaining({metadata: expect.objectContaining({reuseReceipt: expect.objectContaining({warningOnly: true})})}),
     ]));
+  });
+
+  it('attaches a warning-only post-write duplication receipt before index refresh', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-runner-duplicate-'));
+    roots.push(root);
+    const source = `export function original(input: number[]) {
+  const values = [];
+  for (const item of input) { if (item > 10) values.push(item * 2); else values.push(item + 1); }
+  const total = values.reduce((sum, item) => sum + item, 0);
+  if (total < 0) throw new Error('invalid total');
+  return {values, total};
+}\n`;
+    const originalPath = join(root, 'original.ts');
+    await writeFile(originalPath, source);
+    const extracted = extractFunctionFingerprints(originalPath, source)[0]!;
+    const {normalizedTokens: _tokens, ...fingerprint} = extracted;
+    const baseline: DuplicationBaseline = {generation: 'g-before', functions: [fingerprint]};
+    const provider = new QueueProvider([
+      {content: '', toolCalls: [{id: 'duplicate-write', name: 'write_file', arguments: {
+        path: 'copy.ts', content: source.replace('original', 'copy').replaceAll('values', 'output').replace('10', '42'),
+      }}]},
+      {content: 'Done.', toolCalls: []},
+    ]);
+    let invalidated = false;
+    const events: AgentEvent[] = [];
+    const runner = new AgentRunner({
+      config: config(root), provider,
+      contextEngine: {
+        ...context,
+        async functionFingerprints() { expect(invalidated).toBe(false); return baseline; },
+        invalidate() { invalidated = true; },
+        async flushDirty() { return {status: 'current', generation: 'g-after', paths: 1}; },
+      },
+    });
+    await runner.run('add copied implementation', {onEvent: (event) => { events.push(event); }});
+    const result = events.find((event): event is Extract<AgentEvent, {type: 'tool_result'}> =>
+      event.type === 'tool_result' && event.result.name === 'write_file');
+    expect(result?.result.metadata?.duplicationAudit).toMatchObject({
+      status: 'warning', baselineGeneration: 'g-before', warningOnly: true,
+      matches: [{kind: 'type-1-or-2', candidateSymbol: 'original', changedSymbol: 'copy'}],
+    });
+    expect(result?.result.content).toContain('Duplication audit (warning-only)');
+  });
+
+  it('does not emit a duplication receipt or refresh the index after a failed write', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-runner-duplicate-failed-'));
+    roots.push(root);
+    const path = join(root, 'existing.ts');
+    await writeFile(path, 'export const existing = true;\n');
+    const provider = new QueueProvider([
+      {content: '', toolCalls: [{id: 'duplicate-failed-write', name: 'write_file', arguments: {
+        path: 'existing.ts', overwrite: false, content: 'export const replacement = true;\n',
+      }}]},
+      {content: 'The write was rejected.', toolCalls: []},
+    ]);
+    let baselines = 0;
+    let invalidations = 0;
+    const events: AgentEvent[] = [];
+    const runner = new AgentRunner({
+      config: config(root), provider,
+      contextEngine: {
+        ...context,
+        async functionFingerprints() { baselines += 1; return {generation: 'g-before', functions: []}; },
+        invalidate() { invalidations += 1; },
+      },
+    });
+
+    await runner.run('replace without overwrite', {onEvent: (event) => { events.push(event); }});
+
+    const result = events.find((event): event is Extract<AgentEvent, {type: 'tool_result'}> =>
+      event.type === 'tool_result' && event.result.name === 'write_file');
+    expect(result?.result).toMatchObject({ok: false});
+    expect(result?.result.metadata?.duplicationAudit).toBeUndefined();
+    expect(await readFile(path, 'utf8')).toBe('export const existing = true;\n');
+    expect(baselines).toBe(1);
+    expect(invalidations).toBe(0);
+  });
+
+  it('marks an auditable write unresolved when the pre-write baseline fails', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-runner-duplicate-degraded-'));
+    roots.push(root);
+    const source = `export function created(input: number[]) {
+  const values = [];
+  for (const item of input) { if (item > 10) values.push(item * 2); else values.push(item + 1); }
+  const total = values.reduce((sum, item) => sum + item, 0);
+  if (total < 0) throw new Error('private provider detail');
+  return {values, total};
+}\n`;
+    const provider = new QueueProvider([
+      {content: '', toolCalls: [{id: 'duplicate-degraded-write', name: 'write_file', arguments: {
+        path: 'created.ts', content: source,
+      }}]},
+      {content: 'Done.', toolCalls: []},
+    ]);
+    const events: AgentEvent[] = [];
+    const runner = new AgentRunner({
+      config: config(root), provider,
+      contextEngine: {
+        ...context,
+        async functionFingerprints() { throw new Error('raw index failure'); },
+      },
+    });
+    await runner.run('create implementation', {onEvent: (event) => { events.push(event); }});
+    const result = events.find((event): event is Extract<AgentEvent, {type: 'tool_result'}> =>
+      event.type === 'tool_result' && event.result.name === 'write_file');
+    expect(result?.result.metadata?.duplicationAudit).toMatchObject({
+      status: 'unresolved', baselineGeneration: 'unavailable', checkedFunctions: 0,
+    });
+    expect(JSON.stringify(result?.result.metadata?.duplicationAudit)).not.toContain('raw index failure');
+    expect(JSON.stringify(result?.result.metadata?.duplicationAudit)).not.toContain('private provider detail');
   });
 
   it('does not expose mutation tools in ask mode', async () => {

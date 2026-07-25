@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.14`.
+- Current repository version: `0.3.15`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -41,8 +41,8 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.14.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.14.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.15.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.15.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
@@ -54,19 +54,22 @@ short-height case. The current full-suite count is recorded from the latest
 
 ## Recommended Order
 
-### P0-D: Warning-only repository reuse gate
+### P0-D: Warning-only repository reuse and duplication audit
 
-Version `0.3.14` adds the first runtime reuse slice. The prompt states a short
-repository-first ladder, while `src/agent/reuse-gate.ts` evaluates only the
-first substantive `write_file` or `apply_patch` addition. It flushes the local
-index, re-reads ranked candidates, and persists a bounded `ReuseReceipt` with
-hashed query metadata, paths, symbols, scores, read status, generation, and
-change sequence. The receipt never stores source or prompt text. This release
-is intentionally warning-only; an unavailable index is `unresolved`, not a
-false pass, and legitimate docs/config/test/generated/deletion/local-edit
-changes are exempt. The next slice is deterministic function extraction and
-post-write duplication audit; high-confidence blocking waits for fixture-based
-precision calibration.
+Version `0.3.14` added the prompt ladder and pre-write `ReuseReceipt`. Version
+`0.3.15` adds a post-write deterministic audit for ordinary TS/TSX/JS/JSX/MJS/
+CJS functions. The audit captures a content-free baseline before mutation,
+normalizes identifiers plus literals, uses exact hashes and 10-token
+shingle/winnowing Jaccard matching, and runs before changed-path index refresh.
+It audits only new or at least 1.5x-expanded functions; same-function edits,
+renames, moves, deletions, small functions, tests, fixtures, generated/vendor/
+dist/minified/declaration files, and failed writes stay quiet. Receipts expose
+at most eight path/symbol/similarity matches through session, TUI, JSON, and
+JSONL without storing source, normalized tokens, prompts, or raw index errors.
+Type-1/2 and Type-3 remain warning-only; unavailable evidence is `unresolved`,
+never a false pass. The next slice is completion-gate suppression UX and
+deterministic benchmark/threshold calibration. Type-4 semantic equivalence is
+not promised.
 
 ### P0: Continuous Integration And Release Reproducibility
 

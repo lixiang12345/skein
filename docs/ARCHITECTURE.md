@@ -46,16 +46,22 @@
 8. Record a bounded, content-free token receipt for the model request and
    persist actual provider counters separately from local estimates.
 9. Continue until the model returns a final response or the turn limit is hit.
-10. Run configured verification commands after changes. The completion gate accepts
+10. Before the first substantive write, run the warning-only repository reuse
+    gate. It binds current candidate/read evidence to the request, index
+    generation, and change sequence without retaining source text.
+11. Capture content-free TS/JS function fingerprints from that pre-write index
+    generation. After the write succeeds, compare only newly added or at least
+    1.5x-expanded functions before refreshing changed index paths. Exact
+    normalized hashes identify Type-1/2 clones; winnowed 10-token shingles and
+    Jaccard similarity identify warning-only Type-3 candidates. Type-4 semantic
+    equivalence is explicitly outside this deterministic contract.
+12. Run configured verification commands after changes. The completion gate accepts
    only current successful test, typecheck, lint, build, check, or `git diff
    --check` evidence recorded after the last mutation. An early final response
    receives one bounded recovery turn; the runtime persists `verified`,
    `unverified`, or `verification_failed` instead of trusting completion claims
    in model text.
-10. Before the first substantive write, run the warning-only repository reuse
-    gate. It binds current candidate/read evidence to the request, index
-    generation, and change sequence without retaining source text.
-11. Persist the outcome and expose the same status through the TUI, text, JSON,
+13. Persist the outcome and expose the same status through the TUI, text, JSON,
     and JSONL surfaces.
 
 ## Interactive startup gate
@@ -83,6 +89,14 @@ Known mutations take a narrower path: the runner validates tool-reported
 and atomically persists the new generation before returning the tool result.
 Manifest reconciliation additionally compares ctime, closing same-size changes
 whose mtime is restored without hashing every source file on an empty query.
+
+The duplication baseline reuses the current local-index chunks and generation;
+it does not add a persisted index schema or external parser service. The runtime
+reconstructs hash-verified file content in memory, extracts ordinary TS/TSX/JS/
+JSX/MJS/CJS functions, then retains only path, symbol, line range, token count,
+exact hash, and winnowed hashes. The generation cache is cleared on load, full
+build, targeted upsert, and deletion. Audit receipts never retain source,
+normalized tokens, literal contents, prompts, or raw retrieval failures.
 
 ### Prompt layers
 

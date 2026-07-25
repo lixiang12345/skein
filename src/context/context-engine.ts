@@ -132,6 +132,10 @@ export class ContextEngine {
   lastDegradation(): ContextDegradation | undefined {
     return this.degradation ? {...this.degradation} : undefined;
   }
+
+  async functionFingerprints() {
+    return this.local.functionFingerprints();
+  }
 }
 
 export function formatContextHits(hits: ContextHit[], roots: string[]): string {

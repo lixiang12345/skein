@@ -1,5 +1,11 @@
 import type {AgentEvent, MosaicConfig, Session, ToolCategory, ToolDefinition} from '../types.js';
-import type {ContextDegradation, ContextHit, ContextPackOptions, PackedContext} from '../types.js';
+import type {
+  ContextDegradation,
+  ContextHit,
+  ContextPackOptions,
+  DuplicationBaseline,
+  PackedContext,
+} from '../types.js';
 import type {ToolArtifactStore} from '../session/tool-artifacts.js';
 import type {WorkspaceAccess} from './workspace.js';
 
@@ -12,6 +18,8 @@ export interface ContextProvider {
   flushDirty?(): Promise<ContextRefreshResult>;
   /** Last retrieval degradation, when the provider can expose it without I/O. */
   lastDegradation?(): ContextDegradation | undefined;
+  /** Content-free function fingerprints bound to the current index generation. */
+  functionFingerprints?(): Promise<DuplicationBaseline>;
 }
 
 export type ContextRefreshResult =

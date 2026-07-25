@@ -75,6 +75,7 @@ import {
   unpinContextSource,
 } from '../context/context-sources.js';
 import {evaluateReuseGate} from './reuse-gate.js';
+import {auditChangedFunctions} from './duplication-audit.js';
 
 export interface AgentRunnerOptions {
   config: MosaicConfig;
@@ -650,6 +651,10 @@ export class AgentRunner {
     try {
       let reuseReceipt: Awaited<ReturnType<typeof evaluateReuseGate>>['receipt'];
       let reuseWarning: string | undefined;
+      let duplicationBaseline: Awaited<ReturnType<NonNullable<ContextProvider['functionFingerprints']>>> | undefined;
+      const duplicationAuditEnabled = categories.includes('write') &&
+        (call.name === 'write_file' || call.name === 'apply_patch') &&
+        Boolean(this.contextEngine.functionFingerprints);
       if (categories.includes('write') && this.activeReuseGate && !this.activeReuseGate.attempted &&
         (call.name === 'write_file' || call.name === 'apply_patch')) {
         this.activeReuseGate.attempted = true;
@@ -668,6 +673,13 @@ export class AgentRunner {
         } catch {
           this.activeReuseGate.attempted = false;
           reuseWarning = 'Reuse check (warning-only) was inconclusive.';
+        }
+      }
+      if (duplicationAuditEnabled) {
+        try {
+          duplicationBaseline = await this.contextEngine.functionFingerprints?.();
+        } catch {
+          duplicationBaseline = undefined;
         }
       }
       let checkpointId: string | undefined;
@@ -690,6 +702,13 @@ export class AgentRunner {
       throwIfAborted(options.signal);
       const execution = await tool.execute(call.arguments, toolExecutionContext);
       const changedFiles = await this.acceptChangedFiles(execution.changedFiles ?? []);
+      const duplicationAudit = duplicationAuditEnabled
+        ? await auditChangedFunctions({
+          ...(duplicationBaseline ? {baseline: duplicationBaseline} : {}),
+          changedFiles,
+          changeSequence: this.changeSequence,
+        })
+        : undefined;
       const tasksBefore = JSON.stringify(this.session.tasks);
       let afterHookError: Error | undefined;
       let afterHooks: Awaited<ReturnType<HookRunner['run']>> = [];
@@ -706,11 +725,15 @@ export class AgentRunner {
         ? `${execution.content}\n\nTool succeeded, but afterTool hook failed: ${afterHookError.message}`
         : execution.content;
       if (reuseWarning) completeContent = `${reuseWarning}\n\n${completeContent}`;
+      if (duplicationAudit?.status === 'warning' || duplicationAudit?.status === 'unresolved') {
+        completeContent = `Duplication audit (warning-only): ${duplicationAudit.rationale}\n\n${completeContent}`;
+      }
       const metadata: Record<string, unknown> = {
         ...(execution.metadata ?? {}),
         ...(changedFiles.length ? {changedFiles} : {}),
         ...(checkpointId ? {checkpointId} : {}),
         ...(reuseReceipt ? {reuseReceipt} : {}),
+        ...(duplicationAudit ? {duplicationAudit} : {}),
         ...(beforeHooks.length || afterHooks.length
           ? {hooks: {before: beforeHooks.length, after: afterHooks.length}}
           : {}),

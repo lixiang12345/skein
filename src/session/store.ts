@@ -68,10 +68,32 @@ const reuseReceiptSchema = z.object({
   warningOnly: z.literal(true),
 }).strict();
 
+const duplicationAuditSchema = z.object({
+  baselineGeneration: z.string().min(1),
+  changeSequence: z.number().int().nonnegative(),
+  status: z.enum(['clear', 'warning', 'unresolved']),
+  warningOnly: z.literal(true),
+  checkedFunctions: z.number().int().nonnegative(),
+  skippedSmallFunctions: z.number().int().nonnegative(),
+  matches: z.array(z.object({
+    changedPath: z.string(),
+    changedSymbol: z.string(),
+    candidatePath: z.string(),
+    candidateSymbol: z.string(),
+    kind: z.enum(['type-1-or-2', 'type-3']),
+    similarity: z.number().min(0).max(1),
+  }).strict()).max(8),
+  rationale: z.string().max(500),
+}).strict();
+
 const auditMetadataSchema = z.record(z.string(), z.unknown()).superRefine((metadata, ctx) => {
   const receipt = metadata.reuseReceipt;
   if (receipt !== undefined && !reuseReceiptSchema.safeParse(receipt).success) {
     ctx.addIssue({code: 'custom', message: 'Invalid reuse receipt'});
+  }
+  const duplication = metadata.duplicationAudit;
+  if (duplication !== undefined && !duplicationAuditSchema.safeParse(duplication).success) {
+    ctx.addIssue({code: 'custom', message: 'Invalid duplication audit receipt'});
   }
 });
 

@@ -274,6 +274,92 @@ describe('local context engine', () => {
     }
   });
 
+  it('builds content-free function fingerprints from the current index generation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-local-functions-'));
+    try {
+      const content = `export function reusable(input: number[]) {
+  const values = [];
+  for (const item of input) { if (item > 10) values.push(item * 2); else values.push(item + 1); }
+  const total = values.reduce((sum, item) => sum + item, 0);
+  if (total < 0) throw new Error('secret error text');
+  return {values, total};
+}\n`;
+      const path = join(root, 'reusable.ts');
+      await writeFile(path, content);
+      const index = new LocalContextIndex([root]);
+      const built = await index.build();
+      const baseline = await index.functionFingerprints();
+      expect(baseline).toMatchObject({
+        generation: built.generation,
+        functions: [{path, symbol: 'reusable', exactHash: expect.stringMatching(/^[a-f0-9]{64}$/)}],
+      });
+      expect(JSON.stringify(baseline)).not.toContain('secret error text');
+      expect(JSON.stringify(baseline)).not.toContain('const values');
+      baseline.functions[0]!.fingerprints.length = 0;
+      const cached = await index.functionFingerprints();
+      expect(cached.functions[0]?.fingerprints.length).toBeGreaterThan(0);
+    } finally {
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
+  it('reconstructs function baselines across overlapping chunks and trailing newlines', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-local-functions-large-'));
+    try {
+      const functionBody = Array.from({length: 135}, (_, index) =>
+        `  if (input[${index}] !== undefined) values.push(input[${index}] * 2);`).join('\n');
+      const content = `export function spanning(input: number[]) {
+  const values: number[] = [];
+${functionBody}
+  return values.reduce((sum, item) => sum + item, 0);
+}\n`;
+      const path = join(root, 'spanning.ts');
+      await writeFile(path, content);
+      const index = new LocalContextIndex([root]);
+      const built = await index.build();
+      expect(built.chunks).toBeGreaterThan(1);
+      const baseline = await index.functionFingerprints();
+      expect(baseline.functions).toMatchObject([{
+        path, symbol: 'spanning', startLine: 1, endLine: 139,
+      }]);
+    } finally {
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
+  it('invalidates the fingerprint cache after targeted update and deletion', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-local-functions-refresh-'));
+    try {
+      const path = join(root, 'refresh.ts');
+      const source = (symbol: string) => `export function ${symbol}(input: number[]) {
+  const values = [];
+  for (const item of input) { if (item > 10) values.push(item * 2); else values.push(item + 1); }
+  const total = values.reduce((sum, item) => sum + item, 0);
+  if (total < 0) throw new Error('invalid total');
+  return {values, total};
+}\n`;
+      await writeFile(path, source('beforeRefresh'));
+      const index = new LocalContextIndex([root]);
+      const built = await index.build();
+      expect((await index.functionFingerprints()).functions.map((item) => item.symbol))
+        .toEqual(['beforeRefresh']);
+
+      await writeFile(path, source('afterRefresh'));
+      index.invalidate([path]);
+      const refreshed = await index.functionFingerprints();
+      expect(refreshed.generation).not.toBe(built.generation);
+      expect(refreshed.functions.map((item) => item.symbol)).toEqual(['afterRefresh']);
+
+      await rm(path);
+      index.invalidate([path]);
+      const deleted = await index.functionFingerprints();
+      expect(deleted.generation).not.toBe(refreshed.generation);
+      expect(deleted.functions).toEqual([]);
+    } finally {
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
   it('refreshes the manifest when a matching file is added', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-local-manifest-'));
     try {

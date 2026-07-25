@@ -3,7 +3,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {afterEach, describe, expect, it} from 'vitest';
 import {CheckpointStore} from '../../src/checkpoint/store.js';
-import {SessionStore} from '../../src/session/store.js';
+import {createSession, SessionStore} from '../../src/session/store.js';
 
 const roots: string[] = [];
 
@@ -32,6 +32,50 @@ describe('sessions and checkpoints', () => {
     const loaded = await store.load(session.id);
     expect(loaded.messages).toHaveLength(1);
     expect((await store.list())[0]?.title).toBe('Fix queue');
+  });
+
+  it('round-trips content-free duplication audit receipts', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-session-duplication-'));
+    roots.push(root);
+    const store = new SessionStore(root);
+    const session = createSession({workspace: root, model: 'test', provider: 'compatible'});
+    session.audit?.push({
+      id: 'audit-duplicate',
+      createdAt: '2026-07-25T00:00:00.000Z',
+      type: 'tool',
+      toolCallId: 'write-copy',
+      tool: 'write_file',
+      category: 'write',
+      outcome: 'success',
+      metadata: {
+        duplicationAudit: {
+          baselineGeneration: 'g-before',
+          changeSequence: 1,
+          status: 'warning',
+          warningOnly: true,
+          checkedFunctions: 1,
+          skippedSmallFunctions: 0,
+          matches: [{
+            changedPath: join(root, 'copy.ts'),
+            changedSymbol: 'copy',
+            candidatePath: join(root, 'helper.ts'),
+            candidateSymbol: 'helper',
+            kind: 'type-1-or-2',
+            similarity: 1,
+          }],
+          rationale: 'One deterministic duplicate candidate found.',
+        },
+      },
+    });
+    await store.save(session);
+
+    const loaded = await store.load(session.id);
+    expect(loaded.audit?.[0]?.metadata?.duplicationAudit).toEqual(
+      session.audit?.[0]?.metadata?.duplicationAudit,
+    );
+    const persisted = await readFile(join(store.directory, `${session.id}.json`), 'utf8');
+    expect(persisted).not.toContain('function helper');
+    expect(persisted).not.toContain('normalizedTokens');
   });
 
   it('loads an unmodified legacy 0.3.9 session without Contract fields', async () => {
