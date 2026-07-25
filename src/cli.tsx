@@ -938,12 +938,25 @@ async function runCli(): Promise<void> {
   try {
     await program.parseAsync(process.argv);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`${chalk.red(cliGlyphs.error)} ${message}\n`);
-    process.exitCode = 1;
+    const format = structuredOutputFormat(process.argv);
+    if (format) {
+      const reporter = new HeadlessReporter({format, color: false});
+      process.exitCode = reporter.fail(error).exitCode;
+    } else {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`${chalk.red(cliGlyphs.error)} ${message}\n`);
+      process.exitCode = 1;
+    }
   } finally {
     releaseCliNamespaceLeases(cliNamespaceLeases);
   }
+}
+
+function structuredOutputFormat(argv: string[]): Extract<OutputFormat, 'json' | 'stream-json'> | undefined {
+  const inline = argv.find((argument) => argument.startsWith('--output-format='))?.slice('--output-format='.length);
+  const index = argv.indexOf('--output-format');
+  const value = inline ?? (index >= 0 ? argv[index + 1] : undefined);
+  return value === 'json' || value === 'stream-json' ? value : undefined;
 }
 
 interface RootOptions {
@@ -1093,10 +1106,11 @@ async function runChat(prompts: string[], options: RootOptions): Promise<void> {
   const requestPermission = options.yes
     ? async () => true
     : options.autoEdit
-      ? async (_call: Parameters<typeof askConsolePermission>[0], category: Parameters<typeof askConsolePermission>[1]) =>
-        category === 'read' || category === 'write' ? true : askConsolePermission(_call, category, colorOutput)
-      : async (call: Parameters<typeof askConsolePermission>[0], category: Parameters<typeof askConsolePermission>[1]) =>
-        askConsolePermission(call, category, colorOutput);
+      ? async (_call: Parameters<typeof askConsolePermission>[0], category: Parameters<typeof askConsolePermission>[1], reason?: string) =>
+        category === 'read' || category === 'write' ? true : askConsolePermission(_call, category, colorOutput, reason)
+      : async (call: Parameters<typeof askConsolePermission>[0], category: Parameters<typeof askConsolePermission>[1], reason?: string) =>
+        askConsolePermission(call, category, colorOutput, reason);
+  let extensionsClosed = false;
   try {
     let session = await runner.run(firstPrompt, {
       askMode: options.ask === true || options.plan === true,
@@ -1115,13 +1129,15 @@ async function runChat(prompts: string[], options: RootOptions): Promise<void> {
         requestPermission,
       });
     }
-    reporter.finish(session);
-    if (session.pendingInput) process.exitCode = 2;
-  } catch (error) {
-    reporter.fail(error);
-    process.exitCode = 1;
-  } finally {
     await extensions.close();
+    extensionsClosed = true;
+    const outcome = reporter.finish(session);
+    process.exitCode = outcome.exitCode;
+  } catch (error) {
+    const outcome = reporter.fail(error, runner.getSession());
+    process.exitCode = outcome.exitCode;
+  } finally {
+    if (!extensionsClosed) await extensions.close().catch(() => undefined);
   }
 }
 

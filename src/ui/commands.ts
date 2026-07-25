@@ -29,6 +29,8 @@ export const commandDefinitions: CommandDefinition[] = [
   command('permissions', 'Inspect the active permission policy'),
   command('changes', 'List files changed in the active session'),
   command('diff', 'Open the current workspace diff in the transcript'),
+  command('review', 'Run a read-only review with a fixed, redacted scope', '/review [working-tree|commit <ref>|branch <base-ref>]'),
+  command('recover', 'Open recovery actions for the last incomplete run', '/recover [retry|resume|diff|rollback|audit]'),
   command('checkpoints', 'List recoverable pre-mutation snapshots'),
   command('audit', 'Review the hash-chained tool and permission timeline'),
   command('rollback', 'Restore workspace files from a checkpoint', '/rollback [checkpoint-id]'),
@@ -98,6 +100,30 @@ export function commandSuggestions(
       label: 'setup',
       description: 'Show the secure shared-connection setup command',
     }].filter((item) => item.label.includes(argument.trim().toLocaleLowerCase()));
+  }
+
+  if (firstSpace >= 0 && commandName === 'review') {
+    const query = argument.trim().toLocaleLowerCase();
+    return [
+      {value: '/review working-tree', label: 'working-tree', description: 'Review only the current working tree'},
+      {value: '/review commit ', label: 'commit', description: 'Review exactly one Git commit'},
+      {value: '/review branch ', label: 'branch', description: 'Review the current branch against one base ref'},
+    ].filter((item) => item.label.includes(query) || item.value.slice('/review '.length).startsWith(query));
+  }
+
+  if (firstSpace >= 0 && commandName === 'recover') {
+    const query = argument.trim().toLocaleLowerCase();
+    return [
+      {name: 'retry', description: 'Repair and retry the latest failed operation once'},
+      {name: 'resume', description: 'Continue the most recent incomplete logical run'},
+      {name: 'diff', description: 'Inspect the current workspace patch'},
+      {name: 'audit', description: 'Review permission and tool evidence'},
+      {name: 'rollback', description: 'Choose a checkpoint to restore'},
+    ].filter((item) => item.name.includes(query)).map((item) => ({
+      value: `/recover ${item.name}`,
+      label: item.name,
+      description: item.description,
+    }));
   }
 
   if (firstSpace >= 0 && commandName === 'memory') {

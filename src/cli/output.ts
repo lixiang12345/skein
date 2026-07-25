@@ -12,6 +12,10 @@ import type {
 } from '../types.js';
 import {PRODUCT_NAME} from '../brand.js';
 import {resolveCliGlyphs, type CliGlyphs} from './glyphs.js';
+import {
+  resolveHeadlessOutcome,
+  type HeadlessOutcome,
+} from './headless-contract.js';
 
 export type OutputFormat = 'text' | 'json' | 'stream-json';
 
@@ -25,7 +29,6 @@ export interface ReporterOptions {
 export class HeadlessReporter {
   private finalResponse = '';
   private readonly tools: ToolResult[] = [];
-  private eventError?: string;
   private context: Omit<PackedContext, 'text' | 'hits'> & {hits: number} | undefined;
   private streamedAssistant = false;
   private completion: RunCompletion | undefined;
@@ -41,7 +44,6 @@ export class HeadlessReporter {
   onEvent = (event: AgentEvent): void => {
     if (event.type === 'assistant') this.finalResponse = event.content;
     if (event.type === 'tool_result') this.tools.push(event.result);
-    if (event.type === 'error') this.eventError = event.error.message;
     if (event.type === 'done') {
       this.doneReason = event.reason;
       this.completion = event.completion;
@@ -58,26 +60,32 @@ export class HeadlessReporter {
     this.printText(event);
   };
 
-  finish(session: Session): void {
+  finish(session: Session): HeadlessOutcome {
+    const completion = this.completion ?? session.lastRun;
+    const reason = this.doneReason ?? session.lastRun?.reason;
+    const outcome = resolveHeadlessOutcome({
+      ...(reason ? {reason} : {}),
+      ...(completion ? {completion} : {}),
+    });
     if (this.options.format === 'stream-json') {
       process.stdout.write(`${JSON.stringify({
         type: 'session',
+        ...outcome,
         session: sessionSummary(session),
       })}\n`);
-      return;
+      return outcome;
     }
     if (this.options.format === 'json') {
       process.stdout.write(`${JSON.stringify({
-        ok: this.doneReason === undefined ||
-          (this.doneReason === 'completed' && this.completion?.status !== 'verification_failed'),
+        type: 'result',
+        ...outcome,
         response: this.finalResponse,
         session: sessionSummary(session),
-        ...(this.doneReason ? {reason: this.doneReason} : {}),
-        ...(this.completion ? {completion: this.completion} : {}),
+        ...(completion ? {completion} : {}),
         ...(this.context ? {context: this.context} : {}),
         tools: this.tools,
       }, null, 2)}\n`);
-      return;
+      return outcome;
     }
     if (this.options.quiet && this.finalResponse.trim()) {
       process.stdout.write(`${this.finalResponse.trim()}\n`);
@@ -89,16 +97,32 @@ export class HeadlessReporter {
         `\n${this.glyphs.meta} ${session.changedFiles.length} changed files ${this.glyphs.separator} ${usage.toLocaleString()} tokens (${usageLabel}) ${this.glyphs.separator} session ${session.id.slice(0, 8)}\n`,
       ));
     }
+    return outcome;
   }
 
-  fail(error: unknown): void {
+  fail(error: unknown, session?: Session): HeadlessOutcome {
     const message = error instanceof Error ? error.message : String(error);
-    if (this.options.format === 'stream-json' && this.eventError === message) return;
-    if (this.options.format === 'json' || this.options.format === 'stream-json') {
-      process.stdout.write(`${JSON.stringify({type: 'error', ok: false, error: message})}\n`);
-      return;
+    const outcome = resolveHeadlessOutcome({reason: 'error', error});
+    if (this.options.format === 'stream-json') {
+      process.stdout.write(`${JSON.stringify({
+        type: 'final',
+        ...outcome,
+        error: message,
+        ...(session ? {session: sessionSummary(session)} : {}),
+      })}\n`);
+      return outcome;
+    }
+    if (this.options.format === 'json') {
+      process.stdout.write(`${JSON.stringify({
+        type: 'result',
+        ...outcome,
+        error: message,
+        ...(session ? {session: sessionSummary(session)} : {}),
+      }, null, 2)}\n`);
+      return outcome;
     }
     process.stderr.write(`${this.paint.red(this.glyphs.error)} ${message}\n`);
+    return outcome;
   }
 
   private printText(event: AgentEvent): void {
@@ -200,6 +224,7 @@ export class HeadlessReporter {
         break;
       case 'done':
         this.printCompletion(event.completion);
+        this.printStopReason(event.reason);
         break;
       case 'error':
         // The caller prints the terminal error after the runner unwinds. This
@@ -232,18 +257,31 @@ export class HeadlessReporter {
       `${this.glyphs.warning} unverified ${this.glyphs.separator} ${completion.detail}${duplicateSuffix}\n`,
     ));
   }
+
+  private printStopReason(reason: string): void {
+    if (reason === 'aborted') {
+      process.stderr.write(this.paint.yellow(`${this.glyphs.warning} cancelled ${this.glyphs.separator} resume with --resume after inspecting the saved session\n`));
+    } else if (reason === 'max_turns') {
+      process.stderr.write(this.paint.yellow(`${this.glyphs.warning} turn limit reached ${this.glyphs.separator} resume with --resume and a larger --max-turns value\n`));
+    } else if (reason === 'token_budget') {
+      process.stderr.write(this.paint.yellow(`${this.glyphs.warning} token budget reached ${this.glyphs.separator} inspect the saved session before resuming with a larger --token-budget\n`));
+    }
+  }
 }
 
 export async function askConsolePermission(
   call: ToolCall,
   category: ToolCategory,
   color = !process.env.NO_COLOR,
+  reason = `${category} tools require approval.`,
 ): Promise<boolean> {
   if (!process.stdin.isTTY || !process.stderr.isTTY) return false;
   const paint = color ? chalk : new Chalk({level: 0});
   const glyphs = resolveCliGlyphs();
   process.stderr.write(`\n${paint.yellow('Permission required')} ${paint.dim(`(${category})`)}\n`);
   process.stderr.write(`${paint.bold(call.name)}${formatToolDetail(call, paint)}\n`);
+  process.stderr.write(`${paint.dim(`Reason: ${reason}`)}\n`);
+  process.stderr.write(`${paint.yellow(`Risk: ${permissionRisk(category)}`)}\n`);
   const readline = createInterface({input: process.stdin, output: process.stderr});
   try {
     const answer = await readline.question(`${paint.green('[y]')} allow once  ${paint.red('[n]')} deny ${glyphs.prompt} `);
@@ -251,6 +289,14 @@ export async function askConsolePermission(
   } finally {
     readline.close();
   }
+}
+
+function permissionRisk(category: ToolCategory): string {
+  if (category === 'read') return 'workspace content may enter model context';
+  if (category === 'write') return 'workspace files may be created, replaced, or deleted';
+  if (category === 'shell') return 'a local process may read or change workspace state';
+  if (category === 'git') return 'repository state or remotes may change';
+  return 'data may leave this machine or remote state may change';
 }
 
 export function printBanner(): void {

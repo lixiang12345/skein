@@ -122,6 +122,83 @@ describe('SkeinApp completion flows', () => {
     }
   });
 
+  it('runs /review with a fixed scope, a redacted ephemeral bundle, and read-only tools', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-review-ui-'));
+    const session = testSession(root);
+    session.changedFiles = [join(root, 'src/api.ts')];
+    const {runner, run} = mockRunner(root, session);
+    const harness = await mountApp(runner, root);
+
+    try {
+      harness.stdin.write('/review working-tree\r');
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      expect(run.mock.calls[0]?.[0]).toBe('Review the current working tree changes.');
+      expect(run.mock.calls[0]?.[1]).toMatchObject({askMode: true});
+      expect(run.mock.calls[0]?.[1]?.turnInstructions).toContain('<redacted-review-bundle>');
+      expect(run.mock.calls[0]?.[1]?.turnInstructions).toContain('"changedFiles": [');
+      expect(run.mock.calls[0]?.[1]?.turnInstructions).not.toContain('messages');
+    } finally {
+      await harness.cleanup();
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
+  it('joins failure, checkpoint, diff, rollback, audit, retry, and resume in /recover', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-recover-ui-'));
+    const session = testSession(root);
+    session.changedFiles = [join(root, 'src/api.ts')];
+    session.lastRun = {
+      status: 'verification_failed',
+      changedFiles: [...session.changedFiles],
+      checks: [],
+      detail: 'Tests failed after the latest change.',
+      reason: 'verification_failed',
+      finishedAt: '2026-07-25T00:00:00.000Z',
+    };
+    session.audit = [{
+      id: 'failure-audit', createdAt: '2026-07-25T00:00:00.000Z', type: 'tool',
+      toolCallId: 'failed-shell', tool: 'shell', category: 'shell', outcome: 'failure',
+      metadata: {failure: {class: 'command_exit', repairHint: 'Inspect the failing assertion.', retryable: true}},
+    }];
+    const {runner, run} = mockRunner(root, session);
+    vi.mocked(runner.checkpointStore.list).mockResolvedValue([{
+      version: 1,
+      id: 'checkpoint-1234567890',
+      sessionId: session.id,
+      createdAt: '2026-07-25T00:00:00.000Z',
+      reason: 'before write_file',
+      entries: [{path: join(root, 'src/api.ts'), relativePath: 'src/api.ts', existed: true, blob: 'blob.bin'}],
+    }]);
+    const harness = await mountApp(runner, root);
+
+    try {
+      harness.stdin.write('/recover\r');
+      await vi.waitFor(() => expect(harness.output()).toContain('Recovery Center'));
+      const output = harness.output();
+      expect(output).toContain('Last run verification_fai');
+      expect(output).toContain('Inspect the failing assertion.');
+      expect(output).toContain('checkpoint-1');
+      expect(output).toContain('/recover retry');
+      expect(output).toContain('/recover resume');
+      expect(output).toContain('/recover diff');
+      expect(output).toContain('/recover audit');
+      expect(output).toContain('/recover rollback');
+
+      harness.stdin.write('/recover retry\r');
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      expect(run.mock.calls[0]?.[0]).toContain('Retry the most recent failed shell operation');
+      expect(run.mock.calls[0]?.[1]?.turnInstructions).toContain('recorded failure receipt');
+
+      session.pendingInput = pendingInput();
+      harness.stdin.write('/recover resume\r');
+      await vi.waitFor(() => expect(harness.output()).toContain('Answer the pending clarification in the composer'));
+      expect(run).toHaveBeenCalledTimes(1);
+    } finally {
+      await harness.cleanup();
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
   it('filters and cycles resumed prompt history with Ctrl+R before submitting it', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-history-ui-'));
     const session = testSession(root);
@@ -612,7 +689,7 @@ function mockRunner(root: string, session: Session, hits: ContextHit[] = [], opt
   const search = vi.fn(async (_query: string, _topK?: number) => hits);
   const compactContext = vi.fn(options.compactContext ?? (async () => ({omittedMessages: 0, summaryTokens: 0})));
   const runner = {
-    workspace: {roots: [root]},
+    workspace: {primaryRoot: root, roots: [root]},
     contextEngine: {search},
     tools: {definitions: () => Array.from({length: options.toolCount ?? 0}, (_, index) => ({name: `tool_${index}`}))},
     getSession: () => session,

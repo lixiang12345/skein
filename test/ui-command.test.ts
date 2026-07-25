@@ -33,6 +33,9 @@ describe('terminal command and width helpers', () => {
     expect(commandSuggestions('/mode p')[0]).toMatchObject({value: '/mode plan', label: 'plan'});
     expect(commandSuggestions('/connections s')[0]).toMatchObject({value: '/connections setup', label: 'setup'});
     expect(commandSuggestions('/queue d')[0]).toMatchObject({value: '/queue drop ', label: 'drop'});
+    expect(commandSuggestions('/review w')[0]).toMatchObject({value: '/review working-tree', label: 'working-tree'});
+    expect(commandSuggestions('/review c')[0]).toMatchObject({value: '/review commit ', label: 'commit'});
+    expect(commandSuggestions('/recover r').map((item) => item.value)).toEqual(['/recover retry', '/recover resume', '/recover rollback']);
   });
 
   it('truncates Chinese and emoji by terminal cells instead of UTF-16 length', () => {

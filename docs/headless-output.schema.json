@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skein.dev/schemas/headless-output-v1.json",
+  "title": "Skein headless terminal record v1",
+  "description": "The terminal object emitted by --output-format json or as the final line of --output-format stream-json.",
+  "type": "object",
+  "required": ["schemaVersion", "type", "ok", "status", "exitCode", "reason"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "type": {"enum": ["result", "session", "final"]},
+    "ok": {"type": "boolean"},
+    "status": {
+      "enum": [
+        "completed",
+        "verified",
+        "needs_input",
+        "unverified",
+        "verification_failed",
+        "blocked",
+        "cancelled",
+        "max_turns",
+        "token_budget",
+        "error"
+      ]
+    },
+    "exitCode": {"type": "integer", "minimum": 0, "maximum": 8},
+    "reason": {"type": "string", "minLength": 1},
+    "response": {"type": "string"},
+    "error": {"type": "string"},
+    "session": {"type": "object"},
+    "completion": {"type": "object"},
+    "context": {"type": "object"},
+    "tools": {"type": "array"}
+  },
+  "additionalProperties": true
+}

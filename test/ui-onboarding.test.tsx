@@ -113,6 +113,16 @@ describe('relay URL validation', () => {
 });
 
 describe('onboarding presentation', () => {
+  it('distinguishes primary-agent API credentials from signed-in coding CLI subscriptions', () => {
+    const output = renderToString(
+      <OnboardingScreen state={createOnboardingState(missingConfig())} dispatch={() => undefined} width={80} />,
+      {columns: 80},
+    );
+    expect(output).toContain('subscription logins are not API keys');
+    expect(output).toContain('signed-in coding CLIs are separate');
+    expect(output).toContain('delegated tools');
+  });
+
   it('masks credentials and stays within a narrow terminal', () => {
     const state: OnboardingState = {
       step: 'api-key',

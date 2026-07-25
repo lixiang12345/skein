@@ -318,9 +318,11 @@ describe('terminal presentation', () => {
       name: 'shell',
       arguments: {command: 'npm test'},
     };
-    const output = renderToString(<PermissionCard call={call} category="shell" />);
+    const output = renderToString(<PermissionCard call={call} category="shell" reason="Shell tools require approval by policy." />);
     expect(output).toContain('Permission required');
     expect(output).toContain('npm test');
+    expect(output).toContain('reason Shell tools require approval by policy.');
+    expect(output).toContain('risk a local process may read or change workspace state');
     expect(output).toContain('y');
     expect(output).toContain('n');
     expect(output).not.toMatch(/[┌┐└┘╭╮╰╯│]/u);

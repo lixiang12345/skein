@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.25`.
+- Current repository version: `0.3.26`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -41,8 +41,8 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.25.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.25.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.26.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.26.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
@@ -149,6 +149,29 @@ question only for genuine user-owned product choices. TUI queues pause during
 clarification and resume afterward; text, JSON, and JSONL expose the same
 `needs_input` state. Real same-model success/token A/B remains an external
 validation gate rather than an implied claim of this release.
+
+### Phase 2: First-run, permission, recovery, review, and headless contracts (complete in 0.3.26)
+
+Version `0.3.26` makes the first-run screen explicit that the primary agent
+uses API credentials while provider subscription sessions and signed-in coding
+CLIs remain separate delegated tools. Permission prompts now show the runtime
+policy reason, redacted target, working directory, category risk, and all four
+keyboard outcomes without leaking secrets.
+
+The interactive Recovery Center joins last-run status, content-free failure
+repair hints, changed files, checkpoints, diff, audit, rollback, bounded retry,
+and safe resume. `/review` fixes working-tree, commit, or branch scope, forces
+read-only runner capabilities even from Build mode, and injects a redacted
+content-free evidence bundle as ephemeral turn instructions rather than user
+transcript. Pending clarifications must still be answered directly and cannot
+be consumed by a recovery command.
+
+JSON and JSONL terminal records follow `docs/headless-output.schema.json` v1
+and carry stable statuses plus exit codes for completed/verified, runtime error,
+needs input, unverified, verification failed, blocked, cancelled, max turns,
+and token budget. Text and TUI surfaces provide matching actionable stop and
+recovery guidance. Responsive list clipping keeps the Recovery Center bounded
+in narrow and short terminals.
 
 ### P0-D: Repository reuse and calibrated duplication enforcement
 

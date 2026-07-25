@@ -1,6 +1,7 @@
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {HeadlessReporter} from '../../src/cli/output.js';
-import type {Session} from '../../src/types.js';
+import {HEADLESS_EXIT_CODES, resolveHeadlessOutcome} from '../../src/cli/headless-contract.js';
+import type {RunCompletion, Session} from '../../src/types.js';
 
 const session: Session = {
   id: '12345678-session',
@@ -36,7 +37,7 @@ describe('HeadlessReporter', () => {
     expect(stderr).not.toHaveBeenCalled();
   });
 
-  it('does not duplicate a streamed terminal error', () => {
+  it('keeps a streamed error event and adds one versioned terminal record', () => {
     const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const reporter = new HeadlessReporter({format: 'stream-json'});
     const error = new Error('provider unavailable');
@@ -45,8 +46,55 @@ describe('HeadlessReporter', () => {
     reporter.fail(error);
 
     const lines = stdout.mock.calls.map(([chunk]) => String(chunk));
-    expect(lines).toHaveLength(1);
+    expect(lines).toHaveLength(2);
     expect(JSON.parse(lines[0] ?? '')).toEqual({type: 'error', error: 'provider unavailable'});
+    expect(JSON.parse(lines[1] ?? '')).toMatchObject({
+      schemaVersion: 1,
+      type: 'final',
+      ok: false,
+      status: 'error',
+      exitCode: HEADLESS_EXIT_CODES.error,
+    });
+  });
+
+  it.each([
+    ['completed', {reason: 'completed', completion: {status: 'no_changes'}}, 0],
+    ['verified', {reason: 'completed', completion: {status: 'verified'}}, 0],
+    ['needs_input', {reason: 'needs_input', completion: {status: 'no_changes'}}, 2],
+    ['unverified', {reason: 'unverified', completion: {status: 'unverified'}}, 3],
+    ['verification_failed', {reason: 'verification_failed', completion: {status: 'verification_failed'}}, 4],
+    ['blocked', {reason: 'unverified', completion: {status: 'unverified', acceptance: {state: 'blocked'}}}, 5],
+    ['cancelled', {reason: 'aborted', completion: {status: 'no_changes'}}, 6],
+    ['max_turns', {reason: 'max_turns', completion: {status: 'unverified'}}, 7],
+    ['token_budget', {reason: 'token_budget', completion: {status: 'unverified'}}, 8],
+    ['error', {reason: 'error', error: new Error('failed')}, 1],
+  ])('maps %s to a stable headless exit code', (status, input, exitCode) => {
+    const candidate = input as {
+      reason: string;
+      completion?: Partial<RunCompletion> & {status: RunCompletion['status']};
+      error?: Error;
+    };
+    const acceptance = candidate.completion?.acceptance;
+    const completion = candidate.completion ? {
+      changedFiles: [],
+      checks: [],
+      detail: 'test',
+      ...candidate.completion,
+      ...(acceptance ? {acceptance: {
+        state: acceptance.state ?? 'blocked',
+        total: acceptance.total ?? 1,
+        satisfied: acceptance.satisfied ?? 0,
+        pending: acceptance.pending ?? 0,
+        blocked: acceptance.blocked ?? 1,
+        missingVerification: acceptance.missingVerification ?? [],
+        unresolved: acceptance.unresolved ?? [],
+      }} : {}),
+    } as RunCompletion : undefined;
+    expect(resolveHeadlessOutcome({
+      reason: candidate.reason,
+      ...(completion ? {completion} : {}),
+      ...(candidate.error ? {error: candidate.error} : {}),
+    })).toMatchObject({schemaVersion: 1, status, exitCode, ok: exitCode === 0});
   });
 
   it('prints streamed assistant text once and retains the final response for quiet output', () => {
@@ -167,7 +215,11 @@ describe('HeadlessReporter', () => {
       completion?: {status?: string};
     };
     expect(output).toMatchObject({
+      schemaVersion: 1,
+      type: 'result',
       ok: false,
+      status: 'unverified',
+      exitCode: HEADLESS_EXIT_CODES.unverified,
       reason: 'unverified',
       completion: {status: 'unverified'},
     });
@@ -191,6 +243,7 @@ describe('HeadlessReporter', () => {
 
     const output = JSON.parse(stdout.mock.calls.map(([chunk]) => String(chunk)).join('')) as {ok?: boolean};
     expect(output.ok).toBe(true);
+    expect(output).toMatchObject({schemaVersion: 1, status: 'completed', exitCode: 0});
   });
 
   it('streams completion evidence before the final session record', () => {
@@ -219,6 +272,7 @@ describe('HeadlessReporter', () => {
     expect(lines).toHaveLength(2);
     expect(lines[0]).toMatchObject({type: 'done', completion: {status: 'verified'}});
     expect(lines[1]).toMatchObject({type: 'session', session: {lastRun: {status: 'verified'}}});
+    expect(lines[1]).toMatchObject({schemaVersion: 1, status: 'verified', exitCode: 0});
   });
 
   it('retains content-free duplication audit receipts in JSON and JSONL tool results', () => {

@@ -793,9 +793,10 @@ export function TaskRail({tasks, width = 80, glyphMode = 'auto', maxItems}: {
   );
 }
 
-export function PermissionCard({call, category, width = 80, glyphMode = 'auto', workspace, compact = false}: {
+export function PermissionCard({call, category, reason, width = 80, glyphMode = 'auto', workspace, compact = false}: {
   call: ToolCall;
   category: ToolCategory;
+  reason?: string;
   width?: number;
   glyphMode?: GlyphMode;
   workspace?: string;
@@ -808,7 +809,9 @@ export function PermissionCard({call, category, width = 80, glyphMode = 'auto', 
   const innerWidth = Math.max(1, rowWidth - 2);
   const title = truncateDisplay(`Permission required ${glyphs.separator} ${category}`, innerWidth);
   const tool = truncateDisplay(`tool ${sanitizeInlineTerminalText(call.name)}`, innerWidth);
-  const summaryLine = truncateDisplay(`${summary.label} ${summary.value}`, innerWidth);
+  const summaryLine = truncateDisplay(`target ${summary.label} ${summary.value}`, innerWidth);
+  const reasonLine = truncateDisplay(`reason ${redactPermissionText(reason ?? `${category} tools require approval.`)}`, innerWidth);
+  const riskLine = truncateDisplay(`risk ${permissionRisk(category)}`, innerWidth);
   const argumentCwd = typeof call.arguments.cwd === 'string' ? call.arguments.cwd : undefined;
   const cwd = sanitizeInlineTerminalText(argumentCwd || workspace || '');
   const shortcuts: InlinePart[] = [
@@ -836,6 +839,8 @@ export function PermissionCard({call, category, width = 80, glyphMode = 'auto', 
       <PermissionLine marker={marker}><Text bold color={theme.warning}>{title}</Text></PermissionLine>
       <PermissionLine marker={marker}><Text color={theme.muted}>{tool}</Text></PermissionLine>
       <PermissionLine marker={marker}><Text color={theme.text}>{summaryLine}</Text></PermissionLine>
+      <PermissionLine marker={marker}><Text color={theme.muted}>{reasonLine}</Text></PermissionLine>
+      <PermissionLine marker={marker}><Text color={theme.warning}>{riskLine}</Text></PermissionLine>
       {cwd ? <PermissionLine marker={marker}><Text color={theme.muted}>{truncateDisplay(`cwd ${compactDisplayPath(cwd, Math.max(1, innerWidth - 4))}`, innerWidth)}</Text></PermissionLine> : null}
       {rowWidth >= 64 ? (
         <Box paddingLeft={2}>
@@ -865,6 +870,14 @@ export function PermissionCard({call, category, width = 80, glyphMode = 'auto', 
 function PermissionLine({marker, children}: {marker: string; children: React.ReactNode}) {
   const theme = useTheme();
   return <Box><Text color={theme.warning}>{marker} </Text>{children}</Box>;
+}
+
+function permissionRisk(category: ToolCategory): string {
+  if (category === 'read') return 'workspace content may enter model context';
+  if (category === 'write') return 'workspace files may be created, replaced, or deleted';
+  if (category === 'shell') return 'a local process may read or change workspace state';
+  if (category === 'git') return 'repository state or remotes may change';
+  return 'data may leave this machine or remote state may change';
 }
 
 export function PromptBar({busy, value, placeholder, width = 80, mode = 'chat', queueCount = 0, queuePreview, attachments = [], glyphMode = 'auto', children}: {

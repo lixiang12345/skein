@@ -66,6 +66,12 @@ import {resolveKittyKeyboardConfig} from './terminal-capabilities.js';
 import {nextTheme, reloadUserThemes, resolveThemeWithColor, ThemeProvider, themes} from './theme.js';
 import {estimateTimelineItemRows, fitTimelineToRows} from './viewport.js';
 import {
+  buildRedactedReviewBundle,
+  parseReviewScope,
+  reviewRequest,
+  reviewTurnInstructions,
+} from './review-bundle.js';
+import {
   endStreamingAssistants,
   finalizeAssistant,
   firstLine,
@@ -82,6 +88,7 @@ import {
 interface PermissionRequest {
   call: ToolCall;
   category: ToolCategory;
+  reason?: string;
   resolve: (grant: PermissionGrant) => void;
 }
 
@@ -90,6 +97,7 @@ interface AgentQueueItem {
   display: string;
   runInput: string;
   turnInstructions?: string;
+  readOnly?: boolean;
 }
 
 interface LocalQueueItem {
@@ -308,8 +316,13 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     return () => clearInterval(timer);
   }, [busy]);
 
-  const requestPermission = useCallback((call: ToolCall, category: ToolCategory) => {
-    return new Promise<PermissionGrant>((resolve) => setPermission({call, category, resolve}));
+  const requestPermission = useCallback((call: ToolCall, category: ToolCategory, reason?: string) => {
+    return new Promise<PermissionGrant>((resolve) => setPermission({
+      call,
+      category,
+      ...(reason ? {reason} : {}),
+      resolve,
+    }));
   }, []);
 
   const onEvent = useCallback((event: AgentEvent) => {
@@ -431,7 +444,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
           id: nextId(),
           kind: 'notice',
           tone: event.status === 'ready' || event.status === 'integrated' ? 'success' : 'error',
-          text: `Writer ${event.id.slice(0, 8)} ${event.status}${separator}${event.detail}`,
+          text: `Writer ${event.id.slice(0, 8)} ${event.status}${separator}${event.detail}${event.status === 'conflict' || event.status === 'failed' || event.status === 'cancelled' ? `${separator}Run /recover before retrying or restoring.` : ''}`,
         });
         break;
       case 'agent_done':
@@ -470,7 +483,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       case 'error':
         lastEventError.current = event.error.message;
         setTimeline(endStreamingAssistants);
-        append({id: nextId(), kind: 'notice', tone: 'error', text: event.error.message});
+        append({id: nextId(), kind: 'notice', tone: 'error', text: `${event.error.message}${separator}Run /recover to inspect evidence, changes, and safe next actions.`});
         setActivity(undefined);
         break;
       case 'done':
@@ -506,11 +519,11 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
             kind: 'notice',
             tone: event.reason === 'aborted' ? 'info' : 'error',
             text: event.reason === 'aborted'
-              ? 'Run interrupted.'
+              ? 'Run interrupted. Use /recover to inspect changes or resume safely.'
               : event.reason === 'max_turns'
-                ? 'Stopped at the configured turn limit.'
+                ? 'Stopped at the configured turn limit. Use /recover resume after adjusting the limit.'
                 : event.reason === 'token_budget'
-                  ? 'Stopped at the configured token budget.'
+                  ? 'Stopped at the configured token budget. Use /recover to inspect state before resuming with a larger budget.'
                   : event.reason,
           });
         }
@@ -527,9 +540,17 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const runLocalCommand = useCallback(async (value: string): Promise<LocalCommandResult> => {
     if (!value.startsWith('/')) return false;
     const [rawCommand = '', ...rest] = value.slice(1).trim().split(/\s+/);
-    const command = rawCommand.toLocaleLowerCase();
-    const argument = rest.join(' ').trim();
+    let command = rawCommand.toLocaleLowerCase();
+    let argument = rest.join(' ').trim();
     if (!command) return true;
+
+    if (command === 'recover') {
+      const [action = '', ...actionRest] = argument.split(/\s+/u);
+      if (action === 'diff' || action === 'audit' || action === 'rollback') {
+        command = action;
+        argument = actionRest.join(' ').trim();
+      }
+    }
 
     if (command === 'exit' || command === 'quit') {
       exit();
@@ -618,6 +639,79 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         tone: 'info',
         text: next ? 'Full tool output is visible.' : 'Tool output is collapsed.',
       });
+      return true;
+    }
+    if (command === 'review') {
+      const scope = parseReviewScope(argument);
+      const bundle = buildRedactedReviewBundle(runner.getSession(), runner.workspace.primaryRoot, scope);
+      return {
+        kind: 'agent',
+        display: `/review ${scope.kind}${scope.kind === 'working-tree' ? '' : ` ${scope.ref}`}`,
+        runInput: reviewRequest(scope),
+        turnInstructions: reviewTurnInstructions(bundle),
+        readOnly: true,
+      };
+    }
+    if (command === 'recover') {
+      const action = argument.toLocaleLowerCase();
+      const currentSession = runner.getSession();
+      const lastRun = currentSession.lastRun;
+      const lastFailure = (currentSession.audit ?? []).findLast((event) =>
+        event.type === 'tool' && event.outcome === 'failure');
+      const failure = recoveryFailure(lastFailure?.metadata?.failure);
+      if (action === 'retry') {
+        if (currentSession.pendingInput) throw new Error('Answer the pending clarification before retrying an operation.');
+        if (!lastFailure) throw new Error('No failed operation is available to retry.');
+        return {
+          kind: 'agent',
+          display: '/recover retry',
+          runInput: `Retry the most recent failed ${lastFailure.tool} operation after inspecting the current workspace state.`,
+          turnInstructions: 'Resume the existing session. Use the recorded failure receipt and current files as authority. Apply its repair hint before one targeted retry; do not replay a circuit-open or non-retryable operation unchanged.',
+        };
+      }
+      if (action === 'resume') {
+        if (currentSession.pendingInput) throw new Error('Answer the pending clarification in the composer to resume the same logical run.');
+        if (!lastRun || lastRun.reason === 'completed') throw new Error('The latest run is already complete.');
+        return {
+          kind: 'agent',
+          display: '/recover resume',
+          runInput: 'Resume the most recent incomplete run from its persisted state.',
+          turnInstructions: 'Resume the existing session from its Task Contract, changed-file set, last-run receipt, and unresolved failures. Inspect current state before acting, keep prior successful evidence, and run only missing verification.',
+        };
+      }
+      if (action) throw new Error('Usage: /recover [retry|resume|diff|rollback|audit]');
+      const checkpoints = await runner.checkpointStore.list(currentSession.id);
+      const latestCheckpoint = checkpoints[0];
+      appendList('Recovery Center', [
+        {
+          label: `Last run  ${lastRun?.status ?? 'none'}${lastRun ? `${separator}${lastRun.reason}` : ''}`,
+          detail: lastRun?.detail ?? 'No completed or interrupted run has been recorded.',
+          tone: lastRun?.status === 'verified' || lastRun?.status === 'no_changes' ? 'success'
+            : lastRun ? 'warning' : 'normal',
+        },
+        ...(lastFailure ? [{
+          label: `Failure  ${lastFailure.tool}${failure?.class ? `${separator}${failure.class}` : ''}`,
+          detail: failure?.repairHint ?? 'Inspect the audit timeline before retrying.',
+          tone: 'error' as const,
+        }] : []),
+        {
+          label: `Workspace  ${currentSession.changedFiles.length} changed file${currentSession.changedFiles.length === 1 ? '' : 's'}`,
+          detail: currentSession.changedFiles.length ? '/diff inspects the current patch.' : 'No tracked session changes.',
+        },
+        {
+          label: `Checkpoint  ${latestCheckpoint ? latestCheckpoint.id.slice(0, 12) : 'none'}`,
+          detail: latestCheckpoint
+            ? `${latestCheckpoint.reason}${separator}${latestCheckpoint.entries.length} files${separator}/recover rollback`
+            : 'No pre-mutation snapshot is available for this session.',
+        },
+        {label: '/recover retry', detail: lastFailure ? 'Apply the repair hint, then retry the latest failure once.' : 'Unavailable until an operation fails.'},
+        {label: '/recover resume', detail: currentSession.pendingInput
+          ? 'Unavailable: answer the pending clarification in the composer.'
+          : lastRun && lastRun.reason !== 'completed' ? 'Continue the incomplete logical run.' : 'No incomplete run to resume.'},
+        {label: '/recover diff', detail: 'Inspect the current workspace patch.'},
+        {label: '/recover audit', detail: 'Review permission and tool evidence.'},
+        {label: '/recover rollback', detail: 'Choose a checkpoint to restore.'},
+      ]);
       return true;
     }
     if (command === 'changes') {
@@ -1154,7 +1248,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         lastEventError.current = undefined;
         try {
           const nextSession = await runner.run(current.runInput, {
-            askMode: interactionMode !== 'build',
+            askMode: current.readOnly === true || interactionMode !== 'build',
             signal: abortController.signal,
             ...((current.turnInstructions || interactionMode === 'plan') ? {
               turnInstructions: [
@@ -1239,7 +1333,10 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         return;
       }
     }
-    const suggestion = selectedSuggestion;
+    const selected = selectedSuggestion;
+    const suggestion = selected && !(raw.startsWith(selected.value) && raw.slice(selected.value.length).trim())
+      ? selected
+      : undefined;
     const normalized = raw.trimEnd();
     if (suggestion && raw.startsWith('/') && suggestion.value !== raw && suggestion.value.endsWith(' ') && suggestion.label !== normalized) {
       setInput(suggestion.value);
@@ -1278,6 +1375,14 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         kind: 'notice',
         tone: 'success',
         text: `Allowed ${call.name} for this exact ${category} target during the session.`,
+      });
+    }
+    if (grant === false) {
+      append({
+        id: nextId(),
+        kind: 'notice',
+        tone: 'info',
+        text: `Denied ${call.name}; the requested ${category} action was not run. Use /permissions to inspect policy or /recover to review the run.`,
       });
     }
     if (stop) {
@@ -1669,7 +1774,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
               placeholder={busy ? `follow-up${ellipsis}` : interactionMode === 'ask' ? `trace or explain${ellipsis}` : interactionMode === 'plan' ? `outline the implementation${ellipsis}` : `inspect, change, or verify${ellipsis}`}
             />
           </PromptBar>
-        </> : <PermissionCard call={permission.call} category={permission.category} workspace={runner.workspace.primaryRoot} width={contentWidth} glyphMode={glyphMode} compact={constrainedHeight} />}
+        </> : <PermissionCard call={permission.call} category={permission.category} {...(permission.reason ? {reason: permission.reason} : {})} workspace={runner.workspace.primaryRoot} width={contentWidth} glyphMode={glyphMode} compact={constrainedHeight} />}
         {showFooter ? (
           <Footer
             busy={busy}
@@ -1839,6 +1944,17 @@ function cloneValue(value: unknown): unknown {
   return value;
 }
 
+function recoveryFailure(value: unknown): {class?: string; repairHint?: string} | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const receipt = value as Record<string, unknown>;
+  return {
+    ...(typeof receipt.class === 'string' ? {class: sanitizeTerminalText(receipt.class).slice(0, 40)} : {}),
+    ...(typeof receipt.repairHint === 'string'
+      ? {repairHint: sanitizeTerminalText(receipt.repairHint).replace(/\s+/gu, ' ').slice(0, 240)}
+      : {}),
+  };
+}
+
 function isExitCommand(value: string): boolean {
   const command = localCommandName(value);
   return command === 'exit' || command === 'quit';
@@ -1857,6 +1973,9 @@ function shouldDeferLocalCommand(value: string): boolean {
     'remember',
     'diff',
     'checkpoints',
+    'audit',
+    'rollback',
+    'recover',
     'workflow',
     'exit',
     'quit',
@@ -1881,7 +2000,7 @@ function composerAttachments(value: string): string[] {
 }
 
 function permissionRows(width: number, hasCwd: boolean, compact: boolean): number {
-  const content = 3 + (hasCwd ? 1 : 0);
+  const content = 5 + (hasCwd ? 1 : 0);
   if (width >= 64) return content + 2;
   if (width >= 28) return content + 3;
   if (compact) return content + 3;

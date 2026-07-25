@@ -961,13 +961,13 @@ export class AgentRunner {
       this.recordPermission(call, category, 'allow', 'Approved for this session.');
       return true;
     }
-    await emit({type: 'permission', call, category});
+    await emit({type: 'permission', call, category, reason: decision.reason});
     if (!options.requestPermission) {
       this.recordPermission(call, category, 'deny', 'No permission handler was available.');
       return false;
     }
     try {
-      const grant = await options.requestPermission(call, category);
+      const grant = await options.requestPermission(call, category, decision.reason);
       const allowed = grant === true || grant === 'session';
       if (grant === 'session') this.sessionApprovals.add(approvalKey);
       this.recordPermission(

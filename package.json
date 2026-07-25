@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.25",
+  "version": "0.3.26",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,6 +16,12 @@
   },
   "skein": {
     "releaseNotes": [
+      "First-run setup now states that the primary agent needs API credentials and that provider subscriptions or signed-in coding CLIs are separate delegated tools",
+      "Permission prompts show the policy reason, redacted target, working directory, category risk, and explicit once, session, deny, and stop choices",
+      "The Recovery Center joins last-run state, failure repair hints, changed files, checkpoints, diff, audit, rollback, retry, and safe session resume",
+      "Read-only review commands pin working-tree, commit, or branch scope and inject a content-free redacted evidence bundle without storing it in the user transcript",
+      "JSON and JSONL terminal records now follow the published headless v1 schema with stable completed, verification, input, blocked, cancellation, turn, token, and error exit codes",
+      "Short terminal viewports clip long lists without overflow and pending clarifications cannot be consumed by recovery commands",
       "Durable sessions now separate a 250k-token context epoch from a 1m-token lifetime ceiling without changing the session id or deleting transcript history",
       "Content-free epoch handoffs preserve Task Contract criteria, unresolved failure circuits, changed files, and verification receipts across long runs",
       "Intent Sufficiency routes clear requests to execution, repository-inferable gaps to inspection, and genuine product choices to one persisted clarification",

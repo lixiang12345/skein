@@ -96,7 +96,7 @@ To build, verify, and install a local package artifact from this checkout:
 
 ```bash
 npm run verify:package -- --output-dir artifacts/package
-npm install -g ./artifacts/package/skein-code-cli-0.3.25.tgz
+npm install -g ./artifacts/package/skein-code-cli-0.3.26.tgz
 ```
 
 To install the published package from npm:
@@ -278,6 +278,24 @@ allowed by policy. Use `--auto-edit` to allow file edits while retaining prompts
 for shell/Git/network, or `--yes` for intentionally unattended runs. Hard deny
 rules still win over both flags.
 
+JSON emits one `type: "result"` object; JSONL ends with a `type: "session"`
+record, or `type: "final"` after a runtime error. These terminal records follow
+[`docs/headless-output.schema.json`](docs/headless-output.schema.json), include
+`schemaVersion: 1`, `status`, `reason`, and `exitCode`, and use this stable
+exit-code contract:
+
+| Code | Status | Meaning |
+| ---: | --- | --- |
+| 0 | `completed`, `verified` | The read-only run completed or current changes were verified. |
+| 1 | `error` | Setup, provider, extension, or runtime failure. |
+| 2 | `needs_input` | One persisted clarification is required; resume the same session. |
+| 3 | `unverified` | Changes or required acceptance evidence remain unverified. |
+| 4 | `verification_failed` | A current verification command failed. |
+| 5 | `blocked` | The active Task Contract records a blocked required criterion. |
+| 6 | `cancelled` | The run was interrupted; its session state was saved. |
+| 7 | `max_turns` | The configured turn limit ended the run. |
+| 8 | `token_budget` | The lifetime token budget ended the run. |
+
 ## Commands
 
 ```text
@@ -296,6 +314,8 @@ skein session list|show|delete       local session management
 skein session export <id>            Markdown audit export
 skein checkpoint list <session>      inspect snapshots
 skein checkpoint restore <s> <c>     restore a snapshot
+skein /review [scope]                 read-only fixed-scope review in the TUI
+skein /recover [action]               recovery status, retry, resume, diff, audit, rollback
 skein tools                          tool schemas and categories
 skein rules                          loaded user/workspace rule files
 ```

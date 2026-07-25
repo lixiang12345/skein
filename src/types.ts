@@ -752,7 +752,7 @@ export type AgentEvent =
   | {type: 'assistant'; content: string; id?: string}
   | {type: 'tool_start'; call: ToolCall; category: ToolCategory}
   | {type: 'tool_result'; result: ToolResult}
-  | {type: 'permission'; call: ToolCall; category: ToolCategory}
+  | {type: 'permission'; call: ToolCall; category: ToolCategory; reason: string}
   | {type: 'tasks'; tasks: SessionTask[]}
   | {type: 'contract'; contract: TaskContract}
   | {type: 'skill'; name: string; description: string}
@@ -786,5 +786,6 @@ export interface RunOptions {
   requestPermission?: (
     call: ToolCall,
     category: ToolCategory,
+    reason?: string,
   ) => Promise<PermissionGrant>;
 }

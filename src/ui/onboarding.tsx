@@ -554,7 +554,7 @@ function titleForStep(step: OnboardingStep): string {
 }
 
 function descriptionForStep(state: OnboardingState): string {
-  if (state.step === 'method') return 'Pick one connection path. You can change it later with configuration.';
+  if (state.step === 'method') return 'Skein\'s primary agent needs an API credential. OpenAI, Anthropic, and Gemini subscription logins are not API keys; signed-in coding CLIs are separate delegated tools.';
   if (state.step === 'official-provider') return 'Use the API credential issued by the selected provider.';
   if (state.step === 'relay-protocol') return 'The protocol is explicit so requests and credentials are never guessed.';
   if (state.step === 'endpoint') return 'Remote endpoints require HTTPS. Loopback development servers may use HTTP.';

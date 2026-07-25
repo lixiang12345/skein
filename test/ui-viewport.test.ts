@@ -3,6 +3,24 @@ import type {TimelineItem} from '../src/ui/components.js';
 import {estimateTimelineItemRows, fitTimelineToRows} from '../src/ui/viewport.js';
 
 describe('timeline viewport budgeting', () => {
+  it('bounds a long latest list and preserves its title plus recent recovery actions', () => {
+    const visible = fitTimelineToRows([{
+      id: 'recovery',
+      kind: 'list',
+      title: 'Recovery Center',
+      entries: Array.from({length: 10}, (_, index) => ({
+        label: index < 7 ? `Evidence ${index + 1}` : `/recover action-${index + 1}`,
+        detail: `Detail ${index + 1}`,
+      })),
+    }], {width: 40, rows: 8, compact: true});
+
+    expect(visible).toHaveLength(1);
+    expect(visible[0]).toMatchObject({kind: 'list', title: 'Recovery Center'});
+    expect(estimateTimelineItemRows(visible[0]!, {width: 40, rows: 8, compact: true})).toBeLessThanOrEqual(8);
+    expect(JSON.stringify(visible[0])).toContain('/recover action-10');
+    expect(JSON.stringify(visible[0])).toContain('earlier entries hidden');
+  });
+
   it('keeps a contiguous recent window and reports hidden history', () => {
     const items: TimelineItem[] = Array.from({length: 8}, (_, index) => ({
       id: String(index),

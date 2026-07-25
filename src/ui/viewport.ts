@@ -65,6 +65,40 @@ function clipTimelineItem(item: TimelineItem, options: TimelineViewportOptions):
   if (item.kind === 'notice') {
     return {...item, text: tailText(item.text, width, options.rows)};
   }
+  if (item.kind === 'list') {
+    if (options.rows <= 1) return {id: item.id, kind: 'notice', text: truncateDisplay(item.title, width)};
+    const available = Math.max(1, options.rows - 2);
+    const entries: typeof item.entries = [];
+    let used = 0;
+    let firstIncluded = item.entries.length;
+    for (let index = item.entries.length - 1; index >= 0; index -= 1) {
+      const entry = item.entries[index]!;
+      const rows = 1 + (entry.detail ? 1 : 0);
+      if (entries.length && used + rows > available) break;
+      if (!entries.length && rows > available) {
+        const {detail: _detail, ...compactEntry} = entry;
+        entries.unshift(compactEntry);
+        firstIncluded = index;
+        used = 1;
+        break;
+      }
+      entries.unshift(entry);
+      firstIncluded = index;
+      used += rows;
+    }
+    if (firstIncluded > 0) {
+      while (entries.length > 1 && used >= available) {
+        const removed = entries.shift();
+        if (!removed) break;
+        firstIncluded += 1;
+        used -= 1 + (removed.detail ? 1 : 0);
+      }
+      if (used < available) {
+        entries.unshift({label: `${terminalEllipsis()} ${firstIncluded} earlier entries hidden`});
+      }
+    }
+    return {...item, entries};
+  }
   if (item.kind === 'update') {
     const baseRows = width < 48 ? 3 : 2;
     if (options.rows < baseRows) {
