@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.28`.
+- Current repository version: `0.3.29`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -24,7 +24,8 @@ one of the milestones below.
   all sizes support prompt
   history, `@file` completion, command completion, multiline editing, queued
   follow-ups, live context inspection, permission approval, themes, ASCII mode,
-  `NO_COLOR`, and narrow-height degradation.
+  `NO_COLOR`, `TERM=dumb`, screen-reader output, reduced motion, and
+  narrow-height degradation.
 - Storage: sessions, checkpoints, local index, and project configuration still
   use `.mosaic/` paths for compatibility. `SKEIN_*` environment variables are
   preferred, while `MOSAIC_*` aliases remain supported.
@@ -41,16 +42,19 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.28.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.28.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.29.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.29.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
 
-The final verification included a fresh install for all three executable
-aliases. PTY coverage included 20, 24 ASCII, 40, 80, 120 columns and a 40x10
-short-height case. The current full-suite count is recorded from the latest
-`npm run check` in the release evidence.
+The final verification includes a fresh install for all three executable
+aliases. PTY coverage includes 20, 24 ASCII/`NO_COLOR`, 40, 80, and 120 columns;
+a 40x10 short-height case; 40-column `TERM=dumb`; and 80-column screen-reader
+interaction. Raw output is replayed through a headless terminal so the gate
+checks the final visible screen rather than only accumulated logs. The current
+full-suite count is recorded from the latest `npm run check` in the release
+evidence.
 
 ## Recommended Order
 
@@ -462,14 +466,19 @@ already separated short-term working memory and durable records:
 Never promote model-inferred facts directly into durable memory without the
 existing candidate/approval path.
 
-### P2: Terminal Accessibility And Visual Regression
+### P2: Terminal Accessibility And Visual Regression (complete in 0.3.29)
 
-Keep the current restrained graphite/cinder/mono theme system and add actual
-final-frame regression tests for widths 20-160 and heights 8-60. Include CJK,
-wide emoji, screen-reader mode, `TERM=dumb`, `NO_COLOR`, ASCII glyph mode,
-permission panels, multiline composer, history search, and active palettes.
-Use a terminal emulator fixture where raw ANSI logs cannot prove what remains
-visible in the final frame.
+Version `0.3.29` adds an explicit screen-reader profile, automatic `TERM=dumb`
+fallback, semantic Ink roles, reduced motion, and non-incremental low-capability
+rendering. The PTY release gate now covers the contracted 20/24/40/80/120-column
+matrix, 40x10 height constraint, CJK/emoji component fixtures, ASCII,
+`NO_COLOR`, permission/error/ready states, history search, and file completion.
+It replays logs through `@xterm/headless` and rejects final-frame wraps, stale
+panels, control-probe leaks, joined announcements, or missing status. The
+single-process benchmark enforces 25 ms input and 150 ms streaming-render p95
+budgets while requiring the last chunk in the final frame. Future expansion may
+sample additional widths through 160 and heights through 60 without changing
+the shipped gate's factual scope.
 
 ### P3: Distribution
 

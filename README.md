@@ -96,7 +96,7 @@ To build, verify, and install a local package artifact from this checkout:
 
 ```bash
 npm run verify:package -- --output-dir artifacts/package
-npm install -g ./artifacts/package/skein-code-cli-0.3.28.tgz
+npm install -g ./artifacts/package/skein-code-cli-0.3.29.tgz
 ```
 
 To install the published package from npm:
@@ -252,7 +252,13 @@ as `accent`, `text`, `muted`, `success`, and `error`. Set
 `SKEIN_GLYPHS=ascii` when a terminal or multiplexer renders Unicode symbols
 inconsistently. `NO_COLOR=1` or `ui.color: false` removes palette colors while
 keeping status symbols and semantic labels intact. `/density compact` and
-`/density comfortable` control vertical rhythm. Skein enables Kitty keyboard
+`/density comfortable` control vertical rhythm. `TERM=dumb` automatically uses
+ASCII, monochrome, reduced-motion, non-incremental output. Set
+`SKEIN_SCREEN_READER=1` (or Ink's `INK_SCREEN_READER=true`) for linear
+screen-reader output with semantic timeline, permission-choice, and input roles;
+this profile applies the same low-motion fallbacks while preserving keyboard
+commands. `SKEIN_REDUCE_MOTION=1` disables activity animation independently.
+Skein enables Kitty keyboard
 enhancements without probing when Kitty, WezTerm, Ghostty, or foot declares
 support; set `SKEIN_KITTY_KEYBOARD=on|off` to override detection.
 
@@ -639,7 +645,16 @@ npm test
 npm run build
 npm run check
 npm run test:pty
+npm run benchmark:terminal-ui
 npm run release:verify
 ```
+
+The PTY suite exercises 20/24/40/80/120 columns, a 40×10 viewport,
+`TERM=dumb`, ASCII/`NO_COLOR`, and screen-reader interaction. It replays raw
+output in a headless terminal and checks the final visible frame for overflow,
+stale panels, control-sequence leaks, and missing ready/permission/error state.
+`benchmark:terminal-ui` is a local single-process regression gate with p95
+budgets of 25 ms for input processing and 150 ms for streaming renders; it is
+not a universal hardware performance claim.
 
 Skein is licensed under MIT.

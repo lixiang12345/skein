@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.28",
+  "version": "0.3.29",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,6 +16,10 @@
   },
   "skein": {
     "releaseNotes": [
+      "TERM=dumb and screen-reader sessions now use deterministic ASCII, monochrome, reduced-motion, non-incremental rendering without losing keyboard input",
+      "SKEIN_SCREEN_READER=1 enables Ink accessibility output with semantic timeline, permission, and composer roles plus clean phase boundaries",
+      "PTY release gates now replay eight terminal scenarios through a headless emulator and reject final-frame overflow, stale panels, announcement joins, and missing status",
+      "A local terminal UI benchmark enforces 25 ms input and 150 ms streaming-render p95 budgets while retaining the final streamed chunk",
       "MCP trust and revoke confirmation rendering now has a deterministic cross-platform release regression gate",
       "MCP now follows a no-network search and inspect review before explicit workspace-bound manifest trust and lazy activation",
       "Declarative capability manifests expose redacted source, version, tools, permissions, network, command, path, sensitive-field, process, and completion-evidence effects",
@@ -99,6 +103,7 @@
     "benchmark:context": "tsx scripts/benchmark-local-index.ts",
     "benchmark:duplication": "tsx scripts/benchmark-duplication.ts",
     "benchmark:token-economy": "tsx scripts/benchmark-token-economy.ts",
+    "benchmark:terminal-ui": "tsx scripts/benchmark-terminal-ui.ts",
     "verify:package": "node scripts/verify-package.mjs",
     "release:verify": "npm run check && npm run verify:package --",
     "typecheck": "tsc --noEmit",
@@ -126,6 +131,7 @@
     "@types/diff": "^8.0.0",
     "@types/node": "^22.19.7",
     "@types/react": "^19.2.7",
+    "@xterm/headless": "^6.0.0",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",
     "vitest": "^4.0.18"

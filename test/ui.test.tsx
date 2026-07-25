@@ -1,11 +1,12 @@
 import React from 'react';
-import {renderToString} from 'ink';
+import {renderToString, Text} from 'ink';
+import stripAnsi from 'strip-ansi';
 import {describe, expect, it} from 'vitest';
 import {CommandPalette, ContextInspector, Footer, Header, PermissionCard, PromptBar, TaskRail, TeamCockpit, TeamWorkbench, Timeline, WorkspacePanel} from '../src/ui/components.js';
 import {toolMetaSummary} from '../src/ui/timeline-reducers.js';
 import {displayWidth, sanitizeTerminalText} from '../src/ui/text.js';
-import {detectTerminalAppearance, resolveTheme, resolveThemeWithColor} from '../src/ui/theme.js';
-import {resolveKittyKeyboardConfig} from '../src/ui/terminal-capabilities.js';
+import {detectTerminalAppearance, resolveTheme, resolveThemeWithColor, ThemeProvider} from '../src/ui/theme.js';
+import {resolveKittyKeyboardConfig, resolveTerminalAccessibility} from '../src/ui/terminal-capabilities.js';
 import type {MosaicConfig, ToolCall} from '../src/types.js';
 
 const config: MosaicConfig = {
@@ -39,6 +40,97 @@ describe('terminal presentation', () => {
       SKEIN_KITTY_KEYBOARD: 'off',
     }).mode).toBe('disabled');
     expect(resolveKittyKeyboardConfig({SKEIN_KITTY_KEYBOARD: 'on'}).mode).toBe('enabled');
+  });
+
+  it('resolves dumb and screen-reader terminals to stable monochrome output', () => {
+    expect(resolveTerminalAccessibility({TERM: 'xterm-256color'})).toEqual({
+      screenReader: false,
+      reducedMotion: false,
+      ascii: false,
+      color: true,
+      incrementalRendering: true,
+    });
+    expect(resolveTerminalAccessibility({TERM: 'dumb'})).toMatchObject({
+      screenReader: false,
+      reducedMotion: true,
+      ascii: true,
+      color: false,
+      incrementalRendering: false,
+    });
+    expect(resolveTerminalAccessibility({
+      TERM: 'xterm-256color',
+      SKEIN_SCREEN_READER: '1',
+    })).toMatchObject({
+      screenReader: true,
+      reducedMotion: true,
+      ascii: true,
+      color: false,
+      incrementalRendering: false,
+    });
+  });
+
+  it.each([
+    ['unicode', {TERM: 'xterm-256color'}],
+    ['no-color', {TERM: 'xterm-256color', NO_COLOR: '1'}],
+    ['ascii', {TERM: 'xterm-256color', SKEIN_GLYPHS: 'ascii'}],
+    ['dumb', {TERM: 'dumb'}],
+    ['screen-reader', {TERM: 'xterm-256color', SKEIN_SCREEN_READER: '1'}],
+  ])('keeps %s ready, permission, and error frames deterministic across terminal widths', (_profile, environment) => {
+    const accessibility = resolveTerminalAccessibility(environment);
+    const glyphMode = accessibility.ascii ? 'ascii' as const : 'auto' as const;
+    const theme = resolveThemeWithColor('graphite', accessibility.color);
+    for (const columns of [20, 24, 40, 80, 120]) {
+      const frames = [
+        renderToString(
+          <ThemeProvider theme={theme}>
+            <Header config={config} askMode={false} width={columns} glyphMode={glyphMode} />
+            <Timeline width={columns} glyphMode={glyphMode} items={[
+              {id: 'user', kind: 'user', text: '修复终端 🧪 final frame'},
+              {id: 'assistant', kind: 'assistant', text: 'Ready with verified evidence.'},
+            ]} />
+            <PromptBar busy={false} value="" placeholder="Type a request" width={columns} glyphMode={glyphMode}>
+              <Text>inspect</Text>
+            </PromptBar>
+            <Footer busy={false} tokens={0} maxTokens={250_000} changedFiles={0} width={columns} glyphMode={glyphMode} />
+          </ThemeProvider>,
+          {columns},
+        ),
+        renderToString(
+          <ThemeProvider theme={theme}>
+            <PermissionCard
+              call={{id: 'permission', name: 'shell', arguments: {command: 'printf terminal-check'}}}
+              category="shell"
+              reason="Confirm the local verification command."
+              width={columns}
+              glyphMode={glyphMode}
+              compact={columns <= 24}
+            />
+          </ThemeProvider>,
+          {columns},
+        ),
+        renderToString(
+          <ThemeProvider theme={theme}>
+            <Timeline width={columns} glyphMode={glyphMode} items={[
+              {id: 'error', kind: 'notice', tone: 'error', wrapWidth: columns, text: '运行失败 🧪 error evidence retained'},
+            ]} />
+          </ThemeProvider>,
+          {columns},
+        ),
+      ];
+      const visibleFrames = frames.map((frame) => stripAnsi(frame));
+      expect(visibleFrames[0]).toContain('修复终端 🧪');
+      expect(visibleFrames[0]).toContain('ready');
+      expect(visibleFrames[1]).toContain('Permission requir');
+      expect(visibleFrames[2]).toContain('运行失败 🧪');
+      for (const frame of visibleFrames) {
+        expect(frame).not.toMatch(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u);
+        for (const line of frame.split('\n')) {
+          expect(displayWidth(line), `${_profile} ${columns}-column final frame overflowed: ${JSON.stringify(line)}`)
+            .toBeLessThanOrEqual(columns);
+        }
+        if (accessibility.ascii) expect(frame).not.toMatch(/[◆●✓◌◇▎─]/u);
+      }
+    }
   });
 
   it('renders the branded header, timeline, and plan without throwing', () => {

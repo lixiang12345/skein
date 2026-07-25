@@ -62,7 +62,7 @@ import {
   type HistorySearchState,
 } from './history-search.js';
 import {displayWidth, sanitizeTerminalText, terminalEllipsis, truncateDisplay} from './text.js';
-import {resolveKittyKeyboardConfig} from './terminal-capabilities.js';
+import {resolveKittyKeyboardConfig, resolveTerminalAccessibility} from './terminal-capabilities.js';
 import {nextTheme, reloadUserThemes, resolveThemeWithColor, ThemeProvider, themes} from './theme.js';
 import {estimateTimelineItemRows, fitTimelineToRows} from './viewport.js';
 import {
@@ -127,7 +127,8 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const terminalHeight = Math.max(1, rows || 24);
   const horizontalPadding = terminalWidth >= 24 ? 1 : 0;
   const contentWidth = Math.max(1, terminalWidth - horizontalPadding * 2);
-  const glyphMode = process.env.SKEIN_GLYPHS === 'ascii' || process.env.MOSAIC_GLYPHS === 'ascii' ? 'ascii' as const : 'auto' as const;
+  const terminalAccessibility = resolveTerminalAccessibility();
+  const glyphMode = terminalAccessibility.ascii ? 'ascii' as const : 'auto' as const;
   const glyphs = resolveGlyphs(glyphMode);
   const separator = ` ${glyphs.separator} `;
   const ellipsis = terminalEllipsis();
@@ -137,7 +138,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     : config.model.provider === 'compatible' && !config.model.baseUrl
       ? `No model endpoint configured. Set one and restart: export SKEIN_BASE_URL=<endpoint>${separator}or pass --base-url <endpoint>. Run ${PRODUCT_COMMAND} doctor to verify.`
       : undefined;
-  const colorEnabled = config.ui.color && !process.env.NO_COLOR;
+  const colorEnabled = config.ui.color && terminalAccessibility.color;
   const [theme, setTheme] = useState(() => resolveThemeWithColor(config.ui.theme, colorEnabled));
   const [themeCatalogRevision, setThemeCatalogRevision] = useState(0);
   const [compact, setCompact] = useState(config.ui.compact);
@@ -308,13 +309,13 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   }, [input]);
 
   useEffect(() => {
-    if (!busy || reducedMotion()) {
+    if (!busy || terminalAccessibility.reducedMotion) {
       setFrameIndex(0);
       return undefined;
     }
     const timer = setInterval(() => setFrameIndex((value) => (value + 1) % spinnerFrames().length), 120);
     return () => clearInterval(timer);
-  }, [busy]);
+  }, [busy, terminalAccessibility.reducedMotion]);
 
   const requestPermission = useCallback((call: ToolCall, category: ToolCategory, reason?: string) => {
     return new Promise<PermissionGrant>((resolve) => setPermission({
@@ -1892,14 +1893,17 @@ function permissionPosture(config: MosaicConfig): string {
 
 export async function runInteractiveTui(options: TuiOptions): Promise<void> {
   await reloadUserThemes();
+  const terminalAccessibility = resolveTerminalAccessibility();
   const instance = render(<SkeinApp {...options} />, {
     exitOnCtrlC: false,
     patchConsole: true,
-    incrementalRendering: true,
+    incrementalRendering: terminalAccessibility.incrementalRendering,
+    isScreenReaderEnabled: terminalAccessibility.screenReader,
     maxFps: 30,
     kittyKeyboard: resolveKittyKeyboardConfig(),
   });
   await instance.waitUntilExit();
+  if (terminalAccessibility.screenReader) process.stdout.write('\n');
 }
 
 function initialTimeline(session: Session, banner: BannerInfo, setupProblem?: string): TimelineItem[] {
@@ -2131,13 +2135,6 @@ function toolDetail(call: ToolCall): string {
 }
 
 function spinnerFrames(): string[] {
-  const ascii = process.env.SKEIN_GLYPHS === 'ascii' || process.env.MOSAIC_GLYPHS === 'ascii';
+  const ascii = resolveTerminalAccessibility().ascii;
   return ascii ? ['.', 'o', 'O', 'o'] : ['◌', '◍', '◎', '◉', '◎', '◍'];
-}
-
-function reducedMotion(): boolean {
-  return process.env.SKEIN_REDUCE_MOTION === '1' ||
-    process.env.SKEIN_REDUCE_MOTION === 'true' ||
-    process.env.INK_SCREEN_READER === 'true' ||
-    process.env.TERM === 'dumb';
 }

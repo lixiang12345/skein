@@ -5,7 +5,7 @@ import type {IndexPreparationResult, IndexProgress} from '../context/local-index
 import {PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
 import type {MosaicConfig} from '../types.js';
 import {compactDisplayPath, displayWidth, sanitizeTerminalText, truncateDisplay} from './text.js';
-import {resolveKittyKeyboardConfig} from './terminal-capabilities.js';
+import {resolveKittyKeyboardConfig, resolveTerminalAccessibility} from './terminal-capabilities.js';
 import {resolveThemeWithColor, ThemeProvider, useTheme} from './theme.js';
 
 export interface WorkspaceReadiness extends IndexPreparationResult {
@@ -52,10 +52,11 @@ export function WorkspacePreparationView({
 }) {
   const theme = useTheme();
   const safeWidth = Math.max(1, Math.floor(width));
-  const innerWidth = Math.max(1, safeWidth - (safeWidth >= 24 ? 4 : 0));
   const compact = safeWidth < 48;
   const constrained = height < 14;
-  const ascii = process.env.SKEIN_GLYPHS === 'ascii' || process.env.MOSAIC_GLYPHS === 'ascii';
+  const horizontalPadding = safeWidth >= 24 && !constrained ? 2 : 0;
+  const innerWidth = Math.max(1, safeWidth - horizontalPadding * 2);
+  const ascii = resolveTerminalAccessibility().ascii;
   const spinner = (ascii ? ['.', 'o', 'O', 'o'] : ['◜', '◠', '◝', '◞', '◡', '◟'])[frame % (ascii ? 4 : 6)] as string;
   const separator = ascii ? '|' : '·';
   const brand = ascii ? '*' : PRODUCT_MARK;
@@ -67,7 +68,7 @@ export function WorkspacePreparationView({
   const steps = preparationSteps(phase, progress, readiness, error, {ascii, spinner});
 
   return (
-    <Box flexDirection="column" paddingX={safeWidth >= 24 ? 2 : 0}>
+    <Box flexDirection="column" paddingX={horizontalPadding}>
       <Box>
         <Text bold color={theme.accent}>{brand}  {PRODUCT_NAME.toUpperCase()}</Text>
         {!compact && !constrained ? <Text color={theme.dim}>  {separator}  LOCAL CONTEXT</Text> : null}
@@ -80,9 +81,9 @@ export function WorkspacePreparationView({
         </>
       ) : <Text color={theme.dim}>{truncateDisplay(workspaceLine, innerWidth)}</Text>}
       <Box marginTop={1} flexDirection={constrained ? 'row' : 'column'}>
-        {steps.map((step) => constrained ? (
+        {steps.map((step, index) => constrained ? (
           <Text key={step.id} color={step.state === 'active' ? theme.accent : step.state === 'complete' ? theme.success : step.state === 'error' ? theme.error : theme.dim}>
-            {step.glyph} {step.id === 'persist' ? 'save' : step.id}{step.id === 'verify' ? '' : ' '}
+            {index ? ' ' : ''}{step.glyph} {step.id === 'persist' ? 'save' : step.id}
           </Text>
         ) : (
           <Box key={step.id} height={1} overflowY="hidden">
@@ -98,7 +99,7 @@ export function WorkspacePreparationView({
           </Box>
         ))}
       </Box>
-      <Box marginTop={1}>
+      <Box marginTop={constrained ? 0 : 1}>
         <Text bold color={error ? theme.error : readiness ? theme.success : theme.accent}>
           {readiness ? (ascii ? '[ok]' : '✓') : error ? (ascii ? '[x]' : '×') : spinner}{' '}
         </Text>
@@ -277,7 +278,8 @@ export async function runWorkspacePreparation(
   } = {},
 ): Promise<WorkspacePreparationResult> {
   let result: WorkspacePreparationResult | undefined;
-  const colorEnabled = config.ui.color && !process.env.NO_COLOR;
+  const terminalAccessibility = resolveTerminalAccessibility();
+  const colorEnabled = config.ui.color && terminalAccessibility.color;
   const theme = resolveThemeWithColor(config.ui.theme, colorEnabled);
   const instance = render(
     <ThemeProvider theme={theme}>
@@ -296,11 +298,13 @@ export async function runWorkspacePreparation(
       ...(options.stderr ? {stderr: options.stderr} : {}),
       exitOnCtrlC: false,
       patchConsole: false,
-      incrementalRendering: true,
+      incrementalRendering: terminalAccessibility.incrementalRendering,
+      isScreenReaderEnabled: terminalAccessibility.screenReader,
       kittyKeyboard: resolveKittyKeyboardConfig(),
     },
   );
   await instance.waitUntilExit();
+  if (terminalAccessibility.screenReader) (options.stdout ?? process.stdout).write('\n');
   return result ?? {status: 'cancelled'};
 }
 

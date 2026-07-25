@@ -21,6 +21,15 @@ for width in 20 24 40 80 120; do
   node test/pty/check-output.mjs "$output" "$width" "$mode"
 done
 
+for entry in "40 dumb" "80 screen-reader"; do
+  set -- $entry
+  width=$1
+  mode=$2
+  output="$artifacts/${width}-${mode}.log"
+  expect test/pty/interactive.exp "$width" "$mode" "$output" "$workspace"
+  node test/pty/check-output.mjs "$output" "$width" "$mode"
+done
+
 short_output="$artifacts/40x10-unicode.log"
 expect test/pty/short-height.exp "$short_output" "$workspace"
 node test/pty/check-output.mjs "$short_output" 40 unicode short

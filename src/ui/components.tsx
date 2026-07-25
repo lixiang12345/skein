@@ -255,7 +255,7 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
     );
   }
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" aria-role="list">
       {items.map((item, index) => {
         if (item.kind === 'user') {
           return (
@@ -835,7 +835,7 @@ export function PermissionCard({call, category, reason, width = 80, glyphMode = 
       ];
   const marker = glyphs.borderStyle === 'classic' ? '!' : '▎';
   return (
-    <Box flexDirection="column" marginBottom={1}>
+    <Box flexDirection="column" marginBottom={1} aria-role="radiogroup">
       <PermissionLine marker={marker}><Text bold color={theme.warning}>{title}</Text></PermissionLine>
       <PermissionLine marker={marker}><Text color={theme.muted}>{tool}</Text></PermissionLine>
       <PermissionLine marker={marker}><Text color={theme.text}>{summaryLine}</Text></PermissionLine>
@@ -930,7 +930,7 @@ export function PromptBar({busy, value, placeholder, width = 80, mode = 'chat', 
           <Text color={theme.text}>{truncateDisplay(safeQueuePreview, queuePreviewWidth)}</Text>
         </Box>
       ) : null}
-      <Box>
+      <Box aria-role="textbox">
         <Text bold color={shell ? theme.warning : theme.accent}>{shell ? '! ' : `${glyphs.prompt} `}</Text>
         {children}
       </Box>

@@ -5,6 +5,34 @@ export interface KittyKeyboardConfig {
   flags: ['disambiguateEscapeCodes'];
 }
 
+export interface TerminalAccessibilityConfig {
+  screenReader: boolean;
+  reducedMotion: boolean;
+  ascii: boolean;
+  color: boolean;
+  incrementalRendering: boolean;
+}
+
+/** Resolve deterministic low-capability and assistive terminal behavior. */
+export function resolveTerminalAccessibility(
+  environment: TerminalEnvironment = process.env,
+): TerminalAccessibilityConfig {
+  const screenReader = truthy(environment.SKEIN_SCREEN_READER) ||
+    environment.INK_SCREEN_READER?.trim().toLowerCase() === 'true';
+  const dumb = environment.TERM?.trim().toLowerCase() === 'dumb';
+  const reducedMotion = screenReader || dumb || truthy(environment.SKEIN_REDUCE_MOTION);
+  const ascii = screenReader || dumb ||
+    environment.SKEIN_GLYPHS === 'ascii' || environment.MOSAIC_GLYPHS === 'ascii';
+  const color = !screenReader && !dumb && environment.NO_COLOR === undefined;
+  return {
+    screenReader,
+    reducedMotion,
+    ascii,
+    color,
+    incrementalRendering: !screenReader && !dumb,
+  };
+}
+
 /**
  * Avoid Ink's active capability probe on unknown terminals. Some terminal and
  * PTY combinations echo the probe response into the visible session before
@@ -41,4 +69,8 @@ function enabledKittyKeyboard(): KittyKeyboardConfig {
 
 function disabledKittyKeyboard(): KittyKeyboardConfig {
   return {mode: 'disabled', flags: ['disambiguateEscapeCodes']};
+}
+
+function truthy(value: string | undefined): boolean {
+  return value !== undefined && ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
 }

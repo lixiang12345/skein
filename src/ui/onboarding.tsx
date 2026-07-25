@@ -5,7 +5,7 @@ import {defaultModelForProvider, redactEndpoint, saveUserConfig} from '../config
 import {PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
 import type {MosaicConfig, ProviderName} from '../types.js';
 import {displayWidth, padDisplay, sanitizeTerminalText, truncateDisplay} from './text.js';
-import {resolveKittyKeyboardConfig} from './terminal-capabilities.js';
+import {resolveKittyKeyboardConfig, resolveTerminalAccessibility} from './terminal-capabilities.js';
 import {resolveThemeWithColor, ThemeProvider, useTheme} from './theme.js';
 
 export type OnboardingMethod = 'official' | 'relay';
@@ -309,7 +309,7 @@ interface OnboardingAppProps {
 }
 
 export function OnboardingApp({initialConfig, saveConfig, onFinish}: OnboardingAppProps) {
-  const colorEnabled = initialConfig.ui.color && !process.env.NO_COLOR;
+  const colorEnabled = initialConfig.ui.color && resolveTerminalAccessibility().color;
   const theme = useMemo(() => resolveThemeWithColor(initialConfig.ui.theme, colorEnabled), [colorEnabled, initialConfig.ui.theme]);
   return (
     <ThemeProvider theme={theme}>
@@ -594,6 +594,7 @@ export async function runFirstRunOnboarding(
   } = {},
 ): Promise<OnboardingResult> {
   let result: OnboardingResult | undefined;
+  const terminalAccessibility = resolveTerminalAccessibility();
   const instance = render(
     <OnboardingApp
       initialConfig={initialConfig}
@@ -606,10 +607,12 @@ export async function runFirstRunOnboarding(
       ...(options.stderr ? {stderr: options.stderr} : {}),
       exitOnCtrlC: false,
       patchConsole: false,
-      incrementalRendering: true,
+      incrementalRendering: terminalAccessibility.incrementalRendering,
+      isScreenReaderEnabled: terminalAccessibility.screenReader,
       kittyKeyboard: resolveKittyKeyboardConfig(),
     },
   );
   await instance.waitUntilExit();
+  if (terminalAccessibility.screenReader) (options.stdout ?? process.stdout).write('\n');
   return result ?? {status: 'cancelled'};
 }
