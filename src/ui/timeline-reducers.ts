@@ -36,6 +36,13 @@ export function toolMetaSummary(metadata?: Record<string, unknown>): string | un
   if (metadata.hookError && typeof metadata.hookError === 'string') {
     parts.push(`hook failed: ${sanitizeTerminalText(metadata.hookError).slice(0, 80)}`);
   }
+  const contextRefresh = metadata.contextRefresh;
+  if (contextRefresh && typeof contextRefresh === 'object' &&
+    (contextRefresh as {status?: unknown}).status === 'degraded') {
+    const detail = (contextRefresh as {detail?: unknown}).detail;
+    parts.push(`context refresh degraded${typeof detail === 'string'
+      ? `: ${sanitizeTerminalText(detail).slice(0, 80)}` : ''}`);
+  }
   return parts.length ? parts.join(' · ') : undefined;
 }
 

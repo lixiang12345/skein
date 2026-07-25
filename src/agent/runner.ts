@@ -699,6 +699,28 @@ export class AgentRunner {
       } else {
         recovery.recordSuccess(call);
       }
+      const evidenceProgress = recovery.recordEvidence(call, {
+        toolCallId: call.id,
+        name: call.name,
+        ok,
+        content: completeContent,
+        metadata,
+      });
+      if (evidenceProgress) metadata.evidenceProgress = evidenceProgress;
+      if (changedFiles.length && this.contextEngine.invalidate) {
+        this.contextEngine.invalidate(changedFiles);
+        if (this.contextEngine.flushDirty) {
+          try {
+            metadata.contextRefresh = await this.contextEngine.flushDirty();
+          } catch (error) {
+            metadata.contextRefresh = {
+              status: 'degraded',
+              detail: toError(error).message,
+              paths: changedFiles.length,
+            };
+          }
+        }
+      }
       const result = await this.protectToolResult({
         toolCallId: call.id,
         name: call.name,

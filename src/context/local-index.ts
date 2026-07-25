@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import {lstat, readFile, stat} from 'node:fs/promises';
-import {basename, dirname, extname, join, resolve} from 'node:path';
+import {basename, dirname, extname, isAbsolute, join, relative, resolve, sep} from 'node:path';
 import fg from 'fast-glob';
 import {z} from 'zod';
 import type {ContextHit, PackedContext} from '../types.js';
@@ -33,6 +33,7 @@ interface IndexedFile {
   root: string;
   absolutePath: string;
   mtimeMs: number;
+  ctimeMs?: number;
   size: number;
   contentHash: string;
   chunks: IndexedChunk[];
@@ -54,6 +55,7 @@ interface DiscoveredFile {
 
 interface FileFingerprint {
   mtimeMs: number;
+  ctimeMs: number;
   size: number;
 }
 
@@ -76,6 +78,7 @@ const indexedFileSchema = z.object({
   root: z.string(),
   absolutePath: z.string(),
   mtimeMs: z.number(),
+  ctimeMs: z.number().optional(),
   size: z.number().nonnegative(),
   contentHash: contentHashSchema,
   chunks: z.array(indexedChunkSchema),
@@ -102,6 +105,9 @@ export interface LocalIndexStatus {
   files: number;
   chunks: number;
   queryCacheEntries: number;
+  refreshState: 'current' | 'dirty' | 'refreshing' | 'degraded';
+  dirtyPaths: number;
+  refreshError?: string;
   createdAt?: string;
   generation?: string;
 }
@@ -142,6 +148,9 @@ export class LocalContextIndex {
   private index?: LocalIndexFile;
   private readonly workspace: WorkspaceAccess;
   private readonly queryCache = new Map<string, ContextHit[]>();
+  private readonly dirtyPaths = new Set<string>();
+  private refreshState: LocalIndexStatus['refreshState'] = 'current';
+  private refreshError: string | undefined;
   readonly indexPath: string;
 
   constructor(private readonly roots: string[]) {
@@ -165,8 +174,10 @@ export class LocalContextIndex {
           if (!this.roots.includes(file.root) || resolve(file.root, file.path) !== file.absolutePath) continue;
           const safe = await this.workspace.resolvePath(file.absolutePath, {expect: 'file'});
           if (safe !== file.absolutePath) continue;
+          const {ctimeMs, ...persistedFile} = file;
           files.push({
-            ...file,
+            ...persistedFile,
+            ...(ctimeMs !== undefined ? {ctimeMs} : {}),
             chunks: file.chunks
               .filter((chunk) => chunk.absolutePath === file.absolutePath &&
                 chunk.root === file.root && chunk.path === file.path)
@@ -181,6 +192,8 @@ export class LocalContextIndex {
       }
       this.index = {...parsed, files};
       this.queryCache.clear();
+      this.refreshState = this.dirtyPaths.size ? 'dirty' : 'current';
+      this.refreshError = undefined;
       return true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
@@ -246,9 +259,11 @@ export class LocalContextIndex {
   }
 
   async search(query: string, topK = 12): Promise<ContextHit[]> {
+    await this.flushDirty();
     await this.ensureCurrentIndex();
     const limit = Math.max(1, Math.floor(topK));
-    let hits = this.getCachedHits(query, limit) ?? this.rank(query, limit);
+    const cached = this.getCachedHits(query, limit);
+    let hits = cached ?? this.rank(query, limit);
     if (!(await this.hitsAreCurrent(hits))) {
       // A candidate may change without a reliable mtime/size signal. Rehashing
       // the full manifest once keeps stale bytes out of both cache and prompts.
@@ -258,6 +273,72 @@ export class LocalContextIndex {
     }
     this.cacheHits(query, limit, hits);
     return cloneHits(hits);
+  }
+
+  invalidate(paths: string[]): void {
+    for (const path of paths) {
+      const absolutePath = isAbsolute(path) ? resolve(path) : resolve(this.roots[0] ?? process.cwd(), path);
+      if (this.roots.some((root) => isWithinRoot(root, absolutePath))) {
+        this.dirtyPaths.add(absolutePath);
+      }
+    }
+    if (paths.length) this.queryCache.clear();
+    if (this.dirtyPaths.size) this.refreshState = 'dirty';
+  }
+
+  async flushDirty(): Promise<{generation?: string; paths: number}> {
+    if (!this.dirtyPaths.size) {
+      return {
+        ...(this.index?.generation ? {generation: this.index.generation} : {}),
+        paths: 0,
+      };
+    }
+    const dirty = [...this.dirtyPaths];
+    for (const path of dirty) this.dirtyPaths.delete(path);
+    this.refreshState = 'refreshing';
+    this.refreshError = undefined;
+    try {
+      if (!this.index && !(await this.load())) {
+        const built = await this.build();
+        this.refreshState = 'current';
+        return {generation: built.generation, paths: dirty.length};
+      }
+      const workspace = this.roots[0] ?? process.cwd();
+      return await withNamespaceLease(projectNamespacePaths(workspace).canonical, 'shared', async () => {
+        assertActiveProjectNamespacePath(workspace, dirname(this.indexPath));
+        const files = new Map((this.index?.files ?? [])
+          .map((file) => [file.absolutePath, file] as const));
+        for (const absolutePath of dirty) {
+          files.delete(absolutePath);
+          const item = await this.discoverDirtyFile(absolutePath);
+          if (!item) continue;
+          const indexed = await this.indexDiscoveredFile(item);
+          if (indexed) files.set(indexed.absolutePath, indexed);
+        }
+        const nextFiles = [...files.values()]
+          .sort((left, right) => left.absolutePath.localeCompare(right.absolutePath));
+        const generation = createGeneration(nextFiles);
+        this.index = {
+          version: 2,
+          createdAt: new Date().toISOString(),
+          generation,
+          roots: this.roots,
+          files: nextFiles,
+        };
+        this.queryCache.clear();
+        await ensureWorkspaceStorageDirectory(workspace, dirname(this.indexPath), {
+          requireActiveNamespace: true,
+        });
+        await atomicWrite(this.indexPath, `${JSON.stringify(this.index)}\n`, 0o600);
+        this.refreshState = 'current';
+        return {generation, paths: dirty.length};
+      });
+    } catch (error) {
+      for (const path of dirty) this.dirtyPaths.add(path);
+      this.refreshState = 'degraded';
+      this.refreshError = error instanceof Error ? error.message : String(error);
+      throw error;
+    }
   }
 
   async pack(query: string, topK: number, maxTokens: number): Promise<PackedContext> {
@@ -272,6 +353,9 @@ export class LocalContextIndex {
       files: this.index?.files.length ?? 0,
       chunks: this.index?.files.reduce((total, file) => total + file.chunks.length, 0) ?? 0,
       queryCacheEntries: this.queryCache.size,
+      refreshState: this.refreshState,
+      dirtyPaths: this.dirtyPaths.size,
+      ...(this.refreshError ? {refreshError: this.refreshError} : {}),
       ...(this.index?.createdAt ? {createdAt: this.index.createdAt} : {}),
       ...(this.index?.generation ? {generation: this.index.generation} : {}),
     };
@@ -321,7 +405,8 @@ export class LocalContextIndex {
       }
       if (info.size > MAX_FILE_BYTES) continue;
       const old = previous.get(safePath);
-      if (old && !verifyContentHashes && old.mtimeMs === info.mtimeMs && old.size === info.size) {
+      if (old && !verifyContentHashes && old.mtimeMs === info.mtimeMs &&
+        old.ctimeMs === info.ctimeMs && old.size === info.size) {
         files.push(old);
         reused += 1;
         continue;
@@ -340,6 +425,7 @@ export class LocalContextIndex {
           ...old,
           ...safeItem,
           mtimeMs: info.mtimeMs,
+          ctimeMs: info.ctimeMs,
           size: info.size,
           contentHash,
           chunks: old.chunks.map((chunk) => ({
@@ -355,6 +441,7 @@ export class LocalContextIndex {
       files.push({
         ...safeItem,
         mtimeMs: info.mtimeMs,
+        ctimeMs: info.ctimeMs,
         size: info.size,
         contentHash,
         chunks: chunkFile(safeItem, content),
@@ -400,7 +487,9 @@ export class LocalContextIndex {
       try {
         const safePath = await this.workspace.resolvePath(item.absolutePath, {expect: 'file'});
         const info = await stat(safePath);
-        if (info.size <= MAX_FILE_BYTES) current.set(safePath, {mtimeMs: info.mtimeMs, size: info.size});
+        if (info.size <= MAX_FILE_BYTES) {
+          current.set(safePath, {mtimeMs: info.mtimeMs, ctimeMs: info.ctimeMs, size: info.size});
+        }
       } catch {
         // Inaccessible paths are omitted and cause an existing entry to refresh.
       }
@@ -409,8 +498,30 @@ export class LocalContextIndex {
     if (current.size !== indexed.length) return true;
     return indexed.some((file) => {
       const actual = current.get(file.absolutePath);
-      return !actual || actual.mtimeMs !== file.mtimeMs || actual.size !== file.size;
+      return !actual || actual.mtimeMs !== file.mtimeMs || actual.ctimeMs !== file.ctimeMs ||
+        actual.size !== file.size;
     });
+  }
+
+  private async indexDiscoveredFile(item: DiscoveredFile): Promise<IndexedFile | undefined> {
+    try {
+      const safePath = await this.workspace.resolvePath(item.absolutePath, {expect: 'file'});
+      const info = await stat(safePath);
+      if (info.size > MAX_FILE_BYTES) return undefined;
+      const content = await readFile(safePath, 'utf8');
+      if (content.includes('\u0000')) return undefined;
+      const safeItem = {...item, absolutePath: safePath};
+      return {
+        ...safeItem,
+        mtimeMs: info.mtimeMs,
+        ctimeMs: info.ctimeMs,
+        size: info.size,
+        contentHash: hashContent(content),
+        chunks: chunkFile(safeItem, content),
+      };
+    } catch {
+      return undefined;
+    }
   }
 
   private async validateLoadedIndex(onProgress?: (progress: IndexProgress) => void): Promise<boolean> {
@@ -456,6 +567,22 @@ export class LocalContextIndex {
     }
     discovered.sort((left, right) => left.absolutePath.localeCompare(right.absolutePath));
     return discovered;
+  }
+
+  private async discoverDirtyFile(absolutePath: string): Promise<DiscoveredFile | undefined> {
+    const root = this.roots.find((candidate) => isWithinRoot(candidate, absolutePath));
+    if (!root) return undefined;
+    const path = relative(root, absolutePath).split(sep).join('/');
+    if (!isIncludedSourcePath(path)) return undefined;
+    const matches = await fg([path], {
+      cwd: root,
+      onlyFiles: true,
+      dot: true,
+      unique: true,
+      followSymbolicLinks: false,
+      ignore: ignorePatterns,
+    });
+    return matches.length === 1 ? {root, path, absolutePath} : undefined;
   }
 
   private rank(query: string, topK: number): ContextHit[] {
@@ -528,6 +655,7 @@ export class LocalContextIndex {
   }
 
   private cacheHits(query: string, topK: number, hits: ContextHit[]): void {
+    if (!hits.length) return;
     const generation = this.index?.generation;
     if (!generation) return;
     const key = `${generation}\u0000${topK}\u0000${query}`;
@@ -539,6 +667,24 @@ export class LocalContextIndex {
       this.queryCache.delete(oldest);
     }
   }
+}
+
+function isWithinRoot(root: string, path: string): boolean {
+  const offset = relative(root, path);
+  return offset === '' || (!offset.startsWith('..') && !isAbsolute(offset));
+}
+
+function isIncludedSourcePath(path: string): boolean {
+  const name = basename(path);
+  if (['Dockerfile', 'Makefile', 'Justfile', 'Procfile', 'Rakefile', 'Gemfile',
+    'Cargo.toml', 'go.mod', 'go.sum', 'package.json', 'tsconfig.json'].includes(name)) return true;
+  return new Set([
+    '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.py', '.go', '.rs', '.java',
+    '.kt', '.kts', '.rb', '.php', '.swift', '.c', '.cc', '.cpp', '.h', '.hpp',
+    '.cs', '.scala', '.vue', '.svelte', '.html', '.css', '.scss', '.less', '.sql',
+    '.graphql', '.gql', '.sh', '.bash', '.zsh', '.fish', '.ps1', '.json', '.jsonc',
+    '.yaml', '.yml', '.toml', '.xml', '.md', '.mdx', '.txt', '.proto', '.tf', '.hcl',
+  ]).has(extname(name).toLowerCase());
 }
 
 function chunksMatch(expected: IndexedChunk[], actual: IndexedChunk[]): boolean {

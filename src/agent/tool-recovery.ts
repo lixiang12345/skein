@@ -15,6 +15,7 @@ const RETRY_BUDGET: Record<ToolFailureClass, number> = {
   cancelled: 0,
   hook: 1,
   execution: 3,
+  no_progress: 0,
   contract_required: 2,
 };
 
@@ -27,6 +28,7 @@ const REPAIR_HINT: Record<ToolFailureClass, string> = {
   cancelled: 'Stop work and preserve the current state.',
   hook: 'Fix the hook failure before relying on the tool result.',
   execution: 'Use the error detail to change the inputs or approach.',
+  no_progress: 'Stop repeating the same search; use current evidence or change the query, path, or mode.',
   contract_required: 'Activate the Task Contract before any workspace mutation.',
 };
 
@@ -35,13 +37,30 @@ interface SignatureState {
   failures: number;
 }
 
+interface EvidenceState {
+  fingerprint: string;
+  repeats: number;
+}
+
+export interface EvidenceProgressReceipt {
+  status: 'new' | 'empty' | 'repeated';
+  repeatCount: number;
+  stop: boolean;
+  signature: string;
+}
+
 export class ToolRecoveryController {
   private readonly signatures = new Map<string, SignatureState>();
   private readonly classFailures = new Map<ToolFailureClass, number>();
   private readonly toolClasses = new Map<string, ToolFailureClass>();
+  private readonly evidence = new Map<string, EvidenceState>();
 
   preflight(call: ToolCall): ToolFailureReceipt | undefined {
     const callKey = callSignature(call);
+    const evidence = this.evidence.get(callKey);
+    if (evidence && evidence.repeats >= 2) {
+      return this.receipt(call, 'no_progress', evidence.repeats + 1, true);
+    }
     const signatureState = this.signatures.get(callKey);
     if (signatureState && (signatureState.failures >= 2 ||
       !isRetryable(signatureState.failureClass))) {
@@ -78,6 +97,27 @@ export class ToolRecoveryController {
   recordSuccess(call: ToolCall): void {
     this.signatures.delete(callSignature(call));
     this.toolClasses.delete(call.name);
+  }
+
+  recordEvidence(call: ToolCall, result: ToolResult): EvidenceProgressReceipt | undefined {
+    if (call.name !== 'search_code' || !result.ok) return undefined;
+    const callKey = callSignature(call);
+    const fingerprint = createHash('sha256')
+      .update(`${result.content}\0${stableJson(result.metadata ?? {})}`)
+      .digest('hex');
+    const count = typeof result.metadata?.count === 'number' ? result.metadata.count : undefined;
+    const current = this.evidence.get(callKey);
+    const repeated = current?.fingerprint === fingerprint;
+    const repeats = count === 0
+      ? (repeated ? current.repeats + 1 : 1)
+      : repeated ? current.repeats + 1 : 0;
+    this.evidence.set(callKey, {fingerprint, repeats});
+    return {
+      status: count === 0 ? 'empty' : repeated ? 'repeated' : 'new',
+      repeatCount: repeats,
+      stop: repeats >= 2,
+      signature: createHash('sha256').update(`${callKey}\0${fingerprint}`).digest('hex'),
+    };
   }
 
   private receipt(

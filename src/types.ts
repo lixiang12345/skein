@@ -363,6 +363,7 @@ export type ToolFailureClass =
   | 'cancelled'
   | 'hook'
   | 'execution'
+  | 'no_progress'
   | 'contract_required';
 
 export interface ToolFailureReceipt {

@@ -6,7 +6,15 @@ import type {WorkspaceAccess} from './workspace.js';
 export interface ContextProvider {
   pack(query: string, options?: ContextPackOptions): Promise<PackedContext>;
   search(query: string, topK?: number): Promise<ContextHit[]>;
+  /** Mark known workspace mutations dirty without performing I/O. */
+  invalidate?(paths: string[]): void;
+  /** Make dirty paths queryable before the next retrieval boundary. */
+  flushDirty?(): Promise<ContextRefreshResult>;
 }
+
+export type ContextRefreshResult =
+  | {status: 'current'; generation?: string; paths: number}
+  | {status: 'degraded'; detail: string; paths: number};
 
 export interface ToolExecutionContext {
   readonly config: MosaicConfig;

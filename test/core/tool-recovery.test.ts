@@ -61,6 +61,27 @@ describe('tool recovery', () => {
     expect(formatted).not.toContain('top-secret');
     expect(formatted).not.toContain('example.test');
   });
+
+  it('stops identical empty or repeated searches after bounded no-progress evidence', () => {
+    const controller = new ToolRecoveryController();
+    const call: ToolCall = {id: 'search-1', name: 'search_code', arguments: {query: 'missing'}};
+    const empty = {toolCallId: 'search-1', name: 'search_code', ok: true, content: 'No matches found.', metadata: {count: 0}};
+    expect(controller.recordEvidence(call, empty)).toMatchObject({status: 'empty', repeatCount: 1, stop: false});
+    expect(controller.preflight({...call, id: 'search-2'})).toBeUndefined();
+    expect(controller.recordEvidence({...call, id: 'search-2'}, empty)).toMatchObject({
+      status: 'empty', repeatCount: 2, stop: true,
+    });
+    expect(controller.preflight({...call, id: 'search-3'})).toMatchObject({
+      class: 'no_progress', retryable: false, circuitOpen: true,
+    });
+
+    const found: ToolResult = {...empty, content: 'src/app.ts:1', metadata: {count: 1}};
+    const other: ToolCall = {id: 'found-1', name: 'search_code', arguments: {query: 'app'}};
+    expect(controller.recordEvidence(other, found)).toMatchObject({status: 'new', repeatCount: 0});
+    expect(controller.recordEvidence({...other, id: 'found-2'}, found)).toMatchObject({
+      status: 'repeated', repeatCount: 1, stop: false,
+    });
+  });
 });
 
 function toolCall(id: string, arguments_: Record<string, unknown> = {}): ToolCall {

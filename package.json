@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.12",
+  "version": "0.3.13",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,9 +16,9 @@
   },
   "skein": {
     "releaseNotes": [
-      "Each model request records privacy-safe token partitions and actual-versus-estimated provenance",
-      "Local retrieval now selects focused, standard, broad, or maximum evidence budgets",
-      "Terminal and JSON diagnostics expose budget decisions without storing prompt or source content"
+      "Known tool changes refresh only their affected local-index paths before the next model turn",
+      "File ctime closes same-size and restored-mtime zero-hit freshness gaps without full-content scans",
+      "Repeated empty or unchanged search calls stop through the existing recovery circuit"
     ]
   },
   "bin": {

@@ -1,5 +1,6 @@
 import type {ContextDegradation, ContextHit, ContextPackOptions, MosaicConfig, PackedContext} from '../types.js';
 import {workspaceAliasPath} from '../utils/path.js';
+import type {ContextRefreshResult} from '../tools/types.js';
 import {emptyPackedContext, selectContextBudget} from './budget.js';
 import {
   LocalContextIndex,
@@ -80,6 +81,26 @@ export class ContextEngine {
         detail,
       };
       return [];
+    }
+  }
+
+  invalidate(paths: string[]): void {
+    this.local.invalidate(paths);
+  }
+
+  async flushDirty(): Promise<ContextRefreshResult> {
+    try {
+      const result = await this.local.flushDirty();
+      this.degradation = undefined;
+      return {status: 'current', ...result};
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.degradation = {
+        code: 'local-index-refresh-failed',
+        summary: 'Local code index refresh failed; the next retrieval will retry.',
+        detail,
+      };
+      return {status: 'degraded', detail, paths: 0};
     }
   }
 

@@ -75,6 +75,12 @@ stay in a retry/exit state and occur before an empty session is persisted.
 Headless runs retain non-animated lazy indexing so structured automation does
 not acquire terminal-only behavior.
 
+Known mutations take a narrower path: the runner validates tool-reported
+`changedFiles`, marks them dirty, targeted-upserts or deletes only those paths,
+and atomically persists the new generation before returning the tool result.
+Manifest reconciliation additionally compares ctime, closing same-size changes
+whose mtime is restored without hashing every source file on an empty query.
+
 ### Prompt layers
 
 The runner keeps the cacheable system prefix separate from mutable task state:

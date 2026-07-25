@@ -215,6 +215,65 @@ describe('local context engine', () => {
     }
   });
 
+  it('reconciles hashes before accepting zero hits with unchanged size and mtime', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-local-zero-hit-freshness-'));
+    try {
+      const path = join(root, 'token.ts');
+      const original = 'export function oldToken() { return "old"; }\n';
+      const replacement = 'export function newToken() { return "new"; }\n';
+      expect(replacement).toHaveLength(original.length);
+      await writeFile(path, original);
+      const index = new LocalContextIndex([root]);
+      await index.build();
+
+      const before = await stat(path);
+      await writeFile(path, replacement);
+      await utimes(path, before.atime, before.mtime);
+
+      await expect(index.search('newToken')).resolves.toEqual([
+        expect.objectContaining({path, symbol: 'newToken'}),
+      ]);
+    } finally {
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
+  it('flushes known create, update, and delete paths into the persisted index', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-local-targeted-refresh-'));
+    try {
+      const existing = join(root, 'existing.ts');
+      const created = join(root, 'created.ts');
+      await writeFile(existing, 'export const beforeRefresh = true;\n');
+      const index = new LocalContextIndex([root]);
+      await index.build();
+
+      await writeFile(existing, 'export const afterRefreshX = true;\n');
+      await writeFile(created, 'export const createdByTool = true;\n');
+      index.invalidate([existing, created]);
+      expect(index.status()).toMatchObject({refreshState: 'dirty', dirtyPaths: 2});
+      await expect(index.flushDirty()).resolves.toMatchObject({paths: 2, generation: expect.any(String)});
+      expect(index.status()).toMatchObject({refreshState: 'current', dirtyPaths: 0});
+      await expect(index.search('afterRefreshX')).resolves.toEqual([
+        expect.objectContaining({path: existing, symbol: 'afterRefreshX'}),
+      ]);
+      await expect(index.search('createdByTool')).resolves.toEqual([
+        expect.objectContaining({path: created, symbol: 'createdByTool'}),
+      ]);
+
+      await rm(created);
+      index.invalidate([created]);
+      await expect(index.flushDirty()).resolves.toMatchObject({paths: 1});
+      await expect(index.search('createdByTool')).resolves.toEqual([]);
+
+      const reloaded = new LocalContextIndex([root]);
+      await expect(reloaded.load()).resolves.toBe(true);
+      await expect(reloaded.search('afterRefreshX')).resolves.toHaveLength(1);
+      await expect(reloaded.search('createdByTool')).resolves.toEqual([]);
+    } finally {
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
   it('refreshes the manifest when a matching file is added', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-local-manifest-'));
     try {

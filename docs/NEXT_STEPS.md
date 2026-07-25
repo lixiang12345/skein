@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.12`.
+- Current repository version: `0.3.13`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -41,15 +41,16 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.12.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.12.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.13.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.13.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
 
 The final verification included a fresh install for all three executable
 aliases. PTY coverage included 20, 24 ASCII, 40, 80, 120 columns and a 40x10
-short-height case. The current 44-file, 437-test suite passes the full check.
+short-height case. The current full-suite count is recorded from the latest
+`npm run check` in the release evidence.
 
 ## Recommended Order
 
@@ -77,12 +78,12 @@ Implementation notes:
 - `npm run release:verify` reproduces the package from source, installs it into
   an isolated prefix, rejects packaged local state, and exercises `skein`,
   `mosaic`, and `mosaic-code`.
-- The `main` branch rule requires the strict `check` status. Version 0.3.12
-  adds privacy-safe per-request token receipts, actual-versus-estimated usage
-  provenance, prompt partition accounting, and adaptive 2k/4k/8k/12k local
-  retrieval budgets. Session telemetry stores counts, tool names, selection
-  decisions, and discard reasons, never prompt, source, schema, argument, or
-  tool-result content.
+- The `main` branch rule requires the strict `check` status. Version 0.3.13
+  retains v0.3.12's privacy-safe per-request token ledger and adaptive budgets,
+  then adds targeted known-change index refresh, ctime freshness reconciliation,
+  and bounded no-progress search recovery. Session telemetry stores counts,
+  tool names, selection decisions, and hashes, never prompt, source, schema,
+  argument, or tool-result content.
   Its tag, GitHub verification, and npm publication use the same source commit.
 
 ### P1: Skein Storage Namespace And Migration
@@ -146,9 +147,10 @@ Implementation progress:
 
 ### P1: Local Context Engine Reliability And Benchmarking
 
-Keep retrieval local and measurable as the repository grows. The next slice
-should add content hashes to index entries, a small generation-keyed query cache,
-overlap-aware packing, and language adapters for common declaration styles.
+Keep retrieval local and measurable as the repository grows. Content hashes,
+generation-keyed query caching, overlap-aware packing, adaptive budgets, and
+targeted known-change refresh are now implemented. The next retrieval slice is
+language adapters and the expanded multilingual benchmark.
 
 Definition of done:
 
@@ -165,8 +167,12 @@ Implementation progress:
 - The public `pack/search/index/status` boundary is now a pure local façade.
 - Legacy external configuration is stripped at the config schema boundary and
   no external executable or database is probed by the CLI.
-- Remaining work is content-hash freshness, cache invalidation, structured
-  chunking, and the reproducible benchmark.
+- Tool-reported creates, updates, and deletes refresh only affected paths and
+  atomically persist before the next turn in TUI or headless mode.
+- Size/mtime/ctime reconciliation closes the direct-new-query zero-hit window;
+  repeated empty or unchanged searches stop through the recovery circuit.
+- Remaining work is broader language adapters and production-scale benchmark
+  calibration; the reproducible benchmark pipeline already exists.
 
 ### P1: Multi-Agent Scheduler And Team UX
 

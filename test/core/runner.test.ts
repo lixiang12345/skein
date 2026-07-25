@@ -159,6 +159,35 @@ describe('AgentRunner', () => {
     expect((await checkpoint.list(session.id)).length).toBe(1);
   });
 
+  it('refreshes the context provider immediately after reported workspace changes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-runner-context-refresh-'));
+    roots.push(root);
+    const provider = new ScriptedProvider();
+    const invalidated: string[][] = [];
+    let flushes = 0;
+    const refreshingContext: ContextProvider = {
+      ...context,
+      invalidate(paths) { invalidated.push(paths); },
+      async flushDirty() {
+        flushes += 1;
+        return {status: 'current', generation: 'fresh-generation', paths: 1};
+      },
+    };
+    const events: AgentEvent[] = [];
+    const runner = new AgentRunner({config: config(root), provider, contextEngine: refreshingContext});
+
+    await runner.run('create result', {onEvent: (event) => { events.push(event); }});
+
+    expect(invalidated).toEqual([[join(root, 'result.txt')]]);
+    expect(flushes).toBe(1);
+    const result = events.find((event): event is Extract<AgentEvent, {type: 'tool_result'}> =>
+      event.type === 'tool_result' && event.result.name === 'write_file',
+    );
+    expect(result?.result.metadata).toMatchObject({
+      contextRefresh: {status: 'current', generation: 'fresh-generation', paths: 1},
+    });
+  });
+
   it('does not expose mutation tools in ask mode', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mosaic-ask-'));
     roots.push(root);
@@ -537,6 +566,31 @@ describe('AgentRunner', () => {
     });
     expect(failures[2]?.result.content).toContain('rejected by the recovery circuit');
     expect(failures[2]?.result.content.startsWith('Failure: schema_input')).toBe(true);
+  });
+
+  it('opens the no-progress circuit before a third identical empty search', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-empty-search-circuit-'));
+    roots.push(root);
+    const search = {name: 'search_code', arguments: {query: 'definitely-missing', path: '.'}};
+    const provider = new QueueProvider([
+      {content: '', toolCalls: [{id: 'search-one', ...search}]},
+      {content: '', toolCalls: [{id: 'search-two', ...search}]},
+      {content: '', toolCalls: [{id: 'search-three', ...search}]},
+      {content: 'No matching evidence exists.', toolCalls: []},
+    ]);
+    const events: AgentEvent[] = [];
+    const runner = new AgentRunner({config: config(root), provider, contextEngine: context});
+
+    await runner.run('find definitely-missing', {onEvent: (event) => { events.push(event); }});
+
+    expect(events.filter((event) => event.type === 'tool_start')).toHaveLength(2);
+    const failures = events.filter((event): event is Extract<AgentEvent, {type: 'tool_result'}> =>
+      event.type === 'tool_result' && !event.result.ok,
+    );
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.result.metadata).toMatchObject({
+      failure: {class: 'no_progress', circuitOpen: true, retryable: false},
+    });
   });
 
   it('allows a corrected retry after a schema failure', async () => {

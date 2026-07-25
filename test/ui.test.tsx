@@ -2,6 +2,7 @@ import React from 'react';
 import {renderToString} from 'ink';
 import {describe, expect, it} from 'vitest';
 import {CommandPalette, ContextInspector, Footer, Header, PermissionCard, PromptBar, TaskRail, TeamCockpit, TeamWorkbench, Timeline, WorkspacePanel} from '../src/ui/components.js';
+import {toolMetaSummary} from '../src/ui/timeline-reducers.js';
 import {displayWidth, sanitizeTerminalText} from '../src/ui/text.js';
 import {detectTerminalAppearance, resolveTheme, resolveThemeWithColor} from '../src/ui/theme.js';
 import {resolveKittyKeyboardConfig} from '../src/ui/terminal-capabilities.js';
@@ -21,6 +22,13 @@ const config: MosaicConfig = {
 };
 
 describe('terminal presentation', () => {
+  it('surfaces only degraded context refresh metadata', () => {
+    expect(toolMetaSummary({contextRefresh: {status: 'current', paths: 1}})).toBeUndefined();
+    expect(toolMetaSummary({
+      contextRefresh: {status: 'degraded', detail: 'index write failed'},
+    })).toContain('context refresh degraded: index write failed');
+  });
+
   it('does not probe unknown terminals for Kitty keyboard support', () => {
     expect(resolveKittyKeyboardConfig({TERM: 'xterm-256color'}).mode).toBe('disabled');
     expect(resolveKittyKeyboardConfig({TERM_PROGRAM: 'Apple_Terminal'}).mode).toBe('disabled');

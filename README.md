@@ -86,7 +86,7 @@ To build, verify, and install a local package artifact from this checkout:
 
 ```bash
 npm run verify:package -- --output-dir artifacts/package
-npm install -g ./artifacts/package/skein-code-cli-0.3.12.tgz
+npm install -g ./artifacts/package/skein-code-cli-0.3.13.tgz
 ```
 
 To install the published package from npm:
@@ -407,6 +407,14 @@ packed into a prompt, Skein rechecks the current file and rejects entries that
 are stale, moved, symlinked, binary, or outside the workspace. Retrieval is
 evidence only: the model must still confirm factual claims with read or other
 workspace tools.
+
+When a Skein tool reports changed files, the runner immediately invalidates and
+atomically refreshes only those local-index paths before the next model turn;
+headless and TUI runs share this boundary. External edits are reconciled from
+file set, size, mtime, and ctime before retrieval, so even a same-size update
+whose mtime was restored cannot turn a stale zero-hit result into evidence.
+Repeated identical empty or unchanged `search_code` calls open the existing
+recovery circuit instead of spending additional turns without new evidence.
 
 Retrieval budgets are adaptive and treat `context.maxTokens` as a ceiling:
 focused requests start at 2k estimated tokens, ordinary implementation/debug
