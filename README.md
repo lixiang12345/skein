@@ -222,23 +222,38 @@ Skein never turns this table into URL or authentication detection. Configure
 each transport and catalog exactly as the selected relay documents it.
 
 Capability routing is local and shadow-only in this release. It fingerprints
-the exact route, endpoint/auth reference, profile prompt, and tool catalog;
-keeps configured priors separate from receipt-backed observed outcomes; and
-opens a new epoch when behavior changes. Inspect or manage it with:
+the exact model, endpoint/auth reference, profile prompt, tool catalog, and
+generation policy; keeps configured priors separate from receipt-backed
+observed outcomes; and opens a component-labelled epoch when behavior changes.
+Deterministic failures degrade and then quarantine a route from shadow
+recommendations; quarantine recovery requires two passing canaries. Inspect,
+replay, or manage it with:
 
 ```bash
 skein agents capability inspect frontend
 skein agents capability pin frontend backend
 skein agents capability unpin frontend
+skein agents capability canary frontend backend ./canary-receipt.json
+skein agents capability replay ./capability-replay.json
 skein agents capability export
 skein agents capability reset --yes
 ```
 
 The recommendation never changes live model selection. The project-local
-registry contains only hashes, bounded aggregates, and fingerprint-bound pins;
-it does not store task text, prompts, source, output, endpoint text, commands,
-or credential values. Repository config cannot inject capability priors unless
+Registry v2 migrates v1 on read and contains only hashes, bounded aggregates,
+health transitions, Token Ledger receipt links, and fingerprint-bound pins; it
+does not store task text, prompts, source, output, endpoint text, commands, or
+credential values. Replay bundles are strict content-free JSON and evaluate
+route regret, strong/medium tier plus provider coverage, position/verbosity/
+self-preference judge probes, degradation/recovery, and Token Ledger coverage.
+Even a fully passing local replay cannot enable automatic routing or claim
+external validation. Repository config cannot inject capability priors unless
 the project is explicitly trusted.
+
+`capability canary` does not run a command, contact a provider, or accept model
+self-report. It only ingests a bounded regular JSON file containing a valid
+content-addressed deterministic receipt whose tool is exactly
+`capability_canary`; failed receipts may add a structured `--failure` reason.
 
 Configure a user relay connection, index, and start the TUI:
 

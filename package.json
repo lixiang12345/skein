@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.33",
+  "version": "0.3.34",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,6 +16,12 @@
   },
   "skein": {
     "releaseNotes": [
+      "Capability Registry v2 migrates v1 on read and records labelled model, endpoint, auth, prompt, tool-catalog, and generation-policy component epochs under a stable logical route identity",
+      "Receipt-backed failures move an exact task/route epoch through healthy, degraded, and quarantined states; quarantined routes leave shadow recommendations until two distinct deterministic canaries pass",
+      "Agents capability canary ingests only bounded integrity-valid capability_canary receipt files and never runs a probe, contacts a provider, or accepts ordinary tool receipts or model self-report",
+      "Verified capability outcomes can bind request-level Token Ledger entries, derive actual and estimated totals, reject mismatched caller metrics, and persist only bounded aggregates plus content hashes",
+      "Agents capability replay evaluates strict content-free route regret, strong/medium tier and provider-hash coverage, Token Ledger links, judge position/verbosity/self-preference stability, and degradation/recovery fixtures",
+      "Local replay bundles cannot attest external validation or enable automatic selection; capability mode remains limited to off and shadow, and quarantines never retarget a live run",
       "Team Run v4 adds blind Reviewer inputs, stable round-based candidate ordering, bounded report lengths, Author/Reviewer independence evidence, model-provider/family correlation, criterion conflicts, and artifact-bound human arbitration while retaining v1/v2/v3 read compatibility",
       "Deterministic oracle results remain authoritative: failures cannot be overridden, passing receipts take precedence over conflicting model judgment, and conflicts remain content-free calibration evidence",
       "Unknown criteria, unresolved conflicts, and insufficient high-risk Reviewer independence produce needs_review across CLI, TUI, JSON, and JSONL; headless runs stop with exit code 9",

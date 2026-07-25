@@ -106,7 +106,7 @@ export interface AgentTeamConfig {
   routes?: Record<string, AgentModelRoute>;
   /** Named API connections let many routes share one endpoint and credential reference. */
   connections?: Record<string, AgentConnectionConfig>;
-  /** Privacy-safe local capability statistics. G2 is shadow-only and never changes live routing. */
+  /** Privacy-safe capability epochs, health, and replay evidence; never changes live routing. */
   capability?: AgentCapabilityConfig;
   reviewerProfile?: string;
   maxReviewRounds?: number;

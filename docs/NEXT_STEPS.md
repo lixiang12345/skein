@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.33`.
+- Current repository version: `0.3.34`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -42,8 +42,8 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.33.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.33.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.34.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.34.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
@@ -454,6 +454,14 @@ Implementation progress:
   migration, destructive, and external-mutation actions require live-human
   approval that model review and config cannot replace. Parallel writers and
   external CLI writer mode remain deferred.
+- G4 Drift Detection and local Evals is implemented in `0.3.34`: Registry v2
+  migrates v1, records labelled model/endpoint/auth/prompt/tool/generation
+  epochs, drives degraded/quarantine/two-canary recovery from deterministic
+  receipts, and links verified outcomes to content-addressed Token Ledger
+  accounting. Strict local replay covers route regret, strong/medium tiers,
+  multiple provider hashes, judge position/verbosity/self-preference bias, and
+  degradation transitions. Replay cannot claim external attestation or enable
+  automatic routing; `off|shadow` remains the complete mode set.
 - Relay connections remain transport-explicit: Responses is the default,
   Chat Completions and Anthropic Messages are compatibility transports, and
   inference/model-directory bases and auth are independent. Public model
@@ -551,8 +559,8 @@ deprecation window is complete.
 
 ## Suggested Next Conversation Opening
 
-Start with: “Implement P1-G G4 Drift Detection and Evals on top of Team Run v4
-and the shadow-only Capability Registry. Add model/endpoint/prompt/tool epochs,
-canary-driven degraded/quarantine/recovery state, route replay and judge-bias
-fixtures, and Token Ledger linkage. Keep automatic routing shadow-only until
-the replay, calibration, degradation, cost, and human-approval gates pass.”
+Start with: “Use the 0.3.34 content-free replay schema to collect externally
+attested, human-labelled strong/medium and cross-provider evidence without
+exposing source or prompts. Keep automatic routing shadow-only, require priced
+cost and human-approval gates, and do not treat a locally supplied `source`
+label as external verification.”

@@ -12,12 +12,18 @@ import {isOfficialProviderEndpoint} from './connection-catalog.js';
 import type {AgentProfile} from './profiles.js';
 import {
   capabilitySha256,
+  capabilityRouteFingerprint,
   DEFAULT_CAPABILITY_HALF_LIFE_DAYS,
   type CapabilityObservationAggregate,
   type CapabilityRegistrySnapshot,
   type CapabilityRouteEpochInput,
 } from './capability-registry.js';
 import {resolveAgentModelRoute} from './model-route.js';
+import {
+  capabilityRouteHealthIntegrityValid,
+  type CapabilityHealthFailure,
+  type CapabilityHealthStatus,
+} from './capability-health.js';
 
 export const DEFAULT_CAPABILITY_MINIMUM_SAMPLES = 5;
 
@@ -32,8 +38,10 @@ export interface CapabilityRouteCandidate extends CapabilityRouteEpochInput {
   model: string;
   endpointSha256: string;
   authReferenceSha256: string;
+  modelSha256: string;
   promptSha256: string;
   toolCatalogSha256: string;
+  generationSha256: string;
   eligible: boolean;
   ineligibleReasons: string[];
 }
@@ -47,6 +55,10 @@ export interface CapabilityInterval {
 
 export interface CapabilityCandidateScore extends CapabilityRouteCandidate {
   epoch: number;
+  health: CapabilityHealthStatus;
+  healthFailure?: CapabilityHealthFailure;
+  healthSignals: number;
+  recoveryCanaryPasses: number;
   configured?: CapabilityInterval;
   observed?: CapabilityInterval & {
     status: 'unobserved' | 'uncertain' | 'calibrated';
@@ -59,7 +71,7 @@ export interface CapabilityCandidateScore extends CapabilityRouteCandidate {
 }
 
 export interface CapabilityShadowReport {
-  schemaVersion: 1;
+  schemaVersion: 2;
   mode: 'off' | 'shadow';
   profile: string;
   taskFingerprintSha256: string;
@@ -116,21 +128,19 @@ export async function buildCapabilityCandidates(
     }
     const endpointSha256 = capabilitySha256(`endpoint\0${materialized.endpointIdentity}`);
     const authReferenceSha256 = capabilitySha256(`auth-reference\0${materialized.authReference}`);
-    const routeIdentitySha256 = capabilitySha256(canonicalJson({
+    const modelSha256 = capabilitySha256(canonicalJson({
       version: 1,
       runtime,
-      connection: materialized.connection ?? null,
       provider: materialized.provider,
       protocol: materialized.protocol,
       model: materialized.model,
     }));
-    const routeFingerprintSha256 = capabilitySha256(canonicalJson({
+    const routeIdentitySha256 = capabilitySha256(canonicalJson({
+      version: 2,
+      logicalRoute: ref,
+    }));
+    const generationSha256 = capabilitySha256(canonicalJson({
       version: 1,
-      routeIdentitySha256,
-      endpointSha256,
-      authReferenceSha256,
-      promptSha256,
-      toolCatalogSha256,
       temperature: materialized.route.temperature ?? null,
       maxTokens: materialized.route.maxTokens ?? null,
       tokenBudget: materialized.route.tokenBudget ?? null,
@@ -138,6 +148,15 @@ export async function buildCapabilityCandidates(
       timeoutMs: materialized.route.timeoutMs ?? null,
       budgetMode: materialized.route.budgetMode ?? team?.budgetMode ?? 'observe',
     }));
+    const components = {
+      modelSha256,
+      endpointSha256,
+      authSha256: authReferenceSha256,
+      promptSha256,
+      toolCatalogSha256,
+      generationSha256,
+    };
+    const routeFingerprintSha256 = capabilityRouteFingerprint({routeIdentitySha256, components});
     return {
       ref,
       aliases: [ref],
@@ -149,11 +168,14 @@ export async function buildCapabilityCandidates(
       model: materialized.model,
       endpointSha256,
       authReferenceSha256,
+      modelSha256,
       promptSha256,
       toolCatalogSha256,
+      generationSha256,
       taskFingerprintSha256,
       routeIdentitySha256,
       routeFingerprintSha256,
+      components,
       eligible: ineligibleReasons.length === 0,
       ineligibleReasons,
     } satisfies CapabilityRouteCandidate;
@@ -213,7 +235,7 @@ export function evaluateCapabilityShadow(input: {
       : 'No candidate satisfies hard constraints; current static route retained.';
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     mode,
     profile: input.profile.name,
     taskFingerprintSha256: current.taskFingerprintSha256,
@@ -425,9 +447,24 @@ function scoreCandidate(input: {
     configuredSuccess + (decayed?.verifiedSuccess ?? 0),
     configuredFailure + (decayed?.verifiedFailure ?? 0),
   );
+  const health = input.registry.health.find((entry) =>
+    entry.taskFingerprintSha256 === input.candidate.taskFingerprintSha256 &&
+    entry.routeFingerprintSha256 === input.candidate.routeFingerprintSha256);
+  if (health && !capabilityRouteHealthIntegrityValid(health)) {
+    throw new Error('Capability route health integrity check failed.');
+  }
+  const quarantined = health?.status === 'quarantined';
   return {
     ...input.candidate,
+    eligible: input.candidate.eligible && !quarantined,
+    ineligibleReasons: quarantined
+      ? [...input.candidate.ineligibleReasons, 'route is quarantined pending recovery canaries']
+      : input.candidate.ineligibleReasons,
     epoch,
+    health: health?.status ?? 'healthy',
+    ...(health?.lastFailure ? {healthFailure: health.lastFailure} : {}),
+    healthSignals: health?.signals ?? 0,
+    recoveryCanaryPasses: health?.recoveryCanaryPasses ?? 0,
     ...(configured ? {configured} : {}),
     ...(observed ? {observed} : {}),
     conservative,
@@ -490,8 +527,9 @@ function normalizeUtilities(scores: CapabilityCandidateScore[]): void {
     const tokenPenalty = maxTokens ? (score.observed?.averageTokens ?? 0) / maxTokens * 0.03 : 0;
     const latencyPenalty = maxLatency ? (score.observed?.averageLatencyMs ?? 0) / maxLatency * 0.03 : 0;
     const toolPenalty = (score.observed?.toolFailureRate ?? 0) * 0.05;
+    const healthPenalty = score.health === 'degraded' ? 0.15 : 0;
     score.utility = score.eligible
-      ? score.conservative.lower - tokenPenalty - latencyPenalty - toolPenalty
+      ? score.conservative.lower - tokenPenalty - latencyPenalty - toolPenalty - healthPenalty
       : Number.NEGATIVE_INFINITY;
   }
 }

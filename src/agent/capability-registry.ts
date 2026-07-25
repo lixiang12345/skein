@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import {lstat, readFile} from 'node:fs/promises';
 import {dirname, join, resolve} from 'node:path';
 import {z} from 'zod';
-import type {DeterministicEvidenceReceipt, RunCompletion} from '../types.js';
+import type {DeterministicEvidenceReceipt, RunCompletion, TokenLedgerEntry} from '../types.js';
 import {atomicWrite} from '../tools/write.js';
 import {canonicalJson} from '../utils/canonical-json.js';
 import {
@@ -13,20 +13,44 @@ import {
 import {NamespaceLeaseBusyError, withNamespaceLease} from '../utils/namespace-lease.js';
 import {assertNoSymlinkPath, ensureWorkspaceStorageDirectory} from '../utils/storage.js';
 import {deterministicEvidenceReceiptValid} from './evidence-receipt.js';
+import {
+  capabilityRouteHealthIntegrityValid,
+  capabilityRouteHealthSchema,
+  transitionCapabilityHealth,
+  type CapabilityHealthFailure,
+  type CapabilityRouteHealth,
+} from './capability-health.js';
 
-export const CAPABILITY_REGISTRY_VERSION = 1 as const;
+export const CAPABILITY_REGISTRY_VERSION = 2 as const;
 export const DEFAULT_CAPABILITY_HALF_LIFE_DAYS = 30;
 
 const hashSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 const timestampSchema = z.string().datetime({offset: true});
 
-const routeEpochSchema = z.object({
+export const capabilityRouteComponentsSchema = z.object({
+  modelSha256: hashSchema,
+  endpointSha256: hashSchema,
+  authSha256: hashSchema,
+  promptSha256: hashSchema,
+  toolCatalogSha256: hashSchema,
+  generationSha256: hashSchema,
+}).strict();
+
+const driftReasonSchema = z.enum(['initial', 'legacy', 'model', 'endpoint', 'auth', 'prompt', 'tools', 'generation']);
+
+const legacyRouteEpochSchema = z.object({
   routeIdentitySha256: hashSchema,
   routeFingerprintSha256: hashSchema,
   taskFingerprintSha256: hashSchema,
   epoch: z.number().int().positive().max(1_000_000),
   firstSeenAt: timestampSchema,
   lastSeenAt: timestampSchema,
+}).strict();
+
+const routeEpochSchema = legacyRouteEpochSchema.extend({
+  components: capabilityRouteComponentsSchema,
+  componentStatus: z.enum(['complete', 'legacy']),
+  driftReasons: z.array(driftReasonSchema).min(1).max(8),
 }).strict();
 
 const decayedAggregateSchema = z.object({
@@ -39,7 +63,19 @@ const decayedAggregateSchema = z.object({
   updatedAt: timestampSchema,
 }).strict();
 
-const observationAggregateSchema = z.object({
+const capabilityTokenLedgerAggregateSchema = z.object({
+  linkedRequests: z.number().int().nonnegative().max(1_000_000_000),
+  actualInputTokens: z.number().int().nonnegative().max(1_000_000_000_000),
+  actualOutputTokens: z.number().int().nonnegative().max(1_000_000_000_000),
+  estimatedInputTokens: z.number().int().nonnegative().max(1_000_000_000_000),
+  estimatedOutputTokens: z.number().int().nonnegative().max(1_000_000_000_000),
+  cachedInputTokens: z.number().int().nonnegative().max(1_000_000_000_000),
+  cacheWriteInputTokens: z.number().int().nonnegative().max(1_000_000_000_000),
+  reasoningTokens: z.number().int().nonnegative().max(1_000_000_000_000),
+  recentReceiptSha256: z.array(hashSchema).max(256),
+}).strict();
+
+const legacyObservationAggregateSchema = z.object({
   routeIdentitySha256: hashSchema,
   routeFingerprintSha256: hashSchema,
   taskFingerprintSha256: hashSchema,
@@ -60,6 +96,10 @@ const observationAggregateSchema = z.object({
   decayed: decayedAggregateSchema,
 }).strict();
 
+const observationAggregateSchema = legacyObservationAggregateSchema.extend({
+  tokenLedger: capabilityTokenLedgerAggregateSchema,
+}).strict();
+
 const pinSchema = z.object({
   taskFingerprintSha256: hashSchema,
   routeIdentitySha256: hashSchema,
@@ -75,17 +115,30 @@ export const capabilityRegistrySchema = z.object({
   epochs: z.array(routeEpochSchema).max(4_096),
   observations: z.array(observationAggregateSchema).max(4_096),
   pins: z.array(pinSchema).max(512),
+  health: z.array(capabilityRouteHealthSchema).max(4_096),
+}).strict();
+
+const legacyCapabilityRegistrySchema = z.object({
+  version: z.literal(1),
+  workspaceSha256: hashSchema,
+  createdAt: timestampSchema,
+  updatedAt: timestampSchema,
+  epochs: z.array(legacyRouteEpochSchema).max(4_096),
+  observations: z.array(legacyObservationAggregateSchema).max(4_096),
+  pins: z.array(pinSchema).max(512),
 }).strict();
 
 export type CapabilityRegistrySnapshot = z.infer<typeof capabilityRegistrySchema>;
 export type CapabilityRouteEpoch = z.infer<typeof routeEpochSchema>;
 export type CapabilityObservationAggregate = z.infer<typeof observationAggregateSchema>;
 export type CapabilityPin = z.infer<typeof pinSchema>;
+export type CapabilityRouteComponents = z.infer<typeof capabilityRouteComponentsSchema>;
 
 export interface CapabilityRouteEpochInput {
   routeIdentitySha256: string;
   routeFingerprintSha256: string;
   taskFingerprintSha256: string;
+  components: CapabilityRouteComponents;
 }
 
 export type CapabilityFailureReason =
@@ -101,12 +154,20 @@ export interface CapabilityObservationMetrics {
   outputTokens?: number;
   latencyMs?: number;
   toolFailures?: number;
+  /** Authoritative per-request accounting; only content hashes and bounded totals persist. */
+  tokenLedger?: TokenLedgerEntry[];
 }
 
 export interface CapabilityObservationResult {
   recorded: boolean;
   reason: 'verified' | CapabilityFailureReason | 'inadmissible' | 'duplicate';
   aggregate?: CapabilityObservationAggregate;
+}
+
+export interface CapabilityCanaryResult {
+  recorded: boolean;
+  reason: 'passed' | 'failed' | 'duplicate' | 'inadmissible';
+  health?: CapabilityRouteHealth;
 }
 
 /**
@@ -150,7 +211,7 @@ export class CapabilityRegistryStore {
     await this.update((state) => {
       const epochs = [...state.epochs];
       touchEpoch(epochs, input, timestamp);
-      pin = pinSchema.parse({...epochFields(input), pinnedAt: timestamp});
+      pin = pinSchema.parse({...identityFields(input), pinnedAt: timestamp});
       return {
         ...state,
         epochs: trimEpochs(epochs),
@@ -215,6 +276,7 @@ export class CapabilityRegistryStore {
       })),
     }));
     let aggregate: CapabilityObservationAggregate | undefined;
+    let health: CapabilityRouteHealth | undefined;
     let duplicate = false;
     await this.update((state) => {
       const epochs = [...state.epochs];
@@ -238,6 +300,17 @@ export class CapabilityRegistryStore {
         timestamp,
       });
       aggregate = next;
+      const currentHealth = state.health.find((entry) => observationKey(entry) === key);
+      health = transitionCapabilityHealth(currentHealth, {
+        routeFingerprintSha256: input.route.routeFingerprintSha256,
+        taskFingerprintSha256: input.route.taskFingerprintSha256,
+        epoch: epoch.epoch,
+        signal: 'verified-run',
+        passed: outcome === 'success',
+        evidenceSha256,
+        ...(outcome === 'failure' ? {failure: capabilityHealthFailure(reason)} : {}),
+        timestamp,
+      }).health;
       return {
         ...state,
         epochs: trimEpochs(epochs),
@@ -245,11 +318,68 @@ export class CapabilityRegistryStore {
           ...state.observations.filter((entry) => observationKey(entry) !== key),
           next,
         ].sort((left, right) => left.lastObservedAt.localeCompare(right.lastObservedAt)).slice(-4_096),
+        health: [
+          ...state.health.filter((entry) => observationKey(entry) !== key),
+          health,
+        ].sort((left, right) => left.lastSignalAt.localeCompare(right.lastSignalAt)).slice(-4_096),
       };
     }, timestamp);
     if (!aggregate) throw new Error('Capability observation was not materialized.');
     if (duplicate) return {recorded: false, reason: 'duplicate', aggregate};
     return {recorded: true, reason, aggregate};
+  }
+
+  /** Record a deterministic canary receipt and advance route health. */
+  async recordCanary(input: {
+    route: CapabilityRouteEpochInput;
+    receipt: DeterministicEvidenceReceipt;
+    failure?: CapabilityHealthFailure;
+    failuresToQuarantine?: number;
+    canaryPassesToRecover?: number;
+    now?: Date;
+  }): Promise<CapabilityCanaryResult> {
+    parseEpochInput(input.route);
+    if (!deterministicEvidenceReceiptValid(input.receipt, {tool: 'capability_canary'})) {
+      return {recorded: false, reason: 'inadmissible'};
+    }
+    const passed = input.receipt.outcome === 'success';
+    if (passed && input.failure) throw new Error('Passing capability canaries cannot include a failure reason.');
+    const timestamp = (input.now ?? new Date()).toISOString();
+    let health: CapabilityRouteHealth | undefined;
+    let duplicate = false;
+    await this.update((state) => {
+      const epochs = [...state.epochs];
+      const epoch = touchEpoch(epochs, input.route, timestamp);
+      const key = observationKey(input.route);
+      const current = state.health.find((entry) => observationKey(entry) === key);
+      const transition = transitionCapabilityHealth(current, {
+        routeFingerprintSha256: input.route.routeFingerprintSha256,
+        taskFingerprintSha256: input.route.taskFingerprintSha256,
+        epoch: epoch.epoch,
+        signal: 'canary',
+        passed,
+        evidenceSha256: input.receipt.sha256,
+        ...(!passed ? {failure: input.failure ?? 'provider_error'} : {}),
+        timestamp,
+        ...(input.failuresToQuarantine === undefined
+          ? {} : {failuresToQuarantine: input.failuresToQuarantine}),
+        ...(input.canaryPassesToRecover === undefined
+          ? {} : {canaryPassesToRecover: input.canaryPassesToRecover}),
+      });
+      health = transition.health;
+      duplicate = transition.duplicate;
+      if (duplicate) return {...state, epochs: trimEpochs(epochs)};
+      return {
+        ...state,
+        epochs: trimEpochs(epochs),
+        health: [
+          ...state.health.filter((entry) => observationKey(entry) !== key),
+          transition.health,
+        ].sort((left, right) => left.lastSignalAt.localeCompare(right.lastSignalAt)).slice(-4_096),
+      };
+    }, timestamp);
+    if (!health) throw new Error('Capability canary health was not materialized.');
+    return {recorded: !duplicate, reason: duplicate ? 'duplicate' : passed ? 'passed' : 'failed', health};
   }
 
   private async update(
@@ -279,7 +409,7 @@ export class CapabilityRegistryStore {
         throw new Error('Capability registry is not a regular file.');
       }
       if (info.size > 4_000_000) throw new Error('Capability registry exceeds the 4 MB limit.');
-      const state = capabilityRegistrySchema.parse(JSON.parse(await readFile(this.file, 'utf8')) as unknown);
+      const state = migrateCapabilityRegistry(JSON.parse(await readFile(this.file, 'utf8')) as unknown);
       if (state.workspaceSha256 !== workspaceFingerprint(this.workspace)) {
         throw new Error('Capability registry workspace identity does not match its location.');
       }
@@ -320,6 +450,15 @@ export function capabilitySha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
+export function capabilityRouteFingerprint(input: {
+  routeIdentitySha256: string;
+  components: CapabilityRouteComponents;
+}): string {
+  hashSchema.parse(input.routeIdentitySha256);
+  const components = capabilityRouteComponentsSchema.parse(input.components);
+  return capabilitySha256(canonicalJson({version: 2, routeIdentitySha256: input.routeIdentitySha256, components}));
+}
+
 function emptyRegistry(workspace: string, timestamp: string): CapabilityRegistrySnapshot {
   return capabilityRegistrySchema.parse({
     version: CAPABILITY_REGISTRY_VERSION,
@@ -329,6 +468,7 @@ function emptyRegistry(workspace: string, timestamp: string): CapabilityRegistry
     epochs: [],
     observations: [],
     pins: [],
+    health: [],
   });
 }
 
@@ -340,6 +480,10 @@ function parseEpochInput(input: CapabilityRouteEpochInput): void {
   hashSchema.parse(input.routeIdentitySha256);
   hashSchema.parse(input.routeFingerprintSha256);
   hashSchema.parse(input.taskFingerprintSha256);
+  capabilityRouteComponentsSchema.parse(input.components);
+  if (capabilityRouteFingerprint(input) !== input.routeFingerprintSha256) {
+    throw new Error('Capability route fingerprint does not match its component hashes.');
+  }
 }
 
 function uniqueEpochInputs(inputs: CapabilityRouteEpochInput[]): CapabilityRouteEpochInput[] {
@@ -360,13 +504,27 @@ function touchEpoch(
   const exact = epochs.find((entry) => observationKey(entry) === observationKey(input));
   if (exact) {
     exact.lastSeenAt = timestamp;
+    if (exact.componentStatus === 'legacy') {
+      exact.components = capabilityRouteComponentsSchema.parse(input.components);
+      exact.componentStatus = 'complete';
+    }
     return exact;
   }
   const previous = epochs.filter((entry) =>
     entry.routeIdentitySha256 === input.routeIdentitySha256 &&
     entry.taskFingerprintSha256 === input.taskFingerprintSha256);
   const epoch = Math.max(0, ...previous.map((entry) => entry.epoch)) + 1;
-  const created = routeEpochSchema.parse({...epochFields(input), epoch, firstSeenAt: timestamp, lastSeenAt: timestamp});
+  const newest = previous.sort((left, right) => right.epoch - left.epoch)[0];
+  const driftReasons = newest ? componentDrift(newest.components, input.components) : ['initial' as const];
+  const created = routeEpochSchema.parse({
+    ...identityFields(input),
+    epoch,
+    components: input.components,
+    componentStatus: 'complete',
+    driftReasons: driftReasons.length ? driftReasons : ['generation'],
+    firstSeenAt: timestamp,
+    lastSeenAt: timestamp,
+  });
   epochs.push(created);
   return created;
 }
@@ -400,12 +558,42 @@ function admissibleCompletion(
   return undefined;
 }
 
-function normalizeMetrics(metrics: CapabilityObservationMetrics | undefined): Required<CapabilityObservationMetrics> {
+interface NormalizedCapabilityMetrics {
+  inputTokens: number;
+  outputTokens: number;
+  latencyMs: number;
+  toolFailures: number;
+  tokenLedger: CapabilityTokenLedgerLink;
+}
+
+interface CapabilityTokenLedgerLink {
+  linkedRequests: number;
+  actualInputTokens: number;
+  actualOutputTokens: number;
+  estimatedInputTokens: number;
+  estimatedOutputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteInputTokens: number;
+  reasoningTokens: number;
+  receiptSha256: string[];
+}
+
+function normalizeMetrics(metrics: CapabilityObservationMetrics | undefined): NormalizedCapabilityMetrics {
+  const tokenLedger = normalizeTokenLedger(metrics?.tokenLedger);
+  const declaredInput = boundedMetric(metrics?.inputTokens, 1_000_000_000);
+  const declaredOutput = boundedMetric(metrics?.outputTokens, 1_000_000_000);
+  const linkedInput = tokenLedger.actualInputTokens + tokenLedger.estimatedInputTokens;
+  const linkedOutput = tokenLedger.actualOutputTokens + tokenLedger.estimatedOutputTokens;
+  if (tokenLedger.linkedRequests && ((metrics?.inputTokens !== undefined && declaredInput !== linkedInput) ||
+    (metrics?.outputTokens !== undefined && declaredOutput !== linkedOutput))) {
+    throw new Error('Capability metrics must match the linked Token Ledger receipts.');
+  }
   return {
-    inputTokens: boundedMetric(metrics?.inputTokens, 1_000_000_000),
-    outputTokens: boundedMetric(metrics?.outputTokens, 1_000_000_000),
+    inputTokens: tokenLedger.linkedRequests ? linkedInput : declaredInput,
+    outputTokens: tokenLedger.linkedRequests ? linkedOutput : declaredOutput,
     latencyMs: boundedMetric(metrics?.latencyMs, 86_400_000),
     toolFailures: boundedMetric(metrics?.toolFailures, 100_000),
+    tokenLedger,
   };
 }
 
@@ -430,7 +618,7 @@ function updateAggregate(input: {
   outcome: 'success' | 'failure';
   reason: 'verified' | CapabilityFailureReason;
   evidenceSha256: string;
-  metrics: Required<CapabilityObservationMetrics>;
+  metrics: NormalizedCapabilityMetrics;
   halfLifeDays: number;
   timestamp: string;
 }): CapabilityObservationAggregate {
@@ -461,8 +649,21 @@ function updateAggregate(input: {
   if (input.reason === 'tool_failure' || input.metrics.toolFailures > 0) {
     counts.toolFailure = boundedInteger(counts.toolFailure + Math.max(1, input.metrics.toolFailures));
   }
+  const tokenLedger = current ? {...current.tokenLedger} : emptyTokenLedgerAggregate();
+  tokenLedger.linkedRequests = boundedInteger(tokenLedger.linkedRequests + input.metrics.tokenLedger.linkedRequests);
+  tokenLedger.actualInputTokens = boundedTokenSum(tokenLedger.actualInputTokens, input.metrics.tokenLedger.actualInputTokens);
+  tokenLedger.actualOutputTokens = boundedTokenSum(tokenLedger.actualOutputTokens, input.metrics.tokenLedger.actualOutputTokens);
+  tokenLedger.estimatedInputTokens = boundedTokenSum(tokenLedger.estimatedInputTokens, input.metrics.tokenLedger.estimatedInputTokens);
+  tokenLedger.estimatedOutputTokens = boundedTokenSum(tokenLedger.estimatedOutputTokens, input.metrics.tokenLedger.estimatedOutputTokens);
+  tokenLedger.cachedInputTokens = boundedTokenSum(tokenLedger.cachedInputTokens, input.metrics.tokenLedger.cachedInputTokens);
+  tokenLedger.cacheWriteInputTokens = boundedTokenSum(tokenLedger.cacheWriteInputTokens, input.metrics.tokenLedger.cacheWriteInputTokens);
+  tokenLedger.reasoningTokens = boundedTokenSum(tokenLedger.reasoningTokens, input.metrics.tokenLedger.reasoningTokens);
+  tokenLedger.recentReceiptSha256 = [
+    ...tokenLedger.recentReceiptSha256,
+    ...input.metrics.tokenLedger.receiptSha256,
+  ].slice(-256);
   return observationAggregateSchema.parse({
-    ...epochFields(input.route),
+    ...identityFields(input.route),
     epoch: input.epoch,
     firstObservedAt: current?.firstObservedAt ?? input.timestamp,
     lastObservedAt: input.timestamp,
@@ -473,6 +674,7 @@ function updateAggregate(input: {
     ].slice(-256),
     counts,
     decayed,
+    tokenLedger,
   });
 }
 
@@ -511,7 +713,139 @@ function boundedSum(left: number, right: number, maximum: number): number {
   return Math.min(maximum, left + right);
 }
 
-function epochFields(input: CapabilityRouteEpochInput): CapabilityRouteEpochInput {
+function boundedTokenSum(left: number, right: number): number {
+  return boundedSum(left, right, 1_000_000_000_000);
+}
+
+function componentDrift(
+  previous: CapabilityRouteComponents,
+  current: CapabilityRouteComponents,
+): Array<z.infer<typeof driftReasonSchema>> {
+  const reasons: Array<z.infer<typeof driftReasonSchema>> = [];
+  if (previous.modelSha256 !== current.modelSha256) reasons.push('model');
+  if (previous.endpointSha256 !== current.endpointSha256) reasons.push('endpoint');
+  if (previous.authSha256 !== current.authSha256) reasons.push('auth');
+  if (previous.promptSha256 !== current.promptSha256) reasons.push('prompt');
+  if (previous.toolCatalogSha256 !== current.toolCatalogSha256) reasons.push('tools');
+  if (previous.generationSha256 !== current.generationSha256) reasons.push('generation');
+  return reasons;
+}
+
+const tokenLedgerLinkSchema = z.object({
+  requestId: z.string().min(1).max(256),
+  turn: z.number().int().positive().max(1_000_000),
+  recordedAt: timestampSchema,
+  estimated: z.object({
+    estimatedInputTokens: z.number().int().nonnegative().max(1_000_000_000),
+    outputTokens: z.number().int().nonnegative().max(1_000_000_000),
+  }).passthrough(),
+  actual: z.object({
+    inputTokens: z.number().int().nonnegative().max(1_000_000_000).optional(),
+    outputTokens: z.number().int().nonnegative().max(1_000_000_000).optional(),
+    cachedInputTokens: z.number().int().nonnegative().max(1_000_000_000).optional(),
+    cacheWriteInputTokens: z.number().int().nonnegative().max(1_000_000_000).optional(),
+    reasoningTokens: z.number().int().nonnegative().max(1_000_000_000).optional(),
+  }).passthrough(),
+  inputSource: z.enum(['actual', 'estimated']),
+  outputSource: z.enum(['actual', 'estimated']),
+}).passthrough();
+
+function normalizeTokenLedger(entries: TokenLedgerEntry[] | undefined): CapabilityTokenLedgerLink {
+  const result: CapabilityTokenLedgerLink = {
+    linkedRequests: 0,
+    actualInputTokens: 0,
+    actualOutputTokens: 0,
+    estimatedInputTokens: 0,
+    estimatedOutputTokens: 0,
+    cachedInputTokens: 0,
+    cacheWriteInputTokens: 0,
+    reasoningTokens: 0,
+    receiptSha256: [],
+  };
+  if (!entries?.length) return result;
+  if (entries.length > 256) throw new Error('Capability Token Ledger linkage exceeds 256 requests.');
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    const parsed = tokenLedgerLinkSchema.parse(entry);
+    const receiptSha256 = capabilitySha256(canonicalJson(parsed));
+    if (seen.has(receiptSha256)) continue;
+    seen.add(receiptSha256);
+    const inputTokens = parsed.inputSource === 'actual'
+      ? parsed.actual.inputTokens
+      : parsed.estimated.estimatedInputTokens;
+    const outputTokens = parsed.outputSource === 'actual'
+      ? parsed.actual.outputTokens
+      : parsed.estimated.outputTokens;
+    if (inputTokens === undefined || outputTokens === undefined) {
+      throw new Error('Actual Token Ledger linkage requires provider token counts.');
+    }
+    result.linkedRequests += 1;
+    if (parsed.inputSource === 'actual') result.actualInputTokens += inputTokens;
+    else result.estimatedInputTokens += inputTokens;
+    if (parsed.outputSource === 'actual') result.actualOutputTokens += outputTokens;
+    else result.estimatedOutputTokens += outputTokens;
+    result.cachedInputTokens += parsed.actual.cachedInputTokens ?? 0;
+    result.cacheWriteInputTokens += parsed.actual.cacheWriteInputTokens ?? 0;
+    result.reasoningTokens += parsed.actual.reasoningTokens ?? 0;
+    result.receiptSha256.push(receiptSha256);
+  }
+  return result;
+}
+
+function emptyTokenLedgerAggregate(): z.infer<typeof capabilityTokenLedgerAggregateSchema> {
+  return {
+    linkedRequests: 0,
+    actualInputTokens: 0,
+    actualOutputTokens: 0,
+    estimatedInputTokens: 0,
+    estimatedOutputTokens: 0,
+    cachedInputTokens: 0,
+    cacheWriteInputTokens: 0,
+    reasoningTokens: 0,
+    recentReceiptSha256: [],
+  };
+}
+
+function capabilityHealthFailure(
+  reason: 'verified' | CapabilityFailureReason,
+): CapabilityHealthFailure {
+  return reason === 'verified' ? 'verification_failed' : reason;
+}
+
+function migrateCapabilityRegistry(value: unknown): CapabilityRegistrySnapshot {
+  const current = capabilityRegistrySchema.safeParse(value);
+  if (current.success) {
+    if (current.data.health.some((entry) => !capabilityRouteHealthIntegrityValid(entry))) {
+      throw new Error('Capability route health integrity check failed.');
+    }
+    return current.data;
+  }
+  const legacy = legacyCapabilityRegistrySchema.parse(value);
+  return capabilityRegistrySchema.parse({
+    ...legacy,
+    version: CAPABILITY_REGISTRY_VERSION,
+    epochs: legacy.epochs.map((epoch) => ({
+      ...epoch,
+      components: {
+        modelSha256: epoch.routeFingerprintSha256,
+        endpointSha256: epoch.routeFingerprintSha256,
+        authSha256: epoch.routeFingerprintSha256,
+        promptSha256: epoch.routeFingerprintSha256,
+        toolCatalogSha256: epoch.routeFingerprintSha256,
+        generationSha256: epoch.routeFingerprintSha256,
+      },
+      componentStatus: 'legacy',
+      driftReasons: ['legacy'],
+    })),
+    observations: legacy.observations.map((observation) => ({
+      ...observation,
+      tokenLedger: emptyTokenLedgerAggregate(),
+    })),
+    health: [],
+  });
+}
+
+function identityFields(input: CapabilityRouteEpochInput): Omit<CapabilityRouteEpochInput, 'components'> {
   return {
     routeIdentitySha256: input.routeIdentitySha256,
     routeFingerprintSha256: input.routeFingerprintSha256,

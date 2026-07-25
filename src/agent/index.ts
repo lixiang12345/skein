@@ -26,9 +26,16 @@ export type {
 } from './review-arbitration.js';
 export {listConnectionModels} from './model-catalog.js';
 export type {ModelCatalogEntry} from './model-catalog.js';
-export {CapabilityRegistryStore, capabilityRegistrySchema} from './capability-registry.js';
+export {
+  CapabilityRegistryStore,
+  capabilityRegistrySchema,
+  capabilityRouteFingerprint,
+} from './capability-registry.js';
 export type {
+  CapabilityCanaryResult,
   CapabilityObservationAggregate,
+  CapabilityObservationMetrics,
+  CapabilityObservationResult,
   CapabilityRegistrySnapshot,
   CapabilityRouteEpochInput,
 } from './capability-registry.js';
@@ -38,6 +45,18 @@ export type {
   CapabilityRouteCandidate,
   CapabilityShadowReport,
 } from './capability-router.js';
+export {capabilityReplayBundleSchema, evaluateCapabilityReplay} from './capability-evals.js';
+export type {CapabilityReplayBundle, CapabilityReplayReport} from './capability-evals.js';
+export {
+  capabilityRouteHealthIntegrityValid,
+  capabilityRouteHealthSchema,
+  transitionCapabilityHealth,
+} from './capability-health.js';
+export type {
+  CapabilityHealthFailure,
+  CapabilityHealthStatus,
+  CapabilityRouteHealth,
+} from './capability-health.js';
 export {
   buildSystemPrompt,
   buildStableSystemPrompt,

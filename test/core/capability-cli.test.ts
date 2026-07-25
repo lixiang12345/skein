@@ -3,6 +3,7 @@ import {access, mkdtemp, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {afterEach, describe, expect, it} from 'vitest';
+import {createDeterministicEvidenceReceipt} from '../../src/agent/evidence-receipt.js';
 
 const roots: string[] = [];
 
@@ -65,6 +66,7 @@ describe('agents capability CLI', () => {
     expect(textInspection).toMatchObject({exitCode: 0, stderr: ''});
     expect(textInspection.stdout).toContain('frontend  mode=shadow  recommend change');
     expect(textInspection.stdout).toContain('    transport: openai-responses');
+    expect(textInspection.stdout).toContain('    health: healthy');
     expect(textInspection.stdout).not.toContain('private-relay.example');
 
     const pinned = await runCli([
@@ -83,11 +85,46 @@ describe('agents capability CLI', () => {
     ], environment);
     expect(exported).toMatchObject({exitCode: 0, stderr: ''});
     const exportValue = JSON.parse(exported.stdout) as {version: number; pins: unknown[]; epochs: unknown[]};
-    expect(exportValue).toMatchObject({version: 1, pins: [expect.any(Object)]});
+    expect(exportValue).toMatchObject({version: 2, pins: [expect.any(Object)]});
     expect(exportValue.epochs.length).toBeGreaterThan(0);
     expect(exported.stdout).not.toContain('private-relay');
     expect(exported.stdout).not.toContain('quality-model');
     expect(exported.stdout).not.toContain('frontend');
+
+    const replayed = await runCli([
+      'agents', 'capability', 'replay', 'test/fixtures/capability-replay.json', '--json',
+    ], environment);
+    expect(replayed).toMatchObject({exitCode: 0, stderr: ''});
+    expect(JSON.parse(replayed.stdout)).toMatchObject({
+      source: 'fixture',
+      gates: {routeReplay: true, tokenLedger: true, judgeCalibration: true, degradation: true,
+        externalValidation: false, automaticRouting: false},
+      readyForAutomaticRouting: false,
+    });
+
+    const replayText = await runCli([
+      'agents', 'capability', 'replay', 'test/fixtures/capability-replay.json',
+    ], environment);
+    expect(replayText.stdout).toContain('Capability replay  source=fixture  automatic-routing=disabled');
+    expect(replayText.stdout).toContain('gates: replay=true ledger=true judge=true degradation=true external=false automatic=false');
+
+    const canaryPath = join(workspace, 'canary-receipt.json');
+    await writeFile(canaryPath, `${JSON.stringify(createDeterministicEvidenceReceipt({
+      toolCallId: 'cli-canary-failure',
+      tool: 'capability_canary',
+      arguments: {fixture: 'content-free-fixture'},
+      ok: false,
+      content: 'schema mismatch',
+    }), null, 2)}\n`, {mode: 0o600});
+    const canary = await runCli([
+      'agents', 'capability', 'canary', 'frontend', 'backend', canaryPath,
+      '--failure', 'schema_mismatch', '--workspace', workspace, '--json',
+    ], environment);
+    expect(canary).toMatchObject({exitCode: 0, stderr: ''});
+    expect(JSON.parse(canary.stdout)).toMatchObject({
+      profile: 'frontend', route: 'backend', recorded: true, reason: 'failed',
+      health: {status: 'degraded', lastFailure: 'schema_mismatch'},
+    });
 
     const unpinned = await runCli([
       'agents', 'capability', 'unpin', 'frontend', '--workspace', workspace, '--json',
@@ -97,7 +134,7 @@ describe('agents capability CLI', () => {
     const reset = await runCli([
       'agents', 'capability', 'reset', '--workspace', workspace, '--yes', '--json',
     ], environment);
-    expect(JSON.parse(reset.stdout)).toMatchObject({version: 1, epochs: [], observations: [], pins: []});
+    expect(JSON.parse(reset.stdout)).toMatchObject({version: 2, epochs: [], observations: [], pins: [], health: []});
   }, 30_000);
 
   it('keeps off-mode inspection read-only and retains the static route', async () => {

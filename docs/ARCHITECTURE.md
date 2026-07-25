@@ -278,6 +278,40 @@ Git push, npm publish, deployments, migrations, destructive commands, and
 external mutations require a live-human approval path. Model votes, config
 allow rules, `--yes`, and ordinary session grants cannot mint that identity.
 
+## Capability drift and replay plane
+
+The project-local Capability Registry v2 keeps a stable logical route identity
+separate from six behavior components: model/protocol, endpoint, auth
+reference, profile prompt, tool catalog, and generation/budget policy. A change
+to any component opens a labelled epoch and invalidates a full-fingerprint pin.
+Version 1 files migrate in memory and gain complete component metadata on the
+first current-route touch.
+
+Each task + route fingerprint has an independent deterministic health state:
+
+```text
+healthy -- failure --> degraded -- failure --> quarantined
+   ^                       |                       |
+   +------- success -------+---- two canaries ----+
+```
+
+Quarantine affects only the shadow recommendation: it cannot retarget a live
+run. A normal success can clear `degraded`, but a quarantined route requires two
+distinct passing `capability_canary` evidence receipts. Evidence hashes are
+bounded and duplicate signals are idempotent.
+
+Verified capability observations may bind the request-level Token Ledger.
+Token totals are derived from linked actual/estimated receipts and mismatched
+caller totals fail closed. The Registry retains only receipt hashes and bounded
+aggregates; it does not duplicate request IDs, prompts, schemas, retrieval
+details, tool names, provider output, or source.
+
+The offline replay plane accepts strict content-free fixtures and reports route
+regret, success, token use, provider/tier coverage, Token Ledger coverage,
+judge position/verbosity/self-preference stability, and exact health-state
+transitions. Local replay source labels are not external attestation. Replay
+never writes the Registry, calls a provider, or enables automatic routing.
+
 ## Security boundaries
 
 - File tools resolve and validate paths against configured workspace roots.

@@ -140,6 +140,8 @@ describe('capability shadow router', () => {
     expect(registry.epochs.filter((entry) =>
       entry.routeIdentitySha256 === pinned.routeIdentitySha256 &&
       entry.taskFingerprintSha256 === pinned.taskFingerprintSha256).map((entry) => entry.epoch)).toEqual([1, 2]);
+    expect(registry.epochs.find((entry) => entry.routeFingerprintSha256 === changedBackend.routeFingerprintSha256))
+      .toMatchObject({driftReasons: expect.arrayContaining(['endpoint', 'prompt'])});
     const report = evaluateCapabilityShadow({
       config: changedConfig,
       profile: changedProfile,
@@ -188,6 +190,24 @@ describe('capability shadow router', () => {
       .not.toBe(before.find((candidate) => candidate.ref === 'frontend')?.routeFingerprintSha256);
   });
 
+  it('records model-only drift as a new component epoch for the same logical route', async () => {
+    const root = await workspace();
+    const config = testConfig(root);
+    const profile = builtIn('frontend');
+    const environment = {TEAM_ROUTE_KEY: 'configured'};
+    const store = new CapabilityRegistryStore(root);
+    const before = await buildCapabilityCandidates({config, profile, environment});
+    await store.touchEpochs(before, new Date('2026-01-01T00:00:00.000Z'));
+    config.agents!.connections!.slow!.defaultModel = 'quality-model-v2';
+    const after = await buildCapabilityCandidates({config, profile, environment});
+    const changed = after.find((candidate) => candidate.ref === 'backend');
+    if (!changed) throw new Error('Expected changed backend capability candidate.');
+    const registry = await store.touchEpochs(after, new Date('2026-01-02T00:00:00.000Z'));
+
+    expect(registry.epochs.find((entry) => entry.routeFingerprintSha256 === changed.routeFingerprintSha256))
+      .toMatchObject({epoch: 2, driftReasons: ['model']});
+  });
+
   it('rejects external runtimes for writable profiles even when installed', async () => {
     const root = await workspace();
     const config = testConfig(root);
@@ -202,6 +222,39 @@ describe('capability shadow router', () => {
     const writer = candidates.find((candidate) => candidate.ref === 'implementer');
     expect(writer?.eligible).toBe(false);
     expect(writer?.ineligibleReasons).toContain('writer profiles require the API runtime');
+  });
+
+  it('excludes quarantined routes from shadow recommendations and restores them after canaries', async () => {
+    const root = await workspace();
+    const config = testConfig(root);
+    const profile = builtIn('frontend');
+    const candidates = await buildCapabilityCandidates({
+      config,
+      profile,
+      environment: {TEAM_ROUTE_KEY: 'configured'},
+    });
+    const backend = candidates.find((candidate) => candidate.ref === 'backend');
+    if (!backend) throw new Error('Expected backend capability candidate.');
+    const store = new CapabilityRegistryStore(root);
+    await store.touchEpochs(candidates);
+    await store.recordCanary({route: backend, receipt: canary('degrade-1', false)});
+    await store.recordCanary({route: backend, receipt: canary('degrade-2', false)});
+    let report = evaluateCapabilityShadow({config, profile, candidates, registry: await store.snapshot()});
+    expect(report.candidates.find((candidate) => candidate.ref === 'backend')).toMatchObject({
+      health: 'quarantined',
+      eligible: false,
+      ineligibleReasons: expect.arrayContaining(['route is quarantined pending recovery canaries']),
+    });
+    expect(report).toMatchObject({suggested: 'frontend', changed: false});
+
+    await store.recordCanary({route: backend, receipt: canary('recover-1', true)});
+    report = evaluateCapabilityShadow({config, profile, candidates, registry: await store.snapshot()});
+    expect(report.candidates.find((candidate) => candidate.ref === 'backend'))
+      .toMatchObject({health: 'quarantined', recoveryCanaryPasses: 1});
+    await store.recordCanary({route: backend, receipt: canary('recover-2', true)});
+    report = evaluateCapabilityShadow({config, profile, candidates, registry: await store.snapshot()});
+    expect(report.candidates.find((candidate) => candidate.ref === 'backend')).toMatchObject({health: 'healthy'});
+    expect(report).toMatchObject({suggested: 'backend', changed: true});
   });
 });
 
@@ -299,4 +352,14 @@ function verifiedCompletion(seed: string): {
       ok: true,
     }],
   }, receipts: [receipt]};
+}
+
+function canary(seed: string, ok: boolean): DeterministicEvidenceReceipt {
+  return createDeterministicEvidenceReceipt({
+    toolCallId: seed,
+    tool: 'capability_canary',
+    arguments: {fixture: seed},
+    ok,
+    content: ok ? 'passed' : 'failed',
+  });
 }

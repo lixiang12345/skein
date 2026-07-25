@@ -482,7 +482,7 @@ or source context.
 
 ### Capability Registry and shadow router
 
-Version `0.3.32` adds a project-local, privacy-safe shadow comparison under
+Version `0.3.32` added a project-local, privacy-safe shadow comparison under
 `agents.capability` without changing `resolveAgentModelRoute()` or the route
 used for a real run. The
 default mode is `shadow`; `off` retains the same inspectable report while always
@@ -519,20 +519,53 @@ tool-failure penalties. Configured and observed intervals remain separately
 visible even when both contribute to conservative shadow utility.
 
 The Registry is stored at `.skein/capability-registry.json` with owner-only
-atomic writes and workspace/file leases. It persists SHA-256 identities,
-epochs, bounded counters, recent evidence hashes, and fingerprint-bound pins—
+atomic writes and workspace/file leases. Version 2 migrates version 1 on read
+and persists SHA-256 identities, component-labelled epochs, bounded counters,
+recent evidence hashes, route health, Token Ledger receipt hashes, and
+fingerprint-bound pins—
 never task text, prompts, source, model output, command text, endpoint text,
 secret values, or environment values. Model, endpoint/auth reference, profile
 prompt, tool manifest, or generation/budget changes create a new epoch; a pin
 to the old full fingerprint becomes stale instead of following silently.
 
+Health is deterministic and scoped to the exact task + route fingerprint. One
+failed receipt-backed run or canary marks the route `degraded`; a second
+consecutive failure marks it `quarantined`. Degraded routes receive a shadow
+utility penalty, while quarantined routes are excluded from shadow
+recommendations. Ordinary successful tasks cannot reactivate a quarantined
+route: two distinct passing `capability_canary` receipts are required. A new
+component epoch starts healthy and does not inherit stale failure evidence.
+
+When a verified outcome supplies Token Ledger entries, the Registry derives
+its token totals from those entries, rejects mismatched caller totals, and
+stores only bounded actual/estimated/cache/reasoning aggregates plus receipt
+SHA-256 values. Request IDs, tool lists, retrieval details, prompts, and model
+content are not copied into the Registry.
+
 ```bash
 skein agents capability inspect [profile] [--json]
 skein agents capability pin <profile> <route>
 skein agents capability unpin <profile>
+skein agents capability canary <profile> <route> <receipt.json> [--failure <reason>]
+skein agents capability replay <content-free-bundle.json> [--json]
 skein agents capability export
 skein agents capability reset --yes
 ```
+
+Replay input is a strict, size-bounded regular JSON file. It compares selected
+routes with oracle routes, verified success, token usage, strong/medium tier and
+provider-hash coverage, Token Ledger linkage, judge position/verbosity/
+self-preference reversals, and expected degradation transitions. Fixture,
+recorded, and locally labelled live bundles are not external attestation. The
+report always returns `automaticRouting=false`; `agents.capability.mode`
+continues to accept only `off` and `shadow`.
+
+The canary command never executes the probe itself. It accepts only a bounded
+regular JSON file containing an integrity-valid deterministic receipt bound to
+the exact tool name `capability_canary`; ordinary shell/test receipts and model
+self-reports are rejected. This keeps provider spend and network side effects
+outside implicit health recording while giving CI or an explicit evaluator a
+safe ingestion path.
 
 Budget thresholds are opt-in policy, not a default task-size limit:
 
@@ -596,10 +629,10 @@ activity, and reviewer decisions are the explainable artifacts.
 
 1. Add provider-native search/tool adapters so a research route can use live
    search without granting arbitrary shell/network authority.
-2. Add drift canaries, degraded/quarantine/recovery state, and judge-bias
-   replay fixtures on top of the local shadow Registry.
-3. Add per-route cost accounting, Token Ledger linkage, replay gates, and user-confirmed spend
-   controls before any automatic route selection.
+2. Add provider-priced per-route cost accounting and user-confirmed spend
+   controls; Token Ledger linkage and local replay gates are already present.
+3. Collect externally attested, human-labelled strong/medium and cross-provider
+   evals before considering any mode beyond shadow.
 4. Add dependency-aware parallel writer worktrees after conflict-rate and
    rollback evidence justify relaxing the single-lane gate.
 5. Score routes from project-local eval outcomes instead of relying on model

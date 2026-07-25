@@ -1,6 +1,6 @@
 import {createInterface} from 'node:readline/promises';
 import {stdin as input, stdout as output} from 'node:process';
-import {readFile, writeFile} from 'node:fs/promises';
+import {lstat, readFile, writeFile} from 'node:fs/promises';
 import {existsSync} from 'node:fs';
 import {basename, resolve} from 'node:path';
 import {Command, Option} from 'commander';
@@ -21,14 +21,18 @@ import {
   AgentProfileCatalog,
   buildCapabilityCandidates,
   CapabilityRegistryStore,
+  evaluateCapabilityReplay,
   evaluateCapabilityShadow,
   formatReviewVerdict,
   listConnectionModels,
   TeamRunStore,
   type AgentProfile,
   type CapabilityShadowReport,
+  type CapabilityReplayReport,
+  type CapabilityHealthFailure,
 } from './agent/index.js';
 import {resolveAgentModelRoute} from './agent/model-route.js';
+import {deterministicEvidenceReceiptValid} from './agent/evidence-receipt.js';
 import {createAgentConnectionSetup, mergeAgentSetup} from './agent/model-setup.js';
 import {
   connectionCredentialReference,
@@ -749,6 +753,67 @@ capabilityCommand
     else process.stdout.write(removed ? `Removed ${profileName} shadow-route pin.\n` : `${profileName} has no shadow-route pin.\n`);
   });
 capabilityCommand
+  .command('canary <profile> <route> <receipt>')
+  .description('Record one deterministic capability_canary receipt for shadow health')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .addOption(new Option('--failure <reason>', 'structured failure reason').choices([
+    'verification_failed',
+    'regression',
+    'rollback',
+    'reviewer_reject',
+    'false_completion',
+    'tool_failure',
+    'schema_mismatch',
+    'provider_error',
+    'latency_regression',
+  ]))
+  .option('--json', 'print JSON')
+  .action(async (profileName: string, routeRef: string, receiptFile: string, options: ConfigOptions & {
+    failure?: CapabilityHealthFailure;
+    json?: boolean;
+  }) => {
+    const context = await capabilityContext(options, profileName);
+    const profile = context.profiles[0];
+    if (!profile) throw new Error(`Unknown agent profile: ${profileName}`);
+    const candidates = await buildCapabilityCandidates({config: context.config, profile});
+    await context.store.touchEpochs(candidates);
+    const candidate = candidates.find((route) => route.ref === routeRef || route.aliases.includes(routeRef));
+    if (!candidate) throw new Error(`Unknown capability route ${routeRef}.`);
+    const receipt = await readBoundedRegularJson(receiptFile, 'Capability canary receipt', 128_000);
+    if (!deterministicEvidenceReceiptValid(receipt, {tool: 'capability_canary'})) {
+      throw new Error('Capability canary receipt is invalid, corrupt, or not bound to capability_canary.');
+    }
+    const result = await context.store.recordCanary({
+      route: candidate,
+      receipt,
+      ...(options.failure ? {failure: options.failure} : {}),
+    });
+    if (result.reason === 'inadmissible') {
+      throw new Error('Capability canary receipt is invalid, corrupt, or not bound to capability_canary.');
+    }
+    const outputValue = {profile: profileName, route: candidate.ref, ...result};
+    if (options.json) printObject(outputValue, true);
+    else process.stdout.write(
+      `Canary ${candidate.ref}: ${result.reason}; health=${result.health?.status ?? 'unknown'} ` +
+      `failures=${result.health?.consecutiveFailures ?? 0} ` +
+      `recovery-canaries=${result.health?.recoveryCanaryPasses ?? 0}.\n`,
+    );
+  });
+capabilityCommand
+  .command('replay <file>')
+  .description('Evaluate a content-free route, judge-bias, and degradation replay bundle')
+  .option('--json', 'print JSON')
+  .action(async (file: string, options: {json?: boolean}) => {
+    const report = evaluateCapabilityReplay(await readBoundedRegularJson(
+      file,
+      'Capability replay input',
+      2_000_000,
+    ));
+    if (options.json) printObject(report, true);
+    else printCapabilityReplayReport(report);
+  });
+capabilityCommand
   .command('export')
   .description('Export the content-free local registry as JSON')
   .option('-w, --workspace <path>', 'workspace root')
@@ -1397,6 +1462,11 @@ function printCapabilityReport(report: CapabilityShadowReport): void {
     process.stdout.write(`  ${route.ref}  ${markers}\n`);
     process.stdout.write(`    model: ${route.runtime}:${route.provider}/${route.model}\n`);
     process.stdout.write(`    transport: ${route.protocol}  epoch=${route.epoch}\n`);
+    process.stdout.write(
+      `    health: ${route.health}  signals=${route.healthSignals}` +
+      `${route.healthFailure ? `  last-failure=${route.healthFailure}` : ''}` +
+      `${route.health === 'quarantined' ? `  recovery-canaries=${route.recoveryCanaryPasses}` : ''}\n`,
+    );
     process.stdout.write(`    score: ${configured}  ${observed}  utility=${utility}\n`);
     process.stdout.write(
       `    hashes: route=${route.routeFingerprintSha256.slice(0, 12)} ` +
@@ -1406,6 +1476,41 @@ function printCapabilityReport(report: CapabilityShadowReport): void {
       process.stdout.write(`    ineligible: ${route.ineligibleReasons.join('; ')}\n`);
     }
   }
+}
+
+function printCapabilityReplayReport(report: CapabilityReplayReport): void {
+  process.stdout.write(`Capability replay  source=${report.source}  automatic-routing=disabled\n`);
+  process.stdout.write(
+    `  routes: n=${report.routeReplay.samples} success=${report.routeReplay.verifiedSuccessRate.toFixed(3)} ` +
+    `regret=${report.routeReplay.regretRate.toFixed(3)} providers=${report.routeReplay.providerCoverage} ` +
+    `tiers=${report.routeReplay.modelTiers.join(',') || 'none'}\n`,
+  );
+  process.stdout.write(
+    `  ledger: linked=${report.tokenLedger.linked}/${report.routeReplay.samples} ` +
+    `coverage=${report.tokenLedger.coverage.toFixed(3)}\n`,
+  );
+  process.stdout.write(
+    `  judge: probes=${report.judgeBias.probes} stability=${report.judgeBias.stabilityRate.toFixed(3)} ` +
+    `biases=${report.judgeBias.covered.join(',') || 'none'}\n`,
+  );
+  process.stdout.write(
+    `  drift: probes=${report.degradation.probes} accuracy=${report.degradation.transitionAccuracy.toFixed(3)} ` +
+    `quarantine=${report.degradation.quarantineObserved} recovery=${report.degradation.recoveryObserved}\n`,
+  );
+  process.stdout.write(
+    `  gates: replay=${report.gates.routeReplay} ledger=${report.gates.tokenLedger} ` +
+    `judge=${report.gates.judgeCalibration} degradation=${report.gates.degradation} ` +
+    `external=${report.gates.externalValidation} automatic=false\n`,
+  );
+  for (const reason of report.reasons) process.stdout.write(`  - ${reason}\n`);
+}
+
+async function readBoundedRegularJson(file: string, label: string, maximumBytes: number): Promise<unknown> {
+  const path = resolve(file);
+  const info = await lstat(path);
+  if (!info.isFile() || info.isSymbolicLink()) throw new Error(`${label} must be a regular file.`);
+  if (info.size > maximumBytes) throw new Error(`${label} exceeds the ${maximumBytes.toLocaleString('en-US')} byte limit.`);
+  return JSON.parse(await readFile(path, 'utf8')) as unknown;
 }
 
 async function runChat(prompts: string[], options: RootOptions): Promise<void> {

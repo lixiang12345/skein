@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "source": "fixture",
+  "routeReplays": [
+    {
+      "fixtureSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "selectedRouteSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "oracleRouteSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "providerSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "modelTier": "strong",
+      "outcome": "verified_success",
+      "inputTokens": 100,
+      "outputTokens": 20,
+      "tokenLedgerSha256": "5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    {
+      "fixtureSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "selectedRouteSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "oracleRouteSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "providerSha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "modelTier": "medium",
+      "outcome": "verified_success",
+      "inputTokens": 80,
+      "outputTokens": 15,
+      "tokenLedgerSha256": "6666666666666666666666666666666666666666666666666666666666666666"
+    },
+    {
+      "fixtureSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "selectedRouteSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "oracleRouteSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "providerSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "modelTier": "strong",
+      "outcome": "verified_failure",
+      "inputTokens": 120,
+      "outputTokens": 25,
+      "tokenLedgerSha256": "7777777777777777777777777777777777777777777777777777777777777777"
+    },
+    {
+      "fixtureSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "selectedRouteSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "oracleRouteSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "providerSha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "modelTier": "medium",
+      "outcome": "verified_success",
+      "inputTokens": 75,
+      "outputTokens": 12,
+      "tokenLedgerSha256": "8888888888888888888888888888888888888888888888888888888888888888"
+    }
+  ],
+  "judgeBiasProbes": [
+    {
+      "fixtureSha256": "9999999999999999999999999999999999999999999999999999999999999999",
+      "bias": "position",
+      "forwardWinner": "a",
+      "reversedWinner": "a"
+    },
+    {
+      "fixtureSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "bias": "verbosity",
+      "forwardWinner": "b",
+      "reversedWinner": "b"
+    },
+    {
+      "fixtureSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "bias": "self_preference",
+      "forwardWinner": "tie",
+      "reversedWinner": "tie"
+    }
+  ],
+  "degradationProbes": [
+    {
+      "fixtureSha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "routeFingerprintSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "taskFingerprintSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "signals": [
+        {
+          "signal": "canary",
+          "passed": false,
+          "evidenceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
+          "failure": "schema_mismatch",
+          "expectedStatus": "degraded"
+        },
+        {
+          "signal": "canary",
+          "passed": false,
+          "evidenceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2",
+          "failure": "provider_error",
+          "expectedStatus": "quarantined"
+        },
+        {
+          "signal": "verified-run",
+          "passed": true,
+          "evidenceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa3",
+          "expectedStatus": "quarantined"
+        },
+        {
+          "signal": "canary",
+          "passed": true,
+          "evidenceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa4",
+          "expectedStatus": "quarantined"
+        },
+        {
+          "signal": "canary",
+          "passed": true,
+          "evidenceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa5",
+          "expectedStatus": "healthy"
+        }
+      ]
+    }
+  ]
+}

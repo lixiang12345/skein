@@ -4,11 +4,12 @@ import {dirname, join} from 'node:path';
 import {afterEach, describe, expect, it} from 'vitest';
 import {
   CapabilityRegistryStore,
+  capabilityRouteFingerprint,
   capabilitySha256,
   type CapabilityRouteEpochInput,
 } from '../../src/agent/capability-registry.js';
 import {createDeterministicEvidenceReceipt} from '../../src/agent/evidence-receipt.js';
-import type {DeterministicEvidenceReceipt, RunCompletion} from '../../src/types.js';
+import type {DeterministicEvidenceReceipt, RunCompletion, TokenLedgerEntry} from '../../src/types.js';
 
 const roots: string[] = [];
 
@@ -34,6 +35,10 @@ describe('capability registry', () => {
       {routeFingerprintSha256: first.routeFingerprintSha256, epoch: 1},
       {routeFingerprintSha256: changed.routeFingerprintSha256, epoch: 2},
     ]);
+    expect(next.epochs[1]).toMatchObject({
+      componentStatus: 'complete',
+      driftReasons: expect.arrayContaining(['endpoint', 'prompt', 'tools', 'generation']),
+    });
 
     const repeated = await store.touchEpochs([first], new Date('2026-01-03T00:00:00.000Z'));
     expect(repeated.epochs.find((entry) => entry.routeFingerprintSha256 === first.routeFingerprintSha256)?.epoch).toBe(1);
@@ -86,6 +91,7 @@ describe('capability registry', () => {
       latencyMsTotal: 2_500,
       toolFailures: 1,
     });
+    expect((await store.snapshot()).health[0]).toMatchObject({status: 'degraded', consecutiveFailures: 1});
 
     const duplicate = await store.recordVerifiedRun({
       route: selected,
@@ -129,7 +135,7 @@ describe('capability registry', () => {
     expect(raw).not.toContain('model summary');
     expect(raw).not.toContain('privacy');
     expect(raw).not.toContain('OPENAI_API_KEY');
-    expect(JSON.parse(raw)).toMatchObject({version: 1, observations: [expect.any(Object)], pins: [expect.any(Object)]});
+    expect(JSON.parse(raw)).toMatchObject({version: 2, observations: [expect.any(Object)], pins: [expect.any(Object)]});
     if (process.platform !== 'win32') expect((await stat(store.file)).mode & 0o777).toBe(0o600);
   });
 
@@ -163,7 +169,7 @@ describe('capability registry', () => {
     await store.touchEpochs([selected]);
     await store.pin(selected);
     const reset = await store.reset(new Date('2026-03-01T00:00:00.000Z'));
-    expect(reset).toMatchObject({version: 1, epochs: [], observations: [], pins: []});
+    expect(reset).toMatchObject({version: 2, epochs: [], observations: [], pins: [], health: []});
     expect(await store.snapshot()).toEqual(reset);
   });
 
@@ -195,6 +201,99 @@ describe('capability registry', () => {
     await symlink(outside, store.file);
     await expect(store.snapshot()).rejects.toThrow('not a regular file');
   });
+
+  it('migrates v1 registries and backfills complete component epochs on first touch', async () => {
+    const root = await workspace();
+    const store = new CapabilityRegistryStore(root);
+    const selected = route('logical-route', 'behavior-a', 'backend');
+    await store.recordVerifiedRun({route: selected, ...completion('verified', true, 'legacy')});
+    const current = JSON.parse(await readFile(store.file, 'utf8')) as Record<string, unknown> & {
+      epochs: Array<Record<string, unknown>>;
+      observations: Array<Record<string, unknown>>;
+    };
+    current.version = 1;
+    current.epochs = current.epochs.map(({components, componentStatus, driftReasons, ...epoch}) => epoch);
+    current.observations = current.observations.map(({tokenLedger, ...observation}) => observation);
+    delete current.health;
+    await writeFile(store.file, `${JSON.stringify(current, null, 2)}\n`, {mode: 0o600});
+
+    const migrated = await store.snapshot();
+    expect(migrated).toMatchObject({version: 2, health: []});
+    expect(migrated.epochs[0]).toMatchObject({componentStatus: 'legacy', driftReasons: ['legacy']});
+    const backfilled = await store.touchEpochs([selected]);
+    expect(backfilled.epochs[0]).toMatchObject({componentStatus: 'complete', components: selected.components});
+  });
+
+  it('links authoritative Token Ledger receipts without storing request content', async () => {
+    const root = await workspace();
+    const store = new CapabilityRegistryStore(root);
+    const selected = route('logical-route', 'behavior-a', 'backend');
+    const ledger = tokenLedger('request-private', 80, 20);
+    const recorded = await store.recordVerifiedRun({
+      route: selected,
+      ...completion('verified', true, 'ledger'),
+      metrics: {inputTokens: 80, outputTokens: 20, tokenLedger: [ledger]},
+    });
+    expect(recorded.aggregate).toMatchObject({
+      decayed: {tokenTotal: 100},
+      tokenLedger: {
+        linkedRequests: 1,
+        actualInputTokens: 80,
+        actualOutputTokens: 20,
+        recentReceiptSha256: [expect.stringMatching(/^[a-f0-9]{64}$/u)],
+      },
+    });
+    expect(await readFile(store.file, 'utf8')).not.toContain('request-private');
+    await expect(store.recordVerifiedRun({
+      route: selected,
+      ...completion('verified', true, 'ledger-mismatch'),
+      metrics: {inputTokens: 81, outputTokens: 20, tokenLedger: [ledger]},
+    })).rejects.toThrow('must match the linked Token Ledger');
+  });
+
+  it('degrades, quarantines, and recovers only after consecutive passing canaries', async () => {
+    const root = await workspace();
+    const store = new CapabilityRegistryStore(root);
+    const selected = route('logical-route', 'behavior-a', 'reviewer');
+    const failedOne = canary('canary-fail-1', false);
+    const failedTwo = canary('canary-fail-2', false);
+    const passedOne = canary('canary-pass-1', true);
+    const passedTwo = canary('canary-pass-2', true);
+
+    expect(await store.recordCanary({route: selected, receipt: failedOne, failure: 'schema_mismatch'}))
+      .toMatchObject({recorded: true, reason: 'failed', health: {status: 'degraded'}});
+    expect(await store.recordCanary({route: selected, receipt: failedTwo, failure: 'provider_error'}))
+      .toMatchObject({health: {status: 'quarantined', consecutiveFailures: 2}});
+    expect(await store.recordCanary({route: selected, receipt: passedOne}))
+      .toMatchObject({health: {status: 'quarantined', recoveryCanaryPasses: 1}});
+    expect(await store.recordCanary({route: selected, receipt: passedTwo}))
+      .toMatchObject({health: {status: 'healthy', recoveryCanaryPasses: 0}});
+    expect(await store.recordCanary({route: selected, receipt: passedTwo}))
+      .toMatchObject({recorded: false, reason: 'duplicate'});
+    await expect(store.recordCanary({route: selected, receipt: canary('invalid-pass-reason', true),
+      failure: 'provider_error'})).rejects.toThrow('Passing capability canaries');
+  });
+
+  it('rejects forged component fingerprints, unrelated canary tools, and tampered health state', async () => {
+    const root = await workspace();
+    const store = new CapabilityRegistryStore(root);
+    const selected = route('logical-route', 'behavior-a', 'reviewer');
+    await expect(store.touchEpochs([{
+      ...selected,
+      components: {...selected.components, promptSha256: capabilitySha256('forged-prompt')},
+    }])).rejects.toThrow('fingerprint does not match');
+    const unrelated = createDeterministicEvidenceReceipt({
+      toolCallId: 'ordinary-check', tool: 'shell', arguments: {command: 'true'}, ok: true, content: 'passed',
+    });
+    expect(await store.recordCanary({route: selected, receipt: unrelated}))
+      .toEqual({recorded: false, reason: 'inadmissible'});
+
+    await store.recordCanary({route: selected, receipt: canary('health-integrity', false)});
+    const persisted = JSON.parse(await readFile(store.file, 'utf8')) as {health: Array<Record<string, unknown>>};
+    persisted.health[0]!.status = 'healthy';
+    await writeFile(store.file, `${JSON.stringify(persisted, null, 2)}\n`, {mode: 0o600});
+    await expect(store.snapshot()).rejects.toThrow('health integrity check failed');
+  });
 });
 
 async function workspace(): Promise<string> {
@@ -204,10 +303,54 @@ async function workspace(): Promise<string> {
 }
 
 function route(identity: string, behavior: string, task: string): CapabilityRouteEpochInput {
+  const routeIdentitySha256 = capabilitySha256(identity);
+  const components = {
+    modelSha256: capabilitySha256(`${identity}:model`),
+    endpointSha256: capabilitySha256(`${behavior}:endpoint`),
+    authSha256: capabilitySha256(`${identity}:auth`),
+    promptSha256: capabilitySha256(`${behavior}:prompt`),
+    toolCatalogSha256: capabilitySha256(`${behavior}:tools`),
+    generationSha256: capabilitySha256(`${behavior}:generation`),
+  };
   return {
-    routeIdentitySha256: capabilitySha256(identity),
-    routeFingerprintSha256: capabilitySha256(behavior),
+    routeIdentitySha256,
+    routeFingerprintSha256: capabilityRouteFingerprint({routeIdentitySha256, components}),
     taskFingerprintSha256: capabilitySha256(task),
+    components,
+  };
+}
+
+function canary(seed: string, ok: boolean): DeterministicEvidenceReceipt {
+  return createDeterministicEvidenceReceipt({
+    toolCallId: seed,
+    tool: 'capability_canary',
+    arguments: {fixture: capabilitySha256(seed)},
+    ok,
+    content: ok ? 'passed' : 'failed',
+  });
+}
+
+function tokenLedger(requestId: string, inputTokens: number, outputTokens: number): TokenLedgerEntry {
+  return {
+    requestId,
+    turn: 1,
+    recordedAt: '2026-02-01T00:00:00.000Z',
+    estimated: {
+      stableTokens: 10,
+      dynamicTokens: 5,
+      retrievedTokens: 3,
+      conversationTokens: 40,
+      toolResultTokens: 2,
+      toolSchemaTokens: 20,
+      estimatedInputTokens: inputTokens,
+      outputAllowanceTokens: outputTokens,
+      outputTokens,
+    },
+    actual: {inputTokens, outputTokens, cachedInputTokens: 10, reasoningTokens: 4},
+    inputSource: 'actual',
+    outputSource: 'actual',
+    tools: {loaded: ['read_file'], deferredCount: 0},
+    retrieval: {engine: 'local', discarded: []},
   };
 }
 
