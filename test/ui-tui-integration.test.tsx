@@ -632,14 +632,14 @@ describe('SkeinApp completion flows', () => {
 
       harness.stdin.write('/mcp trust docs --confirm\r');
       await vi.waitFor(() => expect(trust).toHaveBeenCalledWith('docs'));
-      expect(harness.output()).toContain('Activation remains explicit');
+      await vi.waitFor(() => expect(harness.output()).toContain('Activation remains explicit'));
 
       harness.stdin.write('/mcp revoke docs\r');
       await vi.waitFor(() => expect(harness.output()).toContain('/mcp revoke docs --confirm'));
       expect(revoke).not.toHaveBeenCalled();
       harness.stdin.write('/mcp revoke docs --confirm\r');
       await vi.waitFor(() => expect(revoke).toHaveBeenCalledWith('docs'));
-      expect(harness.output()).toContain('Re-inspection and trust are required');
+      await vi.waitFor(() => expect(harness.output()).toContain('Re-inspection and trust are required'));
     } finally {
       await harness.cleanup();
       await rm(root, {recursive: true, force: true});

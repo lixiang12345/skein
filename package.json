@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.27",
+  "version": "0.3.28",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,6 +16,7 @@
   },
   "skein": {
     "releaseNotes": [
+      "MCP trust and revoke confirmation rendering now has a deterministic cross-platform release regression gate",
       "MCP now follows a no-network search and inspect review before explicit workspace-bound manifest trust and lazy activation",
       "Declarative capability manifests expose redacted source, version, tools, permissions, network, command, path, sensitive-field, process, and completion-evidence effects",
       "Persistent disable and revoke unload active remote schemas while manifest fingerprint changes fail closed to untrusted",
