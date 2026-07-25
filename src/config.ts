@@ -7,6 +7,7 @@ import {parse as parseYaml} from 'yaml';
 import {z} from 'zod';
 import {defaultMemoryPath} from './memory/store.js';
 import type {
+  AgentCapabilityConfig,
   AgentTeamConfig,
   McpConfig,
   MemoryConfig,
@@ -54,6 +55,11 @@ const memoryConfigSchema = z.object({
 }).partial();
 
 const agentConnectionNameSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
+const agentProfileNameSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
+const capabilityRouteReferenceSchema = z.union([
+  agentProfileNameSchema,
+  z.enum(['@parent', '@default']),
+]);
 const connectionAuthSchema = z.discriminatedUnion('type', [
   z.object({type: z.literal('env'), name: z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/)}).strict(),
   z.object({type: z.literal('none')}).strict(),
@@ -81,10 +87,10 @@ const agentTeamConfigSchema = z.object({
   enabled: z.boolean().optional(),
   maxConcurrent: z.number().int().positive().max(16).optional(),
   maxDelegations: z.number().int().positive().max(32).optional(),
-  defaultProfile: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/).optional(),
+  defaultProfile: agentProfileNameSchema.optional(),
   defaultConnection: agentConnectionNameSchema.optional(),
   defaultModel: z.string().min(1).max(256).optional(),
-  reviewerProfile: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/).optional(),
+  reviewerProfile: agentProfileNameSchema.optional(),
   maxReviewRounds: z.number().int().min(0).max(3).optional(),
   cockpit: z.boolean().optional(),
   persistBoard: z.boolean().optional(),
@@ -93,11 +99,11 @@ const agentTeamConfigSchema = z.object({
   agentTimeoutMs: z.number().int().positive().max(1_800_000).optional(),
   budgetMode: z.enum(['observe', 'guard', 'strict']).optional(),
   writerEnabled: z.boolean().optional(),
-  writerProfile: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/).optional(),
-  writerReviewerProfile: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/).optional(),
+  writerProfile: agentProfileNameSchema.optional(),
+  writerReviewerProfile: agentProfileNameSchema.optional(),
   maxWriterPatchBytes: z.number().int().positive().max(120_000).optional(),
   connections: z.record(agentConnectionNameSchema, agentConnectionSchema).optional(),
-  routes: z.record(z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/), z.object({
+  routes: z.record(agentProfileNameSchema, z.object({
     runtime: z.enum(['api', 'codex', 'claude', 'grok']).optional(),
     connection: agentConnectionNameSchema.optional(),
     provider: z.enum(['openai', 'anthropic', 'gemini', 'compatible']).optional(),
@@ -113,6 +119,15 @@ const agentTeamConfigSchema = z.object({
     timeoutMs: z.number().int().positive().max(1_800_000).optional(),
     budgetMode: z.enum(['observe', 'guard', 'strict']).optional(),
   }).strict()).optional(),
+  capability: z.object({
+    mode: z.enum(['off', 'shadow']).optional(),
+    halfLifeDays: z.number().positive().min(1).max(365).optional(),
+    minimumSamples: z.number().int().positive().max(1_000).optional(),
+    priors: z.record(agentProfileNameSchema, z.record(capabilityRouteReferenceSchema, z.object({
+      successRate: z.number().min(0).max(1),
+      strength: z.number().min(0).max(1_000),
+    }).strict())).optional(),
+  }).strict().optional(),
 }).partial();
 
 const mcpServerSchema = z.object({
@@ -227,6 +242,8 @@ const partialConfigSchema = z.object({
 }).partial();
 
 type PartialConfig = z.infer<typeof partialConfigSchema>;
+type AgentTeamConfigUpdate = NonNullable<PartialConfig['agents']>;
+type AgentCapabilityConfigUpdate = NonNullable<AgentTeamConfigUpdate['capability']>;
 
 const modelTrustRegistrySchema = z.object({
   version: z.literal(1),
@@ -340,6 +357,12 @@ export function defaultConfig(workspace = process.cwd()): MosaicConfig {
       maxWriterPatchBytes: 60_000,
       connections: {},
       routes: {},
+      capability: {
+        mode: 'shadow',
+        halfLifeDays: 30,
+        minimumSamples: 5,
+        priors: {},
+      },
     },
     mcp: {
       enabled: false,
@@ -416,7 +439,7 @@ function mergeConfig(base: MosaicConfig, update: PartialConfig): MosaicConfig {
     ui: {...base.ui, ...update.ui},
     skills: {...base.skills, ...update.skills} as SkillConfig,
     memory: {...base.memory, ...update.memory} as MemoryConfig,
-    agents: {...base.agents, ...update.agents} as AgentTeamConfig,
+    agents: mergeAgentConfig(base.agents, update.agents),
     mcp: {
       ...base.mcp,
       ...update.mcp,
@@ -424,6 +447,41 @@ function mergeConfig(base: MosaicConfig, update: PartialConfig): MosaicConfig {
     } as McpConfig,
     workspaceRoots: update.workspaceRoots ?? base.workspaceRoots,
   } as MosaicConfig;
+}
+
+function mergeAgentConfig(
+  base: AgentTeamConfig | AgentTeamConfigUpdate | undefined,
+  update: AgentTeamConfigUpdate | undefined,
+): AgentTeamConfig {
+  const capability = mergeCapabilityConfig(base?.capability, update?.capability);
+  return {
+    ...base,
+    ...update,
+    ...(capability ? {capability} : {}),
+  } as AgentTeamConfig;
+}
+
+function mergeCapabilityConfig(
+  base: AgentCapabilityConfig | AgentCapabilityConfigUpdate | undefined,
+  update: AgentCapabilityConfigUpdate | undefined,
+): AgentCapabilityConfig | undefined {
+  if (!base && !update) return undefined;
+  const priors: NonNullable<AgentCapabilityConfig['priors']> = {};
+  for (const [profile, configured] of Object.entries(base?.priors ?? {})) {
+    priors[profile] = {...configured};
+  }
+  for (const [profile, configured] of Object.entries(update?.priors ?? {})) {
+    priors[profile] = {...priors[profile], ...configured};
+  }
+  const mode = update?.mode ?? base?.mode;
+  const halfLifeDays = update?.halfLifeDays ?? base?.halfLifeDays;
+  const minimumSamples = update?.minimumSamples ?? base?.minimumSamples;
+  return {
+    ...(mode !== undefined ? {mode} : {}),
+    ...(halfLifeDays !== undefined ? {halfLifeDays} : {}),
+    ...(minimumSamples !== undefined ? {minimumSamples} : {}),
+    ...(base?.priors !== undefined || update?.priors !== undefined ? {priors} : {}),
+  };
 }
 
 async function readConfigFile(path: string): Promise<PartialConfig> {
@@ -577,6 +635,20 @@ function validateAgentConnections(agents: AgentTeamConfig | undefined): void {
       throw new Error(`Agent route ${profile} references unknown connection ${route.connection}.`);
     }
   }
+  for (const [taskProfile, priors] of Object.entries(agents?.capability?.priors ?? {})) {
+    for (const routeRef of Object.keys(priors)) {
+      if (routeRef === '@parent') continue;
+      if (routeRef === '@default') {
+        if (agents?.defaultConnection === undefined && agents?.defaultModel === undefined) {
+          throw new Error(`Capability prior ${taskProfile} references @default without an agent default route.`);
+        }
+        continue;
+      }
+      if (!agents?.routes?.[routeRef]) {
+        throw new Error(`Capability prior ${taskProfile} references unknown route ${routeRef}.`);
+      }
+    }
+  }
 }
 
 export async function saveUiPreference(update: {theme?: string; compact?: boolean}): Promise<void> {
@@ -674,6 +746,7 @@ function sanitizeProjectConfig(
     delete agents.writerProfile;
     delete agents.writerReviewerProfile;
     delete agents.maxWriterPatchBytes;
+    delete agents.capability;
   }
   return {
     ...safeUpdate,
@@ -720,8 +793,7 @@ export async function saveUserConfig(config: PartialConfig): Promise<string> {
     const path = join(home, 'config.json');
     const existing = await readConfigFile(path);
     const agents = existing.agents || config.agents ? {
-      ...existing.agents,
-      ...config.agents,
+      ...mergeAgentConfig(existing.agents as AgentTeamConfig | undefined, config.agents),
       connections: {...existing.agents?.connections, ...config.agents?.connections},
       routes: {...existing.agents?.routes, ...config.agents?.routes},
     } : undefined;
@@ -782,6 +854,12 @@ export function configSummary(config: MosaicConfig): Record<string, unknown> {
       writerProfile: config.agents.writerProfile,
       writerReviewerProfile: config.agents.writerReviewerProfile,
       maxWriterPatchBytes: config.agents.maxWriterPatchBytes,
+      capability: config.agents.capability ? {
+        mode: config.agents.capability.mode ?? 'shadow',
+        halfLifeDays: config.agents.capability.halfLifeDays ?? 30,
+        minimumSamples: config.agents.capability.minimumSamples ?? 5,
+        configuredPriorTasks: Object.keys(config.agents.capability.priors ?? {}).length,
+      } : undefined,
       connections: Object.fromEntries(Object.entries(config.agents.connections ?? {}).map(([name, connection]) => [name, {
         provider: connection.provider,
         protocol: connection.protocol,

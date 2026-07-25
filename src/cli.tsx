@@ -17,7 +17,17 @@ import {
 } from './config.js';
 import {ContextEngine, formatContextHits} from './context/context-engine.js';
 import {AgentRunner} from './agent/index.js';
-import {AgentProfileCatalog, formatReviewVerdict, listConnectionModels, TeamRunStore} from './agent/index.js';
+import {
+  AgentProfileCatalog,
+  buildCapabilityCandidates,
+  CapabilityRegistryStore,
+  evaluateCapabilityShadow,
+  formatReviewVerdict,
+  listConnectionModels,
+  TeamRunStore,
+  type AgentProfile,
+  type CapabilityShadowReport,
+} from './agent/index.js';
 import {resolveAgentModelRoute} from './agent/model-route.js';
 import {createAgentConnectionSetup, mergeAgentSetup} from './agent/model-setup.js';
 import {
@@ -659,6 +669,100 @@ agentsCommand
       process.stdout.write(`${model.id}${model.ownedBy ? `  ${model.ownedBy}` : ''}${model.contextLength ? `  context ${model.contextLength}` : ''}\n`);
     }
   });
+const capabilityCommand = agentsCommand
+  .command('capability')
+  .description('Inspect privacy-safe shadow capability routing');
+capabilityCommand
+  .command('inspect [profile]')
+  .description('Compare current and conservative shadow routes without changing execution')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--json', 'print JSON')
+  .action(async (profileName: string | undefined, options: ConfigOptions) => {
+    const context = await capabilityContext(options, profileName);
+    const reports = await capabilityReports(context);
+    if (options.json) printObject(profileName ? reports[0] : reports, true);
+    else reports.forEach((report, index) => {
+      if (index) process.stdout.write('\n');
+      printCapabilityReport(report);
+    });
+  });
+capabilityCommand
+  .command('pin <profile> <route>')
+  .description('Pin one exact route fingerprint for shadow recommendations')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--json', 'print JSON')
+  .action(async (profileName: string, routeRef: string, options: ConfigOptions) => {
+    const context = await capabilityContext(options, profileName);
+    const profile = context.profiles[0];
+    if (!profile) throw new Error(`Unknown agent profile: ${profileName}`);
+    const candidates = await buildCapabilityCandidates({
+      config: context.config,
+      profile,
+    });
+    await context.store.touchEpochs(candidates);
+    const candidate = candidates.find((route) => route.ref === routeRef || route.aliases.includes(routeRef));
+    if (!candidate) {
+      throw new Error(`Unknown capability route ${routeRef}; use ${candidates.flatMap((route) => route.aliases).join(', ') || 'a configured route'}.`);
+    }
+    if (!candidate.eligible) {
+      throw new Error(`Capability route ${routeRef} is ineligible: ${candidate.ineligibleReasons.join('; ')}`);
+    }
+    const pin = await context.store.pin(candidate);
+    const result = {
+      profile: profileName,
+      route: candidate.ref,
+      routeFingerprintSha256: pin.routeFingerprintSha256,
+      taskFingerprintSha256: pin.taskFingerprintSha256,
+      pinnedAt: pin.pinnedAt,
+      mode: context.config.agents?.capability?.mode ?? 'shadow',
+    };
+    if (options.json) printObject(result, true);
+    else process.stdout.write(`Pinned ${profileName} shadow route to ${candidate.ref} @ ${pin.routeFingerprintSha256.slice(0, 12)}.\n`);
+  });
+capabilityCommand
+  .command('unpin <profile>')
+  .description('Remove a profile shadow-route pin')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--json', 'print JSON')
+  .action(async (profileName: string, options: ConfigOptions) => {
+    const context = await capabilityContext(options, profileName);
+    const profile = context.profiles[0];
+    if (!profile) throw new Error(`Unknown agent profile: ${profileName}`);
+    const candidates = await buildCapabilityCandidates({
+      config: context.config,
+      profile,
+    });
+    const taskFingerprintSha256 = candidates[0]?.taskFingerprintSha256;
+    if (!taskFingerprintSha256) throw new Error(`No capability routes are configured for ${profileName}.`);
+    const removed = await context.store.unpin(taskFingerprintSha256);
+    const result = {profile: profileName, removed};
+    if (options.json) printObject(result, true);
+    else process.stdout.write(removed ? `Removed ${profileName} shadow-route pin.\n` : `${profileName} has no shadow-route pin.\n`);
+  });
+capabilityCommand
+  .command('export')
+  .description('Export the content-free local registry as JSON')
+  .option('-w, --workspace <path>', 'workspace root')
+  .action(async (options: {workspace?: string}) => {
+    const store = new CapabilityRegistryStore(workspaceOption(options.workspace));
+    printObject(await store.snapshot(), true);
+  });
+capabilityCommand
+  .command('reset')
+  .description('Reset local capability observations, epochs, and pins')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--yes', 'skip confirmation')
+  .option('--json', 'print JSON')
+  .action(async (options: {workspace?: string; yes?: boolean; json?: boolean}) => {
+    const workspace = workspaceOption(options.workspace);
+    if (!options.yes && !(await confirm(`Reset the local capability registry for ${workspace}?`))) return;
+    const state = await new CapabilityRegistryStore(workspace).reset();
+    if (options.json) printObject(state, true);
+    else process.stdout.write('Reset local capability observations, epochs, and pins.\n');
+  });
 agentsCommand
   .command('runs')
   .description('List persisted multi-model team runs')
@@ -1160,6 +1264,12 @@ interface SearchOptions extends ConfigOptions {topK: string}
 interface ContextOptions extends ConfigOptions {maxTokens?: string}
 interface SessionCommandOptions {workspace?: string; json?: boolean}
 
+interface CapabilityCliContext {
+  config: MosaicConfig;
+  store: CapabilityRegistryStore;
+  profiles: AgentProfile[];
+}
+
 interface RuntimeConfigOptions {
   config?: string;
   addWorkspace?: string[];
@@ -1174,6 +1284,68 @@ interface RuntimeConfigOptions {
   color?: boolean;
   checkpoint?: boolean;
   trustProjectConfig?: boolean;
+}
+
+async function capabilityContext(
+  options: ConfigOptions,
+  profileName?: string,
+): Promise<CapabilityCliContext> {
+  const workspace = workspaceOption(options.workspace);
+  const config = await runtimeConfig(workspace, {
+    ...runtimeOptions(options),
+    connectionSelection: 'inspect',
+  });
+  const catalog = new AgentProfileCatalog(workspace);
+  const discovered = await catalog.discover();
+  const profiles = profileName
+    ? discovered.filter((profile) => profile.name === profileName)
+    : discovered;
+  if (profileName && !profiles.length) throw new Error(`Unknown agent profile: ${profileName}`);
+  return {config, store: new CapabilityRegistryStore(workspace), profiles};
+}
+
+async function capabilityReports(context: CapabilityCliContext): Promise<CapabilityShadowReport[]> {
+  const candidateSets = await Promise.all(context.profiles.map((profile) => buildCapabilityCandidates({
+    config: context.config,
+    profile,
+  })));
+  const registry = context.config.agents?.capability?.mode === 'off'
+    ? await context.store.snapshot()
+    : await context.store.touchEpochs(candidateSets.flat());
+  return context.profiles.map((profile, index) => evaluateCapabilityShadow({
+    config: context.config,
+    profile,
+    candidates: candidateSets[index] ?? [],
+    registry,
+  }));
+}
+
+function printCapabilityReport(report: CapabilityShadowReport): void {
+  const change = report.changed ? 'recommend change' : 'retain current';
+  process.stdout.write(`${report.profile}  mode=${report.mode}  ${change}\n`);
+  process.stdout.write(`  route: ${report.current} -> ${report.suggested}  pin=${report.pinned}\n`);
+  process.stdout.write(`  reason: ${report.reason}\n`);
+  for (const route of report.candidates) {
+    const markers = [route.current ? 'current' : '', report.suggested === route.ref ? 'suggested' : ''].filter(Boolean).join('+') || '-';
+    const observed = route.observed
+      ? `${route.observed.status} n=${route.observed.samples.toFixed(2)} lb=${route.observed.lower.toFixed(3)}`
+      : 'unobserved n=0.00 lb=0.000';
+    const configured = route.configured
+      ? `prior=${route.configured.mean.toFixed(3)}/${route.configured.samples.toFixed(2)}`
+      : 'prior=none';
+    const utility = Number.isFinite(route.utility) ? route.utility.toFixed(3) : 'ineligible';
+    process.stdout.write(`  ${route.ref}  ${markers}\n`);
+    process.stdout.write(`    model: ${route.runtime}:${route.provider}/${route.model}\n`);
+    process.stdout.write(`    transport: ${route.protocol}  epoch=${route.epoch}\n`);
+    process.stdout.write(`    score: ${configured}  ${observed}  utility=${utility}\n`);
+    process.stdout.write(
+      `    hashes: route=${route.routeFingerprintSha256.slice(0, 12)} ` +
+      `endpoint=${route.endpointSha256.slice(0, 12)}\n`,
+    );
+    if (route.ineligibleReasons.length) {
+      process.stdout.write(`    ineligible: ${route.ineligibleReasons.join('; ')}\n`);
+    }
+  }
 }
 
 async function runChat(prompts: string[], options: RootOptions): Promise<void> {

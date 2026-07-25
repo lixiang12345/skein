@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.31",
+  "version": "0.3.32",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,6 +16,10 @@
   },
   "skein": {
     "releaseNotes": [
+      "Capability Registry v1 stores only workspace-bound SHA-256 identities, bounded route epochs and aggregates, recent evidence hashes, and fingerprint-bound pins in an owner-only atomic project file",
+      "Shadow capability reports keep user-configured priors separate from receipt-backed observed intervals, apply Wilson lower bounds plus bounded token, latency, and tool-failure penalties, and never change live model selection",
+      "Route epochs bind runtime, connection, provider, protocol, model, endpoint/auth reference, profile prompt, tool catalog, generation settings, and budgets; stale pins fail closed after drift",
+      "Agents capability inspect, pin, unpin, export, and reset expose content-free local routing evidence while off mode remains read-only and untrusted project config cannot inject priors",
       "Team Run v3 replaces text-prefix reviewer acceptance with a strict ReviewVerdict bound to the semantic Task Contract, exact artifact SHA-256, reviewer route, and content-addressed verdict body",
       "Every required criterion must cite a supplied evidence handle; missing, duplicate, unknown, fenced, prose-wrapped, or malformed reviewer output fails closed, while deterministic failures can never be overridden by model acceptance",
       "Every executed, rejected, skipped, or failed tool result now receives a canonical content-addressed receipt without retaining command arguments, output, source, or credential text",

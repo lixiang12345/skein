@@ -179,22 +179,21 @@ skein agents setup --yes \
 Run this command outside an active TUI session; `/connections setup` displays
 the same next action without placing a secret in the session transcript.
 
-### Authentication paths
+### Primary authentication scope
 
-Skein keeps primary relay routing and delegated CLI login separate because they
-have different ownership and billing semantics:
+Primary Skein model connections support third-party relays only. Official
+account login is not a primary-connection scenario and is not represented in
+the connection schema:
 
-- Subscription users authenticate once in each installed official CLI. Codex
-  supports ChatGPT subscription login, Claude Code supports Claude.ai/Teams
-  login, and Gemini CLI supports Google account login. A Skein route with
-  `runtime: "codex"`, `"claude"`, or `"grok"` reuses that CLI's local login;
-  Skein does not read, copy, or persist its tokens.
 - Existing direct API routes remain readable for backward compatibility; they
   are not the evolution path for new primary connections.
 - Relay/gateway users define one named `connection` and reuse it across model
   routes. This matches gateways such as OpenRouter, LiteLLM, and Vercel AI
   Gateway that expose Responses, Chat Completions, and/or Anthropic Messages
   behind one relay credential.
+- Existing external delegated CLI runtimes remain an optional, separate
+  subsystem. Their locally installed client owns any login state; Skein does
+  not expose that state as a primary connection or copy its tokens.
 
 ### Primary model connection selection
 
@@ -234,27 +233,43 @@ outputs on the next request, which also works with stateless relay
 implementations. Protocol failures never trigger an automatic request through a
 different transport, avoiding duplicate inference and billing.
 
-Some relays publish two SDK base URLs for the same account. The OpenAI base
-usually includes `/v1`; the Anthropic base may be a root or provider prefix and
-expects the client to append `/v1/messages`. This is why inference `baseUrl` and
-OpenAI-style `modelsBaseUrl` are distinct. An Anthropic transport must configure
-`modelsBaseUrl` explicitly:
+Some relays publish two SDK base URLs for the same account, while others expose
+multiple protocol endpoints below one root. The OpenAI base usually includes
+`/v1`; the Anthropic base may be a root or provider prefix and expects the
+client to append `/v1/messages`. Skein therefore models protocols, not a fixed
+count of Base URLs. One named connection binds exactly one transport; two
+connections may share the same credential reference:
 
 ```json
 {
-  "provider": "compatible",
-  "protocol": "anthropic-messages",
-  "baseUrl": "https://relay.example/anthropic",
-  "modelsBaseUrl": "https://relay.example/v1",
-  "defaultModel": "anthropic/coding-model",
-  "auth": {"type": "env", "name": "TEAM_RELAY_API_KEY"}
+  "agents": {
+    "connections": {
+      "relay-openai": {
+        "provider": "compatible",
+        "protocol": "openai-responses",
+        "baseUrl": "https://relay.example/v1",
+        "defaultModel": "openai/coding-model",
+        "auth": {"type": "env", "name": "TEAM_RELAY_API_KEY"}
+      },
+      "relay-anthropic": {
+        "provider": "compatible",
+        "protocol": "anthropic-messages",
+        "baseUrl": "https://relay.example/anthropic",
+        "modelsBaseUrl": "https://relay.example/v1",
+        "defaultModel": "anthropic/coding-model",
+        "auth": {"type": "env", "name": "TEAM_RELAY_API_KEY"}
+      }
+    }
+  }
 }
 ```
 
-Official authentication references: [Codex](https://developers.openai.com/codex/auth),
-[Claude Code](https://code.claude.com/docs/en/authentication), and
-[Gemini CLI](https://geminicli.com/docs/get-started/authentication/). Unified
-gateway examples: [OpenRouter](https://openrouter.ai/docs/quickstart) and
+`modelsBaseUrl` is independent from the inference `baseUrl`. Anthropic
+transport requires it explicitly because discovery is commonly OpenAI-shaped.
+Skein never probes one protocol and silently retries another: that could run
+the same inference twice and double bill the user.
+
+Unified gateway examples: [OpenRouter](https://openrouter.ai/docs/quickstart) and
 [LiteLLM](https://docs.litellm.ai/docs/learn/gateway_quickstart).
 Transport references: [OpenAI Responses migration](https://developers.openai.com/api/docs/guides/migrate-to-responses),
 [OpenRouter Responses](https://openrouter.ai/docs/api/reference/responses/overview),
@@ -404,6 +419,60 @@ Routes loaded from repository-owned config are ignored until the project is
 trusted because a malicious endpoint could exfiltrate environment credentials
 or source context.
 
+### Capability Registry and shadow router
+
+Version `0.3.32` adds a project-local, privacy-safe shadow comparison under
+`agents.capability` without changing `resolveAgentModelRoute()` or the route
+used for a real run. The
+default mode is `shadow`; `off` retains the same inspectable report while always
+retaining the current route.
+
+```json
+{
+  "agents": {
+    "capability": {
+      "mode": "shadow",
+      "halfLifeDays": 30,
+      "minimumSamples": 5,
+      "priors": {
+        "frontend": {
+          "frontend": {"successRate": 0.65, "strength": 4},
+          "@parent": {"successRate": 0.5, "strength": 1}
+        }
+      }
+    }
+  }
+}
+```
+
+Configured priors are user-owned cold-start beliefs, not observations. A normal
+prior ref must exist in `agents.routes`; `@default` is valid only when a team
+default exists, and `@parent` is always valid. Untrusted repository config
+cannot add or modify priors.
+
+Observed aggregates accept only receipt-backed `verified` success or
+deterministic `verification_failed` completion. Agent self-report, Reviewer
+prose, `unverified`, and `no_changes` do not train the Registry. Scores use a
+Wilson 95% lower bound, exponential time decay, and bounded token, latency, and
+tool-failure penalties. Configured and observed intervals remain separately
+visible even when both contribute to conservative shadow utility.
+
+The Registry is stored at `.skein/capability-registry.json` with owner-only
+atomic writes and workspace/file leases. It persists SHA-256 identities,
+epochs, bounded counters, recent evidence hashes, and fingerprint-bound pins—
+never task text, prompts, source, model output, command text, endpoint text,
+secret values, or environment values. Model, endpoint/auth reference, profile
+prompt, tool manifest, or generation/budget changes create a new epoch; a pin
+to the old full fingerprint becomes stale instead of following silently.
+
+```bash
+skein agents capability inspect [profile] [--json]
+skein agents capability pin <profile> <route>
+skein agents capability unpin <profile>
+skein agents capability export
+skein agents capability reset --yes
+```
+
 Budget thresholds are opt-in policy, not a default task-size limit:
 
 - `observe` is the default. Skein records token, tool, and elapsed-time
@@ -464,9 +533,10 @@ activity, and reviewer decisions are the explainable artifacts.
 
 1. Add provider-native search/tool adapters so a research route can use live
    search without granting arbitrary shell/network authority.
-2. Add a local Capability Registry with configured priors, observed outcomes,
-   route epochs, uncertainty bounds, and shadow-only route recommendations.
-3. Add per-route cost accounting and user-confirmed spend controls.
+2. Add independent judge routing, correlation penalties, blind review, and
+   criterion-level human arbitration on top of the local shadow Registry.
+3. Add per-route cost accounting, replay gates, and user-confirmed spend
+   controls before any automatic route selection.
 4. Add dependency-aware parallel writer worktrees after conflict-rate and
    rollback evidence justify relaxing the single-lane gate.
 5. Score routes from project-local eval outcomes instead of relying on model

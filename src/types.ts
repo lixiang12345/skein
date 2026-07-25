@@ -99,6 +99,8 @@ export interface AgentTeamConfig {
   routes?: Record<string, AgentModelRoute>;
   /** Named API connections let many routes share one endpoint and credential reference. */
   connections?: Record<string, AgentConnectionConfig>;
+  /** Privacy-safe local capability statistics. G2 is shadow-only and never changes live routing. */
+  capability?: AgentCapabilityConfig;
   reviewerProfile?: string;
   maxReviewRounds?: number;
   cockpit?: boolean;
@@ -115,6 +117,24 @@ export interface AgentTeamConfig {
   writerReviewerProfile?: string;
   /** Hard UTF-8 byte limit for a persisted Git patch. Oversize patches are rejected. */
   maxWriterPatchBytes?: number;
+}
+
+export interface CapabilityConfiguredPrior {
+  /** User-configured cold-start success belief, separate from observed outcomes. */
+  successRate: number;
+  /** Pseudo-sample strength used only for the conservative shadow utility. */
+  strength: number;
+}
+
+export interface AgentCapabilityConfig {
+  /** Automatic routing is intentionally unavailable until later eval gates pass. */
+  mode?: 'off' | 'shadow';
+  /** Half-life for aggregate verified outcomes. */
+  halfLifeDays?: number;
+  /** Effective observed samples required before a route stops displaying uncertain. */
+  minimumSamples?: number;
+  /** task profile -> configured route reference -> cold-start prior. */
+  priors?: Record<string, Record<string, CapabilityConfiguredPrior>>;
 }
 
 export interface AgentConnectionConfig {

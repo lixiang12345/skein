@@ -12,6 +12,18 @@ export {formatReviewVerdict} from './review-verdict.js';
 export type {ReviewContract, ReviewEvidenceReceipt, ReviewVerdict} from './review-verdict.js';
 export {listConnectionModels} from './model-catalog.js';
 export type {ModelCatalogEntry} from './model-catalog.js';
+export {CapabilityRegistryStore, capabilityRegistrySchema} from './capability-registry.js';
+export type {
+  CapabilityObservationAggregate,
+  CapabilityRegistrySnapshot,
+  CapabilityRouteEpochInput,
+} from './capability-registry.js';
+export {buildCapabilityCandidates, evaluateCapabilityShadow} from './capability-router.js';
+export type {
+  CapabilityCandidateScore,
+  CapabilityRouteCandidate,
+  CapabilityShadowReport,
+} from './capability-router.js';
 export {
   buildSystemPrompt,
   buildStableSystemPrompt,

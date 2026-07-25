@@ -441,8 +441,13 @@ Implementation progress:
   gates, simulated partial-apply recovery, workspace-profile rejection, v1/v2
   Team Run compatibility, artifact/manifest tampering, Reviewer failure and
   cancellation, Task Contract drift, and deterministic preflight short-circuit.
-  Capability Registry/router shadow mode is the next evidence-routing slice;
-  parallel writers and external CLI writer mode remain deferred.
+  G2 Capability Registry/router shadow mode is complete in `0.3.32`:
+  privacy-safe route epochs, configured/observed separation, conservative
+  Wilson utility, bounded decay,
+  hard eligibility gates, fingerprint-bound pinning, and inspect/export/reset
+  controls without changing live routing. G3 independent judging and human
+  arbitration is the next evidence-routing slice; parallel writers and
+  external CLI writer mode remain deferred.
 
 ### P1: MCP capability trust (complete in 0.3.27)
 
@@ -535,8 +540,8 @@ deprecation window is complete.
 
 ## Suggested Next Conversation Opening
 
-Start with: “Implement P1-G G2 Capability Registry and Router in shadow mode on
-top of Team Run v3. Keep configured priors separate from observed outcomes,
-open a new epoch when the model, endpoint, prompt, or tool fingerprint changes,
-and do not change live route selection until deterministic replay evidence and
-uncertainty gates pass.”
+Start with: “Implement P1-G G3 Judge Independence and Human Arbitration on top
+of Team Run v3 and the shadow-only Capability Registry. Keep deterministic
+oracles authoritative, blind the Reviewer to author identity and self-report,
+escalate criterion-level conflicts, and preserve a non-interactive
+`needs_review` state without treating model review as human approval.”

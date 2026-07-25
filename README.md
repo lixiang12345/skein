@@ -102,7 +102,7 @@ To build, verify, and install a local package artifact from this checkout:
 
 ```bash
 npm run verify:package -- --output-dir artifacts/package
-npm install -g ./artifacts/package/skein-code-cli-0.3.31.tgz
+npm install -g ./artifacts/package/skein-code-cli-0.3.32.tgz
 ```
 
 To install the published package from npm:
@@ -198,6 +198,31 @@ All relay transports use the configured relay bearer credential or explicit
 metadata. Remote relays must use HTTPS in onboarding, while loopback endpoints
 may use HTTP. The first-run flow writes only endpoint/model metadata and the
 credential environment-variable name to owner-only user configuration.
+
+A relay may expose one protocol root or separate OpenAI- and Anthropic-style
+roots. Skein does not assume either shape. Model each transport as its own named
+connection and reuse the same credential environment variable when the relay
+account uses one key. Keep `modelsBaseUrl` independent when an Anthropic
+inference root still publishes its model catalog through `/v1/models`.
+
+Capability routing is local and shadow-only in this release. It fingerprints
+the exact route, endpoint/auth reference, profile prompt, and tool catalog;
+keeps configured priors separate from receipt-backed observed outcomes; and
+opens a new epoch when behavior changes. Inspect or manage it with:
+
+```bash
+skein agents capability inspect frontend
+skein agents capability pin frontend backend
+skein agents capability unpin frontend
+skein agents capability export
+skein agents capability reset --yes
+```
+
+The recommendation never changes live model selection. The project-local
+registry contains only hashes, bounded aggregates, and fingerprint-bound pins;
+it does not store task text, prompts, source, output, endpoint text, commands,
+or credential values. Repository config cannot inject capability priors unless
+the project is explicitly trusted.
 
 Configure a user relay connection, index, and start the TUI:
 
@@ -623,6 +648,7 @@ target—and the fresh-project default beginning with 0.3.0—is
 
 ```text
 .skein/
+  capability-registry.json
   config.json
   index.json
   sessions/
