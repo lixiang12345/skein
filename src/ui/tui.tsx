@@ -324,6 +324,9 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
           engine: event.packed.engine,
           hits: event.packed.hits.length,
           tokens: event.packed.estimatedTokens,
+          ...(event.packed.budgetTier ? {budgetTier: event.packed.budgetTier} : {}),
+          ...(event.packed.budgetTokens !== undefined ? {budgetTokens: event.packed.budgetTokens} : {}),
+          ...(event.packed.budgetReason ? {budgetReason: event.packed.budgetReason} : {}),
           truncated: event.packed.truncated,
           spans: event.packed.hits.slice(0, 5).map((hit) => ({
             path: relative(runner.workspace.primaryRoot, hit.path) || hit.path,
@@ -337,7 +340,11 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         setActivity({label: 'Assembling relevant context', startedAt: Date.now()});
         break;
       case 'prompt':
-        append({id: nextId(), kind: 'prompt', intent: event.intent, sections: event.sections, tokens: event.estimatedTokens});
+        append({
+          id: nextId(), kind: 'prompt', intent: event.intent, sections: event.sections,
+          tokens: event.estimatedTokens,
+          ...(event.breakdown ? {breakdown: event.breakdown} : {}),
+        });
         setActivity({label: 'Preparing the model prompt', startedAt: Date.now()});
         break;
       case 'assistant_delta':
@@ -950,7 +957,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         {label: config.agents?.enabled ? `${config.agents.maxConcurrent} concurrent` : 'disabled', detail: 'expert delegation'},
         {
           label: `${usage.inputTokens.toLocaleString()} in ${separator} ${usage.outputTokens.toLocaleString()} out`,
-          detail: `session tokens${separator}${(usage.inputTokens + usage.outputTokens).toLocaleString()} total`,
+          detail: `session tokens${separator}${(usage.inputTokens + usage.outputTokens).toLocaleString()} total${separator}${usage.source ?? 'unknown source'}`,
         },
         {
           label: `${Math.round(status.pressure * 100)}% context pressure`,

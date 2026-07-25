@@ -1,5 +1,6 @@
 import type {ModelProvider} from '../providers/provider.js';
 import type {ChatMessage, MosaicConfig, Session, ToolCall, ToolResult, WorkingMemory} from '../types.js';
+import {estimateTokens} from '../utils/tokens.js';
 
 export interface ContextStatus {
   activeTokens: number;
@@ -280,8 +281,4 @@ function toolTokens(messages: ChatMessage[]): number {
   return messages
     .filter((message) => message.role === 'tool')
     .reduce((sum, message) => sum + estimateTokens(message.content), 0);
-}
-
-function estimateTokens(value: string): number {
-  return Math.ceil(value.length / 4);
 }

@@ -1,6 +1,12 @@
 import stripAnsi from 'strip-ansi';
 import type {ToolFailureReceipt} from '../types.js';
 import type {ToolArtifactArchiveResult, ToolArtifactStore} from '../session/tool-artifacts.js';
+import {
+  estimateTokens,
+  estimatedTokenCost,
+  sliceEndByTokens,
+  sliceStartByTokens,
+} from '../utils/tokens.js';
 
 const MIN_TOOL_OUTPUT_TOKENS = 1_024;
 const MAX_TOOL_OUTPUT_TOKENS = 8_192;
@@ -108,11 +114,7 @@ export function dynamicToolOutputBudget(
 }
 
 export function estimateToolOutputTokens(value: string): number {
-  let tokens = 0;
-  for (const character of value) {
-    tokens += tokenCost(character);
-  }
-  return Math.max(1, Math.ceil(tokens));
+  return Math.max(1, estimateTokens(value));
 }
 
 function formatReceipt(
@@ -189,37 +191,6 @@ function sanitizeToolOutput(value: string): {text: string; sanitized: boolean} {
   return {text, sanitized: text !== value};
 }
 
-function sliceStartByTokens(value: string, budget: number): string {
-  let used = 0;
-  let end = 0;
-  for (const character of value) {
-    const cost = tokenCost(character);
-    if (used + cost > budget) break;
-    used += cost;
-    end += character.length;
-  }
-  return value.slice(0, end);
-}
-
-function sliceEndByTokens(value: string, budget: number): string {
-  let used = 0;
-  let start = value.length;
-  while (start > 0) {
-    let next = start - 1;
-    const code = value.charCodeAt(next);
-    if (code >= 0xdc00 && code <= 0xdfff && next > 0) {
-      const previous = value.charCodeAt(next - 1);
-      if (previous >= 0xd800 && previous <= 0xdbff) next -= 1;
-    }
-    const character = value.slice(next, start);
-    const cost = tokenCost(character);
-    if (used + cost > budget) break;
-    used += cost;
-    start = next;
-  }
-  return value.slice(start);
-}
-
 function boundedPreview(value: string, budget: number): string {
   if (budget <= 0) return '';
   if (estimateToolOutputTokens(value) <= budget) return value;
@@ -243,20 +214,6 @@ function boundedPreview(value: string, budget: number): string {
   return best || sliceStartByTokens(value, budget);
 }
 
-function tokenCost(character: string): number {
-  const code = character.codePointAt(0) ?? 0;
-  if (isCjkCharacter(character) || code > 0x7f) return 2;
-  return /[A-Z0-9\p{P}\p{S}]/u.test(character) ? 0.5 : 0.25;
-}
-
-function isCjkCharacter(character: string): boolean {
-  const code = character.codePointAt(0) ?? 0;
-  return (code >= 0x2e80 && code <= 0x9fff) ||
-    (code >= 0xac00 && code <= 0xd7af) ||
-    (code >= 0xf900 && code <= 0xfaff) ||
-    (code >= 0x20000 && code <= 0x2fa1f);
-}
-
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value));
 }
@@ -265,5 +222,5 @@ function boundedInlineByTokens(value: string, maxTokens: number): string {
   const normalized = value.replace(/[\r\n\t]+/gu, ' ').trim();
   if (estimateToolOutputTokens(normalized) <= maxTokens) return normalized;
   const suffix = '…';
-  return `${sliceStartByTokens(normalized, Math.max(0, maxTokens - tokenCost(suffix)))}${suffix}`;
+  return `${sliceStartByTokens(normalized, Math.max(0, maxTokens - estimatedTokenCost(suffix)))}${suffix}`;
 }

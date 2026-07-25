@@ -229,7 +229,7 @@ program
     }
     process.stdout.write(`${packed.text}\n\n`);
     process.stderr.write(chalk.dim(
-      `${cliGlyphs.meta} ${packed.engine} ${cliGlyphs.separator} ${packed.hits.length} spans ${cliGlyphs.separator} ~${packed.estimatedTokens} tokens${packed.truncated ? ` ${cliGlyphs.separator} capped` : ''}${packed.degradation ? ` ${cliGlyphs.separator} ${packed.degradation.summary}` : ''}\n`,
+      `${cliGlyphs.meta} ${packed.engine} ${cliGlyphs.separator} ${packed.hits.length} spans ${cliGlyphs.separator} ~${packed.estimatedTokens} estimated tokens${packed.budgetTokens === undefined ? '' : ` ${cliGlyphs.separator} ${packed.budgetTier ?? 'adaptive'} ${packed.budgetTokens} budget`}${packed.truncated ? ` ${cliGlyphs.separator} capped` : ''}${packed.degradation ? ` ${cliGlyphs.separator} ${packed.degradation.summary}` : ''}\n`,
     ));
   });
 

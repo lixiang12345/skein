@@ -1,10 +1,10 @@
 import type {AgentEvent, MosaicConfig, Session, ToolCategory, ToolDefinition} from '../types.js';
-import type {ContextHit, PackedContext} from '../types.js';
+import type {ContextHit, ContextPackOptions, PackedContext} from '../types.js';
 import type {ToolArtifactStore} from '../session/tool-artifacts.js';
 import type {WorkspaceAccess} from './workspace.js';
 
 export interface ContextProvider {
-  pack(query: string): Promise<PackedContext>;
+  pack(query: string, options?: ContextPackOptions): Promise<PackedContext>;
   search(query: string, topK?: number): Promise<ContextHit[]>;
 }
 

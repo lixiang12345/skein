@@ -1,6 +1,7 @@
 import {readFile, stat} from 'node:fs/promises';
 import type {ContextSource, Session} from '../types.js';
 import {WorkspaceAccess} from '../tools/workspace.js';
+import {estimateTokens} from '../utils/tokens.js';
 
 /** Per-source read cap so one pinned file cannot dominate the window. */
 export const MAX_SOURCE_CHARS = 60_000;
@@ -14,10 +15,6 @@ export interface ResolvedSourceContent {
   content: string;
   tokens: number;
   truncated: boolean;
-}
-
-function estimateTokens(value: string): number {
-  return Math.ceil(value.length / 4);
 }
 
 function sources(session: Session): ContextSource[] {

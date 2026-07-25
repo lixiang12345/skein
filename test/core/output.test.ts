@@ -91,6 +91,51 @@ describe('HeadlessReporter', () => {
     expect(JSON.stringify(output.context)).not.toContain('omitted from summary');
   });
 
+  it('retains budget and usage provenance in JSON without prompt content', () => {
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const reporter = new HeadlessReporter({format: 'stream-json'});
+    reporter.onEvent({
+      type: 'context',
+      packed: {
+        text: 'private source bytes', hits: [], estimatedTokens: 0, engine: 'local', truncated: false,
+        budgetTier: 'focused', budgetTokens: 2_000, baseBudgetTokens: 2_000,
+        incrementalBudgetTokens: 0, budgetReason: 'explicit path', candidateHits: 0,
+        selectedHits: 0, duplicateHits: 0, incrementalEvidenceTokens: 0,
+      },
+    });
+    reporter.onEvent({
+      type: 'prompt', intent: 'explain', sections: ['intent:explain'], estimatedTokens: 120,
+      breakdown: {
+        stableTokens: 40, dynamicTokens: 20, conversationTokens: 10,
+        toolResultTokens: 0, retrievedTokens: 0, toolSchemaTokens: 50, estimatedInputTokens: 120,
+        outputAllowanceTokens: 800,
+      },
+    });
+    reporter.onEvent({
+      type: 'usage', inputTokens: 120, outputTokens: 20, source: 'mixed',
+      inputSource: 'actual', outputSource: 'estimated',
+      actual: {inputTokens: 120, outputTokens: 0},
+      estimated: {inputTokens: 0, outputTokens: 20},
+    });
+
+    const lines = stdout.mock.calls.map(([chunk]) => JSON.parse(String(chunk)) as Record<string, unknown>);
+    expect(lines).toEqual([
+      expect.objectContaining({type: 'context', packed: expect.objectContaining({budgetTier: 'focused', budgetTokens: 2_000})}),
+      expect.objectContaining({type: 'prompt', breakdown: expect.objectContaining({toolSchemaTokens: 50, outputAllowanceTokens: 800})}),
+      expect.objectContaining({type: 'usage', source: 'mixed', outputSource: 'estimated'}),
+    ]);
+    expect(JSON.stringify(lines[1])).not.toContain('private source bytes');
+  });
+
+  it('labels legacy session totals as unknown instead of actual', () => {
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const reporter = new HeadlessReporter({format: 'text', color: false});
+    reporter.finish(session);
+    expect(stderr.mock.calls.map(([chunk]) => String(chunk)).join('')).toContain('15 tokens (unknown source)');
+    expect(stdout).not.toHaveBeenCalled();
+  });
+
   it('reports an unverified run as structured non-success', () => {
     const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const reporter = new HeadlessReporter({format: 'json'});

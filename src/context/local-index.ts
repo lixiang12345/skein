@@ -8,6 +8,7 @@ import {WorkspaceAccess} from '../tools/workspace.js';
 import {atomicWrite} from '../tools/write.js';
 import {assertNoSymlinkPath, ensureWorkspaceStorageDirectory} from '../utils/storage.js';
 import {workspaceAliasPath} from '../utils/path.js';
+import {estimateTokens, sliceStartByTokens} from '../utils/tokens.js';
 import {
   assertActiveProjectNamespacePath,
   projectNamespacePaths,
@@ -577,17 +578,31 @@ export function packContextHits(
   const uniquePaths = new Set(hits.map((hit) => hit.path)).size;
   let estimatedTokens = 0;
   let truncated = false;
+  let duplicateHits = 0;
+  let perFileLimitHits = 0;
   for (const hit of hits) {
     const count = perFile.get(hit.path) ?? 0;
-    if (uniquePaths > 1 && count >= 2) continue;
-    if (selected.some((candidate) => hasSubstantialOverlap(candidate, hit))) continue;
+    if (uniquePaths > 1 && count >= 2) {
+      perFileLimitHits += 1;
+      continue;
+    }
+    if (selected.some((candidate) => hasSubstantialOverlap(candidate, hit))) {
+      duplicateHits += 1;
+      continue;
+    }
     const tokens = estimateTokens(hit.content);
     if (estimatedTokens + tokens > maxTokens) {
-      const remainingChars = Math.max(0, (maxTokens - estimatedTokens) * 4);
-      if (remainingChars >= 32) {
-        selected.push({...hit, content: hit.content.slice(0, remainingChars)});
+      const remainingTokens = Math.max(0, maxTokens - estimatedTokens);
+      const content = sliceStartByTokens(hit.content, remainingTokens);
+      if (content.length >= 32) {
+        const returnedLines = Math.max(1, content.split('\n').length);
+        selected.push({
+          ...hit,
+          content,
+          endLine: Math.min(hit.endLine, hit.startLine + returnedLines - 1),
+        });
         perFile.set(hit.path, count + 1);
-        estimatedTokens = maxTokens;
+        estimatedTokens += estimateTokens(content);
       }
       truncated = true;
       break;
@@ -601,7 +616,16 @@ export function packContextHits(
     const symbol = hit.symbol ? ` symbol="${escapeAttribute(hit.symbol)}"` : '';
     return `<code path="${escapeAttribute(shownPath)}" lines="${hit.startLine}-${hit.endLine}" score="${hit.score.toFixed(3)}"${symbol}>\n${hit.content}\n</code>`;
   }).join('\n\n');
-  return {text, hits: selected, estimatedTokens, engine, truncated};
+  return {
+    text,
+    hits: selected,
+    estimatedTokens,
+    engine,
+    truncated,
+    candidateHits: hits.length,
+    selectedHits: selected.length,
+    duplicateHits: duplicateHits + perFileLimitHits,
+  };
 }
 
 function cloneHits(hits: ContextHit[]): ContextHit[] {
@@ -621,10 +645,6 @@ function createGeneration(files: IndexedFile[]): string {
       .join('\n'), 'utf8')
     .digest('hex')
     .slice(0, 16);
-}
-
-function estimateTokens(content: string): number {
-  return Math.ceil(content.length / 4);
 }
 
 function hasSubstantialOverlap(left: ContextHit, right: ContextHit): boolean {

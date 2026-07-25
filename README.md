@@ -47,6 +47,10 @@ inspectable index for code retrieval and no retrieval service dependency.
   model window. Skein keeps a token-budgeted head/tail receipt and, when the
   producer captured the complete result, retains a redacted session-scoped
   artifact for bounded readback.
+- **Measurable token economy:** every model request records a privacy-safe
+  receipt for stable, dynamic, history, retrieval, tool-result, and tool-schema
+  estimates, alongside actual provider usage when available. Receipts retain
+  only counts and runtime decisions, never prompt or source content.
 - **Reversible work:** Skein snapshots affected files before mutation without
   touching your Git history.
 - **Resumable by default:** conversations, tasks, usage, and changed files live
@@ -82,7 +86,7 @@ To build, verify, and install a local package artifact from this checkout:
 
 ```bash
 npm run verify:package -- --output-dir artifacts/package
-npm install -g ./artifacts/package/skein-code-cli-0.3.11.tgz
+npm install -g ./artifacts/package/skein-code-cli-0.3.12.tgz
 ```
 
 To install the published package from npm:
@@ -403,6 +407,12 @@ packed into a prompt, Skein rechecks the current file and rejects entries that
 are stale, moved, symlinked, binary, or outside the workspace. Retrieval is
 evidence only: the model must still confirm factual claims with read or other
 workspace tools.
+
+Retrieval budgets are adaptive and treat `context.maxTokens` as a ceiling:
+focused requests start at 2k estimated tokens, ordinary implementation/debug
+work at 4k, cross-module work at 8k, and only explicit exhaustive repository
+work can use 12k. The context receipt reports the chosen tier, reason, candidate
+and selected hit counts, overlap drops, and evidence above the focused base.
 
 To measure a local index change, run the reproducible benchmark with an explicit
 query-to-relevant-file manifest:

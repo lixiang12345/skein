@@ -2,6 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {ContextEngine} from '../context/context-engine.js';
 import {activeMessages, clearOldToolResults, ContextManager} from '../context/manager.js';
 import {resolveMentions} from '../context/mentions.js';
+import {emptyPackedContext, selectContextBudget} from '../context/budget.js';
 import {createProvider, type ModelProvider} from '../providers/index.js';
 import {CheckpointStore} from '../checkpoint/store.js';
 import {HookRunner} from '../hooks/runner.js';
@@ -27,16 +28,20 @@ import type {
   MosaicConfig,
   ModelResponse,
   PackedContext,
+  PromptTokenBreakdown,
   RunOptions,
   Session,
   SessionAuditEvent,
+  TokenLedgerEntry,
   ToolCall,
   ToolCategory,
   ToolResult,
   ToolFailureReceipt,
   ToolArtifactReference,
   TaskContract,
+  TokenMeasurementSource,
 } from '../types.js';
+import {estimateTokens} from '../utils/tokens.js';
 import {
   buildRetrievedContext,
   buildSessionStatePrompt,
@@ -215,22 +220,31 @@ export class AgentRunner {
         this.session.title = titleFromInput(request);
       }
       this.contextManager.startTurn(this.session, request);
-      this.session.messages.push(message('user', request));
+      const userMessage = message('user', request);
+      this.session.messages.push(userMessage);
       await this.persist();
 
       // Greetings, acknowledgements, and connectivity checks carry no task.
       // Suppress the retrieval + prompt telemetry so a plain "hi" stays quiet
       // instead of dumping a dense context panel and degradation warning.
       const trivialTurn = isTrivialTurn(request);
-      const packed = await this.packContext(request);
+      const turnDirective = buildTurnDirective(request, {
+        agents: Boolean(this.config.agents?.enabled),
+      });
+      const packed = trivialTurn
+        ? emptyPackedContext(selectContextBudget(request, this.config, {
+          intent: turnDirective.intent,
+          trivial: true,
+        }))
+        : await this.packContext(request, {intent: turnDirective.intent});
       if (!trivialTurn) await emit({type: 'context', packed});
       const mentions = await this.packMentions(request);
-      const retrievedContext = buildRetrievedContext(
-        packed,
-        mentions,
-        this.workspace.primaryRoot,
-        this.workspace.roots,
-      );
+      const retrievedContext = trivialTurn && !mentions.length ? '' : buildRetrievedContext(
+          packed,
+          mentions,
+          this.workspace.primaryRoot,
+          this.workspace.roots,
+        );
       const pinnedContext = formatPinnedContext(
         await resolvePinnedContent(this.session, this.workspace),
       );
@@ -253,9 +267,6 @@ export class AgentRunner {
           scope: augmentation.memoryScope ?? 'session',
         });
       }
-      const turnDirective = buildTurnDirective(request, {
-        agents: Boolean(this.config.agents?.enabled),
-      });
       const contractEnabled = shouldUseTaskContract(
         request,
         turnDirective.intent,
@@ -279,21 +290,6 @@ export class AgentRunner {
         ...(augmentation.skills?.length ? [`skills:${augmentation.skills.length}`] : []),
         ...(augmentation.memoryCount ? [`memory:${augmentation.memoryCount}`] : []),
       ];
-      if (!trivialTurn) await emit({
-        type: 'prompt',
-        intent: turnDirective.intent,
-        sections: promptSections,
-        estimatedTokens: Math.ceil([
-          turnDirective.text,
-          buildSessionStatePrompt(this.session),
-          this.contextManager.buildShortTermPrompt(this.session),
-          options.turnInstructions ?? '',
-          augmentation.text,
-          retrievedContext,
-          pinnedContext,
-          workspaceRules,
-        ].join('\n').length / 4),
-      });
       let verificationAttempted = false;
       const maxTurns = options.maxTurns ?? this.config.agent.maxTurns;
 
@@ -311,17 +307,17 @@ export class AgentRunner {
         }
         this.applySteering();
         await emit({type: 'thinking', turn});
-        const messages = packConversation(
-          stableSystemPrompt,
-          [
+        const dynamicPrompt = [
             buildSessionStatePrompt(this.session),
             turnDirective.text,
             this.contextManager.buildShortTermPrompt(this.session),
             pinnedContext,
             options.turnInstructions ?? '',
             augmentation.text,
-          ]
-            .filter(Boolean).join('\n\n'),
+          ].filter(Boolean).join('\n\n');
+        const messages = packConversation(
+          stableSystemPrompt,
+          dynamicPrompt,
           retrievedContext,
           activeMessages(this.session),
           contextBudget,
@@ -342,6 +338,23 @@ export class AgentRunner {
           this.config.model.maxTokens ?? 8_192,
           availableTokens - estimatedInputTokens,
         ));
+        const breakdown = promptTokenBreakdown(
+          messages,
+          stableSystemPrompt,
+          dynamicPrompt,
+          retrievedContext,
+          visibleTools,
+          maxOutputTokens,
+        );
+        if (!trivialTurn) {
+          await emit({
+            type: 'prompt',
+            intent: turnDirective.intent,
+            sections: promptSections,
+            estimatedTokens: breakdown.estimatedInputTokens,
+            breakdown,
+          });
+        }
         const assistantId = randomUUID();
         const response = await this.completeModel(
           messages,
@@ -357,17 +370,49 @@ export class AgentRunner {
         assistantMessage.id = assistantId;
         this.session.messages.push(assistantMessage);
         if (response.content) await emit({type: 'assistant', id: assistantId, content: response.content});
-        const inputTokens = response.usage?.inputTokens ?? estimatedInputTokens;
-        const outputTokens = response.usage?.outputTokens ?? estimateResponseTokens(response);
-        this.session.usage.inputTokens += inputTokens;
-        this.session.usage.outputTokens += outputTokens;
-        if (inputTokens || outputTokens) {
-          await emit({
-            type: 'usage',
-            inputTokens: this.session.usage.inputTokens,
-            outputTokens: this.session.usage.outputTokens,
-          });
-        }
+        const turnUsage = recordTokenUsage(
+          this.session,
+          response.usage,
+          estimatedInputTokens,
+          estimateResponseTokens(response),
+        );
+        const {inputTokens, outputTokens} = turnUsage;
+        const actualInputTokens = validTokenCount(response.usage?.inputTokens);
+        const actualOutputTokens = validTokenCount(response.usage?.outputTokens);
+        const receipt = recordTokenLedger(this.session, {
+          requestId: userMessage.id,
+          turn,
+          recordedAt: new Date().toISOString(),
+          estimated: {
+            ...breakdown,
+            outputTokens: estimateResponseTokens(response),
+          },
+          actual: {
+            ...(actualInputTokens === undefined ? {} : {inputTokens: actualInputTokens}),
+            ...(actualOutputTokens === undefined ? {} : {outputTokens: actualOutputTokens}),
+          },
+          inputSource: actualInputTokens === undefined ? 'estimated' : 'actual',
+          outputSource: actualOutputTokens === undefined ? 'estimated' : 'actual',
+          tools: {loaded: visibleTools.map((tool) => tool.name), deferredCount: 0},
+          retrieval: tokenRetrievalReceipt(packed),
+        });
+        await emit({
+          type: 'usage',
+          inputTokens: this.session.usage.inputTokens,
+          outputTokens: this.session.usage.outputTokens,
+          source: this.session.usage.source ?? 'unknown',
+          inputSource: this.session.usage.inputSource ?? 'unknown',
+          outputSource: this.session.usage.outputSource ?? 'unknown',
+          actual: {
+            inputTokens: this.session.usage.actualInputTokens ?? 0,
+            outputTokens: this.session.usage.actualOutputTokens ?? 0,
+          },
+          estimated: {
+            inputTokens: this.session.usage.estimatedInputTokens ?? 0,
+            outputTokens: this.session.usage.estimatedOutputTokens ?? 0,
+          },
+          receipt,
+        });
         await this.persist();
 
         if (this.session.usage.inputTokens + this.session.usage.outputTokens >=
@@ -812,8 +857,8 @@ export class AgentRunner {
     }, signal);
   }
 
-  private async packContext(input: string): Promise<PackedContext> {
-    return this.contextEngine.pack(input);
+  private async packContext(input: string, options: Parameters<ContextProvider['pack']>[1]): Promise<PackedContext> {
+    return this.contextEngine.pack(input, options);
   }
 
   private async packMentions(input: string) {
@@ -1013,10 +1058,6 @@ function groupMessages(messages: ChatMessage[]): ChatMessage[][] {
   return groups;
 }
 
-function estimateTokens(input: string): number {
-  return Math.ceil(input.length / 4);
-}
-
 function estimateMessages(messages: ChatMessage[]): number {
   return messages.reduce((total, item) => total + estimateTokens(item.content) +
     estimateTokens(JSON.stringify(item.toolCalls ?? [])), 0);
@@ -1028,6 +1069,143 @@ function estimateToolDefinitions(tools: {name: string; description: string; inpu
 
 function estimateResponseTokens(response: {content: string; toolCalls: ToolCall[]}): number {
   return estimateTokens(response.content) + estimateTokens(JSON.stringify(response.toolCalls));
+}
+
+function promptTokenBreakdown(
+  messages: ChatMessage[],
+  stablePrompt: string,
+  dynamicPrompt: string,
+  retrievedContext: string,
+  tools: {name: string; description: string; inputSchema: Record<string, unknown>}[],
+  outputAllowanceTokens: number,
+): PromptTokenBreakdown {
+  const stableTokens = estimateTokens(stablePrompt);
+  const dynamicTokens = estimateTokens(dynamicPrompt);
+  const retrievedTokens = estimateTokens(retrievedContext);
+  const messageTokens = estimateMessages(messages);
+  const toolSchemaTokens = estimateToolDefinitions(tools);
+  const toolResultTokens = messages
+    .filter((message) => message.role === 'tool')
+    .reduce((total, message) => total + estimateTokens(message.content), 0);
+  return {
+    stableTokens,
+    dynamicTokens,
+    conversationTokens: Math.max(0, messageTokens - stableTokens - dynamicTokens - retrievedTokens - toolResultTokens),
+    toolResultTokens,
+    retrievedTokens,
+    toolSchemaTokens,
+    estimatedInputTokens: messageTokens + toolSchemaTokens,
+    outputAllowanceTokens,
+  };
+}
+
+function tokenRetrievalReceipt(packed: PackedContext): TokenLedgerEntry['retrieval'] {
+  const discarded: TokenLedgerEntry['retrieval']['discarded'] = [];
+  if ((packed.duplicateHits ?? 0) > 0) {
+    discarded.push({reason: 'overlapping-span', count: packed.duplicateHits ?? 0});
+  }
+  if (packed.truncated) discarded.push({reason: 'budget-cap', count: 1});
+  return {
+    engine: packed.engine,
+    ...(packed.budgetTier ? {budgetTier: packed.budgetTier} : {}),
+    ...(packed.budgetTokens === undefined ? {} : {budgetTokens: packed.budgetTokens}),
+    ...(packed.candidateHits === undefined ? {} : {candidateHits: packed.candidateHits}),
+    ...(packed.selectedHits === undefined ? {} : {selectedHits: packed.selectedHits}),
+    ...(packed.duplicateHits === undefined ? {} : {duplicateHits: packed.duplicateHits}),
+    ...(packed.incrementalEvidenceTokens === undefined
+      ? {} : {incrementalEvidenceTokens: packed.incrementalEvidenceTokens}),
+    discarded,
+  };
+}
+
+function recordTokenLedger(session: Session, entry: TokenLedgerEntry): TokenLedgerEntry {
+  const ledger = session.tokenLedger ?? (session.tokenLedger = []);
+  ledger.push(entry);
+  if (ledger.length > 256) ledger.splice(0, ledger.length - 256);
+  return entry;
+}
+
+function recordTokenUsage(
+  session: Session,
+  providerUsage: ModelResponse['usage'],
+  estimatedInputTokens: number,
+  estimatedOutputTokens: number,
+): {inputTokens: number; outputTokens: number} {
+  const inputActual = validTokenCount(providerUsage?.inputTokens);
+  const outputActual = validTokenCount(providerUsage?.outputTokens);
+  const priorInputSource = existingMeasurementSource(session, 'input');
+  const priorOutputSource = existingMeasurementSource(session, 'output');
+  const inputTokens = inputActual ?? estimatedInputTokens;
+  const outputTokens = outputActual ?? estimatedOutputTokens;
+  session.usage.inputTokens += inputTokens;
+  session.usage.outputTokens += outputTokens;
+  if (inputActual !== undefined) {
+    session.usage.actualInputTokens = (session.usage.actualInputTokens ?? 0) + inputActual;
+  } else {
+    session.usage.estimatedInputTokens = (session.usage.estimatedInputTokens ?? 0) + inputTokens;
+  }
+  if (outputActual !== undefined) {
+    session.usage.actualOutputTokens = (session.usage.actualOutputTokens ?? 0) + outputActual;
+  } else {
+    session.usage.estimatedOutputTokens = (session.usage.estimatedOutputTokens ?? 0) + outputTokens;
+  }
+  session.usage.inputSource = mergeMeasurementSource(
+    priorInputSource,
+    inputActual === undefined ? 'estimated' : 'actual',
+    session.usage.inputTokens,
+  );
+  session.usage.outputSource = mergeMeasurementSource(
+    priorOutputSource,
+    outputActual === undefined ? 'estimated' : 'actual',
+    session.usage.outputTokens,
+  );
+  session.usage.source = combineMeasurementSources(
+    session.usage.inputSource,
+    session.usage.outputSource,
+    session.usage.inputTokens,
+    session.usage.outputTokens,
+  );
+  return {inputTokens, outputTokens};
+}
+
+function validTokenCount(value: number | undefined): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : undefined;
+}
+
+function existingMeasurementSource(
+  session: Session,
+  channel: 'input' | 'output',
+): TokenMeasurementSource | undefined {
+  const source = channel === 'input' ? session.usage.inputSource : session.usage.outputSource;
+  if (source) return source;
+  const total = channel === 'input' ? session.usage.inputTokens : session.usage.outputTokens;
+  return total > 0 ? 'unknown' : undefined;
+}
+
+function mergeMeasurementSource(
+  previous: TokenMeasurementSource | undefined,
+  current: 'actual' | 'estimated',
+  total: number,
+): TokenMeasurementSource {
+  if (total === 0 && !previous) return current;
+  if (!previous) return current;
+  return previous === current ? current : 'mixed';
+}
+
+function combineMeasurementSources(
+  input: TokenMeasurementSource,
+  output: TokenMeasurementSource,
+  inputTokens: number,
+  outputTokens: number,
+): TokenMeasurementSource {
+  const active = [
+    ...(inputTokens > 0 ? [input] : []),
+    ...(outputTokens > 0 ? [output] : []),
+  ];
+  if (!active.length) return 'unknown';
+  return active.every((source) => source === active[0]) ? (active[0] ?? 'unknown') : 'mixed';
 }
 
 function uniqueCategories(categories: ToolCategory[]): ToolCategory[] {

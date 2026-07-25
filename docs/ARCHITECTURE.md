@@ -34,8 +34,8 @@
 ## Agent turn
 
 1. Resolve `@path` mentions inside configured workspace roots.
-2. Ask the local context engine for task-relevant spans under the configured
-   token budget.
+2. Classify the task evidence surface and ask the local context engine for
+   task-relevant spans under an adaptive budget capped by configuration.
 3. Combine product rules, project rules, retrieved spans, mentions, current plan,
    and conversation history.
 4. Call the model with the tools allowed by the current mode.
@@ -43,8 +43,10 @@
 6. Create a checkpoint before the first mutation in a tool batch.
 7. Execute tools, emit events, and append their grounded results to the model
    conversation.
-8. Continue until the model returns a final response or the turn limit is hit.
-9. Run configured verification commands after changes. The completion gate accepts
+8. Record a bounded, content-free token receipt for the model request and
+   persist actual provider counters separately from local estimates.
+9. Continue until the model returns a final response or the turn limit is hit.
+10. Run configured verification commands after changes. The completion gate accepts
    only current successful test, typecheck, lint, build, check, or `git diff
    --check` evidence recorded after the last mutation. An early final response
    receives one bounded recovery turn; the runtime persists `verified`,
@@ -115,6 +117,22 @@ At the start of a run, expired files are pruned and persisted session receipts
 are reconciled against storage before the readback tool can be exposed. Deleting
 a session removes its artifact directory. Session JSON and JSONL events carry
 only receipts and bounded previews, never artifact contents.
+
+## Token ledger and adaptive retrieval
+
+Each model request appends a maximum-256-entry token ledger to its session. A
+receipt contains only a request ID, turn, timestamp, partition counts, actual
+provider counters when present, measurement source, loaded tool names, and
+retrieval selection metadata. It never contains prompt text, workspace rules,
+source snippets, tool schemas, arguments, results, or credentials. Legacy
+sessions without provenance remain readable and are labelled `unknown` rather
+than being reported as actual usage.
+
+The local context ceiling is allocated by task shape: 2k for focused evidence,
+4k for ordinary work, 8k for cross-module or repository-wide work, and 12k only
+for explicitly exhaustive multi-part work. Each receipt reports its reason and
+the number of candidate, selected, overlapping, and budget-capped spans. These
+are estimated provider-neutral planning values, not billing claims.
 
 ## Local context selection
 

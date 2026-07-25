@@ -1,5 +1,6 @@
-import type {ContextDegradation, ContextHit, MosaicConfig, PackedContext} from '../types.js';
+import type {ContextDegradation, ContextHit, ContextPackOptions, MosaicConfig, PackedContext} from '../types.js';
 import {workspaceAliasPath} from '../utils/path.js';
+import {emptyPackedContext, selectContextBudget} from './budget.js';
 import {
   LocalContextIndex,
   type IndexPreparationResult,
@@ -29,15 +30,28 @@ export class ContextEngine {
     this.local = new LocalContextIndex(config.workspaceRoots);
   }
 
-  async pack(query: string): Promise<PackedContext> {
+  async pack(query: string, options: ContextPackOptions = {}): Promise<PackedContext> {
+    const decision = selectContextBudget(query, this.config, options);
+    if (decision.budgetTokens === 0 || decision.topK === 0) {
+      this.degradation = undefined;
+      return emptyPackedContext(decision);
+    }
     try {
       const packed = await this.local.pack(
         query,
-        this.config.context.topK,
-        this.config.context.maxTokens,
+        decision.topK,
+        decision.budgetTokens,
       );
       this.degradation = undefined;
-      return packed;
+      return {
+        ...packed,
+        budgetTier: decision.tier,
+        budgetTokens: decision.budgetTokens,
+        baseBudgetTokens: decision.baseBudgetTokens,
+        incrementalBudgetTokens: decision.incrementalBudgetTokens,
+        budgetReason: decision.reason,
+        incrementalEvidenceTokens: Math.max(0, packed.estimatedTokens - decision.baseBudgetTokens),
+      };
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       this.degradation = {
@@ -47,11 +61,7 @@ export class ContextEngine {
       };
       const degradation = this.lastDegradation();
       return {
-        text: '',
-        hits: [],
-        estimatedTokens: 0,
-        engine: 'local',
-        truncated: false,
+        ...emptyPackedContext(decision),
         ...(degradation ? {degradation} : {}),
       };
     }

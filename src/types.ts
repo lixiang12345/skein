@@ -184,6 +184,53 @@ export interface ModelResponse {
   stopReason?: string;
 }
 
+export type TokenMeasurementSource = 'actual' | 'estimated' | 'mixed' | 'unknown';
+
+export interface SessionTokenUsage {
+  /** Backward-compatible total used for session caps. May combine actual and estimated values. */
+  inputTokens: number;
+  /** Backward-compatible total used for session caps. May combine actual and estimated values. */
+  outputTokens: number;
+  source?: TokenMeasurementSource;
+  inputSource?: TokenMeasurementSource;
+  outputSource?: TokenMeasurementSource;
+  actualInputTokens?: number;
+  actualOutputTokens?: number;
+  estimatedInputTokens?: number;
+  estimatedOutputTokens?: number;
+}
+
+/**
+ * Privacy-safe accounting for one model request. Content, prompts, schemas,
+ * tool arguments, and tool results never belong in this receipt.
+ */
+export interface TokenLedgerEntry {
+  requestId: string;
+  turn: number;
+  recordedAt: string;
+  estimated: PromptTokenBreakdown & {outputTokens: number};
+  actual: {
+    inputTokens?: number;
+    outputTokens?: number;
+  };
+  inputSource: 'actual' | 'estimated';
+  outputSource: 'actual' | 'estimated';
+  tools: {
+    loaded: string[];
+    deferredCount: number;
+  };
+  retrieval: {
+    engine: string;
+    budgetTier?: ContextBudgetTier;
+    budgetTokens?: number;
+    candidateHits?: number;
+    selectedHits?: number;
+    duplicateHits?: number;
+    incrementalEvidenceTokens?: number;
+    discarded: Array<{reason: 'overlapping-span' | 'budget-cap'; count: number}>;
+  };
+}
+
 export interface ToolDefinition {
   name: string;
   description: string;
@@ -201,13 +248,45 @@ export interface ContextHit {
   symbol?: string;
 }
 
+export type ContextBudgetTier = 'none' | 'focused' | 'standard' | 'broad' | 'maximum';
+
+export interface ContextPackOptions {
+  intent?: 'explain' | 'review' | 'debug' | 'refactor' | 'test' | 'implement';
+  trivial?: boolean;
+  /** Optional caller ceiling. The adaptive policy may select less. */
+  maxTokens?: number;
+  /** Optional caller result ceiling. The adaptive policy may select less. */
+  topK?: number;
+}
+
 export interface PackedContext {
   text: string;
   hits: ContextHit[];
   estimatedTokens: number;
   engine: string;
   truncated: boolean;
+  budgetTier?: ContextBudgetTier;
+  budgetTokens?: number;
+  baseBudgetTokens?: number;
+  incrementalBudgetTokens?: number;
+  budgetReason?: string;
+  candidateHits?: number;
+  selectedHits?: number;
+  duplicateHits?: number;
+  /** Selected evidence above the focused 2k base, not a model-quality claim. */
+  incrementalEvidenceTokens?: number;
   degradation?: ContextDegradation;
+}
+
+export interface PromptTokenBreakdown {
+  stableTokens: number;
+  dynamicTokens: number;
+  conversationTokens: number;
+  toolResultTokens: number;
+  retrievedTokens: number;
+  toolSchemaTokens: number;
+  estimatedInputTokens: number;
+  outputAllowanceTokens: number;
 }
 
 export interface ContextDegradation {
@@ -401,16 +480,15 @@ export interface Session {
   toolArtifacts?: ToolArtifactReference[];
   taskContract?: TaskContract;
   lastRun?: SessionRunRecord;
-  usage: {
-    inputTokens: number;
-    outputTokens: number;
-  };
+  /** Recent privacy-safe request receipts; no prompt or source text is retained. */
+  tokenLedger?: TokenLedgerEntry[];
+  usage: SessionTokenUsage;
 }
 
 export type AgentEvent =
   | {type: 'thinking'; turn: number}
   | {type: 'context'; packed: PackedContext}
-  | {type: 'prompt'; intent: string; sections: string[]; estimatedTokens: number}
+  | {type: 'prompt'; intent: string; sections: string[]; estimatedTokens: number; breakdown?: PromptTokenBreakdown}
   | {type: 'assistant_delta'; id: string; content: string}
   | {type: 'assistant'; content: string; id?: string}
   | {type: 'tool_start'; call: ToolCall; category: ToolCategory}
@@ -431,7 +509,7 @@ export type AgentEvent =
   | {type: 'writer_lane'; id: string; status: WriterLaneStatus; detail: string; files?: string[]; checkpointId?: string}
   | {type: 'workflow'; name: string; step: string; status: TaskStatus}
   | {type: 'context_compacted'; omittedMessages: number; summaryTokens: number}
-  | {type: 'usage'; inputTokens: number; outputTokens: number}
+  | {type: 'usage'; inputTokens: number; outputTokens: number; source?: TokenMeasurementSource; inputSource?: TokenMeasurementSource; outputSource?: TokenMeasurementSource; actual?: {inputTokens: number; outputTokens: number}; estimated?: {inputTokens: number; outputTokens: number}; receipt?: TokenLedgerEntry}
   | {type: 'error'; error: Error}
   | {type: 'done'; reason: string; completion?: RunCompletion};
 

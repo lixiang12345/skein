@@ -5,6 +5,7 @@ import type {
   PackedContext,
   RunCompletion,
   Session,
+  SessionTokenUsage,
   ToolCall,
   ToolCategory,
   ToolResult,
@@ -83,8 +84,9 @@ export class HeadlessReporter {
     }
     if (!this.options.quiet && !this.options.compact) {
       const usage = session.usage.inputTokens + session.usage.outputTokens;
+      const usageLabel = tokenUsageLabel(session.usage);
       process.stderr.write(this.paint.dim(
-        `\n${this.glyphs.meta} ${session.changedFiles.length} changed files ${this.glyphs.separator} ${usage.toLocaleString()} tokens ${this.glyphs.separator} session ${session.id.slice(0, 8)}\n`,
+        `\n${this.glyphs.meta} ${session.changedFiles.length} changed files ${this.glyphs.separator} ${usage.toLocaleString()} tokens (${usageLabel}) ${this.glyphs.separator} session ${session.id.slice(0, 8)}\n`,
       ));
     }
   }
@@ -107,14 +109,22 @@ export class HeadlessReporter {
         if (!compact) process.stderr.write(this.paint.dim(`${this.glyphs.meta} reasoning ${this.glyphs.separator} turn ${event.turn}\n`));
         break;
       case 'context':
+        {
+          const budget = event.packed.budgetTokens === undefined
+            ? ''
+            : ` ${this.glyphs.separator} ${event.packed.budgetTier ?? 'adaptive'} ${event.packed.budgetTokens} budget`;
         process.stderr.write(this.paint.cyan(
-          `${this.glyphs.meta} context ${this.glyphs.separator} ${event.packed.engine} ${this.glyphs.separator} ${event.packed.hits.length} spans ${this.glyphs.separator} ~${event.packed.estimatedTokens} tokens${event.packed.degradation ? ` ${this.glyphs.separator} ${event.packed.degradation.summary}` : ''}\n`,
+          `${this.glyphs.meta} context ${this.glyphs.separator} ${event.packed.engine} ${this.glyphs.separator} ${event.packed.hits.length} spans ${this.glyphs.separator} ~${event.packed.estimatedTokens} tokens${budget}${event.packed.degradation ? ` ${this.glyphs.separator} ${event.packed.degradation.summary}` : ''}\n`,
         ));
         break;
+        }
       case 'prompt':
         if (!compact) {
+          const partition = event.breakdown
+            ? ` ${this.glyphs.separator} stable ${event.breakdown.stableTokens} ${this.glyphs.separator} dynamic ${event.breakdown.dynamicTokens} ${this.glyphs.separator} history ${event.breakdown.conversationTokens} ${this.glyphs.separator} tool results ${event.breakdown.toolResultTokens} ${this.glyphs.separator} retrieved ${event.breakdown.retrievedTokens} ${this.glyphs.separator} tools ${event.breakdown.toolSchemaTokens} ${this.glyphs.separator} output cap ${event.breakdown.outputAllowanceTokens}`
+            : '';
           process.stderr.write(this.paint.dim(
-            `${this.glyphs.meta} prompt ${this.glyphs.separator} ${event.intent} ${this.glyphs.separator} ${event.sections.join(' + ')} ${this.glyphs.separator} ~${event.estimatedTokens} tokens\n`,
+            `${this.glyphs.meta} prompt ${this.glyphs.separator} ${event.intent} ${this.glyphs.separator} ~${event.estimatedTokens} estimated tokens${partition}\n`,
           ));
         }
         break;
@@ -251,8 +261,14 @@ function sessionSummary(session: Session): Record<string, unknown> {
     ...(session.taskContract ? {taskContract: session.taskContract} : {}),
     changedFiles: session.changedFiles,
     ...(session.lastRun ? {lastRun: session.lastRun} : {}),
+    ...(session.tokenLedger?.length ? {tokenLedger: session.tokenLedger} : {}),
     usage: session.usage,
   };
+}
+
+export function tokenUsageLabel(usage: SessionTokenUsage): string {
+  if (usage.source) return usage.source;
+  return usage.inputTokens + usage.outputTokens > 0 ? 'unknown source' : 'no usage';
 }
 
 function formatToolDetail(call: ToolCall, paint: typeof chalk = chalk, glyphs = resolveCliGlyphs()): string {

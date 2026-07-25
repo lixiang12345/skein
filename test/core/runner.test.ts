@@ -138,7 +138,24 @@ describe('AgentRunner', () => {
       expect.objectContaining({type: 'permission', tool: 'write_file', outcome: 'allow'}),
       expect.objectContaining({type: 'tool', tool: 'write_file', outcome: 'success'}),
     ]));
-    expect((await store.load(session.id)).audit?.length).toBe(session.audit?.length);
+    const persisted = await store.load(session.id);
+    expect(persisted.audit?.length).toBe(session.audit?.length);
+    expect(session.tokenLedger).toHaveLength(2);
+    expect(session.tokenLedger).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        turn: 1,
+        inputSource: 'actual',
+        outputSource: 'actual',
+        estimated: expect.objectContaining({toolResultTokens: 0}),
+        retrieval: expect.objectContaining({engine: 'test', discarded: []}),
+      }),
+      expect.objectContaining({
+        turn: 2,
+        estimated: expect.objectContaining({toolResultTokens: expect.any(Number)}),
+      }),
+    ]));
+    expect(JSON.stringify(session.tokenLedger)).not.toContain('create result');
+    expect(persisted.tokenLedger).toEqual(session.tokenLedger);
     expect((await checkpoint.list(session.id)).length).toBe(1);
   });
 
@@ -376,7 +393,96 @@ describe('AgentRunner', () => {
     expect(session.messages.filter((message) => message.role === 'assistant')).toEqual([
       expect.objectContaining({content: 'Streaming works.'}),
     ]);
-    expect(session.usage).toEqual({inputTokens: 3, outputTokens: 2});
+    expect(session.usage).toEqual({
+      inputTokens: 3,
+      outputTokens: 2,
+      source: 'actual',
+      inputSource: 'actual',
+      outputSource: 'actual',
+      actualInputTokens: 3,
+      actualOutputTokens: 2,
+    });
+  });
+
+  it('marks provider usage actual and exposes content-free prompt partitions', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-usage-actual-'));
+    roots.push(root);
+    const provider = new QueueProvider([{
+      content: 'Done.', toolCalls: [], usage: {inputTokens: 17, outputTokens: 4},
+    }]);
+    const events: AgentEvent[] = [];
+    const runner = new AgentRunner({config: config(root), provider, contextEngine: context});
+
+    const session = await runner.run('explain src/parser.ts', {
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(session.usage).toMatchObject({
+      inputTokens: 17, outputTokens: 4, source: 'actual',
+      inputSource: 'actual', outputSource: 'actual',
+      actualInputTokens: 17, actualOutputTokens: 4,
+    });
+    const prompt = events.find((event) => event.type === 'prompt');
+    expect(prompt).toMatchObject({
+      type: 'prompt',
+      breakdown: {
+        stableTokens: expect.any(Number), dynamicTokens: expect.any(Number),
+        conversationTokens: expect.any(Number), retrievedTokens: expect.any(Number),
+        toolSchemaTokens: expect.any(Number), estimatedInputTokens: expect.any(Number),
+        outputAllowanceTokens: expect.any(Number),
+      },
+    });
+    expect(JSON.stringify(prompt)).not.toContain('explain src/parser.ts');
+    expect(events.find((event) => event.type === 'usage')).toMatchObject({
+      type: 'usage',
+      receipt: {
+        inputSource: 'actual', outputSource: 'actual',
+        actual: {inputTokens: 17, outputTokens: 4},
+        estimated: expect.objectContaining({toolResultTokens: expect.any(Number)}),
+      },
+    });
+  });
+
+  it('marks missing provider usage estimated instead of actual', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-usage-estimated-'));
+    roots.push(root);
+    const provider = new QueueProvider([{content: 'Done.', toolCalls: []}]);
+    const events: AgentEvent[] = [];
+    const runner = new AgentRunner({config: config(root), provider, contextEngine: context});
+
+    const session = await runner.run('explain the parser', {
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(session.usage).toMatchObject({
+      source: 'estimated', inputSource: 'estimated', outputSource: 'estimated',
+      estimatedInputTokens: expect.any(Number), estimatedOutputTokens: expect.any(Number),
+    });
+    expect(session.usage.actualInputTokens).toBeUndefined();
+    expect(session.usage.actualOutputTokens).toBeUndefined();
+    expect(events.find((event) => event.type === 'usage')).toMatchObject({
+      type: 'usage', source: 'estimated', inputSource: 'estimated', outputSource: 'estimated',
+    });
+  });
+
+  it('marks partial provider usage mixed and preserves legacy unknown totals', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-usage-mixed-'));
+    roots.push(root);
+    const session = createSession({workspace: root, model: 'test-model', provider: 'compatible'});
+    session.usage = {inputTokens: 30, outputTokens: 5};
+    const provider = new QueueProvider([{
+      content: 'Done.', toolCalls: [], usage: {inputTokens: 7},
+    }]);
+    const runner = new AgentRunner({config: config(root), provider, contextEngine: context, session});
+
+    const completed = await runner.run('explain the parser');
+
+    expect(completed.usage).toMatchObject({
+      source: 'mixed', inputSource: 'mixed', outputSource: 'mixed',
+      actualInputTokens: 7, estimatedOutputTokens: expect.any(Number),
+    });
+    expect(completed.usage.inputTokens).toBe(37);
+    expect(completed.usage.outputTokens).toBeGreaterThan(5);
   });
 
   it('turns malformed permission arguments into a tool result and continues', async () => {

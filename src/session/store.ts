@@ -162,7 +162,53 @@ const sessionSchema = z.object({
   usage: z.object({
     inputTokens: z.number().nonnegative(),
     outputTokens: z.number().nonnegative(),
+    source: z.enum(['actual', 'estimated', 'mixed', 'unknown']).optional(),
+    inputSource: z.enum(['actual', 'estimated', 'mixed', 'unknown']).optional(),
+    outputSource: z.enum(['actual', 'estimated', 'mixed', 'unknown']).optional(),
+    actualInputTokens: z.number().nonnegative().optional(),
+    actualOutputTokens: z.number().nonnegative().optional(),
+    estimatedInputTokens: z.number().nonnegative().optional(),
+    estimatedOutputTokens: z.number().nonnegative().optional(),
   }).strict(),
+  tokenLedger: z.array(z.object({
+    requestId: z.string().uuid(),
+    turn: z.number().int().positive(),
+    recordedAt: z.string().datetime(),
+    estimated: z.object({
+      stableTokens: z.number().nonnegative(),
+      dynamicTokens: z.number().nonnegative(),
+      conversationTokens: z.number().nonnegative(),
+      toolResultTokens: z.number().nonnegative(),
+      retrievedTokens: z.number().nonnegative(),
+      toolSchemaTokens: z.number().nonnegative(),
+      estimatedInputTokens: z.number().nonnegative(),
+      outputAllowanceTokens: z.number().nonnegative(),
+      outputTokens: z.number().nonnegative(),
+    }).strict(),
+    actual: z.object({
+      inputTokens: z.number().nonnegative().optional(),
+      outputTokens: z.number().nonnegative().optional(),
+    }).strict(),
+    inputSource: z.enum(['actual', 'estimated']),
+    outputSource: z.enum(['actual', 'estimated']),
+    tools: z.object({
+      loaded: z.array(z.string()),
+      deferredCount: z.number().int().nonnegative(),
+    }).strict(),
+    retrieval: z.object({
+      engine: z.string(),
+      budgetTier: z.enum(['none', 'focused', 'standard', 'broad', 'maximum']).optional(),
+      budgetTokens: z.number().nonnegative().optional(),
+      candidateHits: z.number().int().nonnegative().optional(),
+      selectedHits: z.number().int().nonnegative().optional(),
+      duplicateHits: z.number().int().nonnegative().optional(),
+      incrementalEvidenceTokens: z.number().nonnegative().optional(),
+      discarded: z.array(z.object({
+        reason: z.enum(['overlapping-span', 'budget-cap']),
+        count: z.number().int().positive(),
+      }).strict()),
+    }).strict(),
+  }).strict()).max(256).optional(),
 }).strict();
 
 export interface CreateSessionOptions {

@@ -1,7 +1,7 @@
 import React from 'react';
 import {Box, Text} from 'ink';
 import {basename} from 'node:path';
-import type {AgentPhase, ContextDegradation, ContextSource, MosaicConfig, SessionTask, ToolCall, ToolCategory, WorkingMemory} from '../types.js';
+import type {AgentPhase, ContextBudgetTier, ContextDegradation, ContextSource, MosaicConfig, PromptTokenBreakdown, SessionTask, ToolCall, ToolCategory, WorkingMemory} from '../types.js';
 import {PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
 import {commandForCall} from '../tools/permissions.js';
 import {commandSuggestions, type CommandSuggestion} from './commands.js';
@@ -18,8 +18,8 @@ import {formatPercent, formatTokens, useTheme} from './theme.js';
 export type TimelineItem =
   | {id: string; kind: 'user'; text: string; clipped?: boolean}
   | {id: string; kind: 'assistant'; text: string; streaming?: boolean; clipped?: boolean}
-  | {id: string; kind: 'context'; engine: string; hits: number; tokens: number; degradation?: ContextDegradation; truncated?: boolean; spans?: ContextSpan[]}
-  | {id: string; kind: 'prompt'; intent: string; sections: string[]; tokens: number}
+  | {id: string; kind: 'context'; engine: string; hits: number; tokens: number; budgetTier?: ContextBudgetTier; budgetTokens?: number; budgetReason?: string; degradation?: ContextDegradation; truncated?: boolean; spans?: ContextSpan[]}
+  | {id: string; kind: 'prompt'; intent: string; sections: string[]; tokens: number; breakdown?: PromptTokenBreakdown}
   | {id: string; kind: 'tool'; name: string; detail: string; state: 'running' | 'ok' | 'error'; startedAt?: number; durationMs?: number; errorDetail?: string; output?: string; meta?: string}
   | {id: string; kind: 'skill'; name: string; description: string}
   | {id: string; kind: 'memory'; count: number; scope: string}
@@ -280,9 +280,12 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
                 width={width}
                 glyph={glyphs.context}
                 label="context"
-                detail={`${sanitizeInlineTerminalText(item.engine)} ${glyphs.separator} ${item.hits} spans ${glyphs.separator} ~${formatTokens(item.tokens)}${item.truncated ? ` ${glyphs.separator} truncated` : ''}`}
+                detail={`${sanitizeInlineTerminalText(item.engine)} ${glyphs.separator} ${item.hits} spans ${glyphs.separator} ~${formatTokens(item.tokens)} estimated${item.budgetTokens === undefined ? '' : ` ${glyphs.separator} ${item.budgetTier ?? 'adaptive'} ${formatTokens(item.budgetTokens)} budget`}${item.truncated ? ` ${glyphs.separator} truncated` : ''}`}
                 labelColor={theme.accent}
               />
+              {!compact && item.budgetReason ? (
+                <Text color={theme.dim}>{truncateDisplay(`${glyphs.branchLast} ${sanitizeInlineTerminalText(item.budgetReason)}`, innerWidth)}</Text>
+              ) : null}
               {spans.slice(0, spanLimit).map((span, spanIndex) => {
                 const lines = span.startLine === span.endLine ? `${span.startLine}` : `${span.startLine}-${span.endLine}`;
                 const location = `${compactDisplayPath(sanitizeInlineTerminalText(span.path), 44)}:${lines}`;
@@ -310,13 +313,16 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
           );
         }
         if (item.kind === 'prompt') {
+          const detail = item.breakdown
+            ? `~${formatTokens(item.tokens)} estimated ${glyphs.separator} stable ${formatTokens(item.breakdown.stableTokens)} ${glyphs.separator} dynamic ${formatTokens(item.breakdown.dynamicTokens)} ${glyphs.separator} history ${formatTokens(item.breakdown.conversationTokens)} ${glyphs.separator} tool results ${formatTokens(item.breakdown.toolResultTokens)} ${glyphs.separator} retrieved ${formatTokens(item.breakdown.retrievedTokens)} ${glyphs.separator} tools ${formatTokens(item.breakdown.toolSchemaTokens)} ${glyphs.separator} output cap ${formatTokens(item.breakdown.outputAllowanceTokens)}`
+            : `${item.sections.map(sanitizeInlineTerminalText).join(` ${glyphs.separator} `)} ${glyphs.separator} ~${formatTokens(item.tokens)} estimated`;
           return (
             <MetaRow
               key={item.id}
               width={width}
               glyph={glyphs.pending}
               label={`prompt/${sanitizeInlineTerminalText(item.intent)}`}
-              detail={`${item.sections.map(sanitizeInlineTerminalText).join(` ${glyphs.separator} `)} ${glyphs.separator} ~${formatTokens(item.tokens)}`}
+              detail={detail}
             />
           );
         }

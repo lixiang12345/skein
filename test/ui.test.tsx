@@ -240,8 +240,19 @@ describe('terminal presentation', () => {
           context: {...config.context},
         }} askMode width={columns} />
         <Timeline width={columns} items={[
-          {id: 'context', kind: 'context', engine: 'local', hits: 12, tokens: 8400},
-          {id: 'prompt', kind: 'prompt', intent: 'debug', sections: ['working-memory', 'code:local'], tokens: 9300},
+          {
+            id: 'context', kind: 'context', engine: 'local', hits: 12, tokens: 8400,
+            budgetTier: 'broad', budgetTokens: 8_000,
+            budgetReason: 'cross-module or repository-wide evidence requested',
+          },
+          {
+            id: 'prompt', kind: 'prompt', intent: 'debug', sections: ['working-memory', 'code:local'], tokens: 9300,
+            breakdown: {
+              stableTokens: 1_500, dynamicTokens: 400, conversationTokens: 2_000,
+              toolResultTokens: 1_000, retrievedTokens: 2_500, toolSchemaTokens: 1_900,
+              estimatedInputTokens: 9_300, outputAllowanceTokens: 2_048,
+            },
+          },
           {id: 'tool', kind: 'tool', name: 'apply_patch', detail: 'src/a/very/long/path/worker.ts', state: 'ok', durationMs: 123},
           {id: 'agent', kind: 'agent', profile: 'security-reviewer', task: 'Inspect all trust boundaries', state: 'ok', durationMs: 55},
         ]} />

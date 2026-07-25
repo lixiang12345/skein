@@ -26,7 +26,7 @@ const context: ContextProvider = {
 describe('tool output firewall', () => {
   it('uses a CJK-aware estimate and derives bounded dynamic budgets', () => {
     expect(estimateToolOutputTokens('x'.repeat(400))).toBe(100);
-    expect(estimateToolOutputTokens('中'.repeat(400))).toBe(800);
+    expect(estimateToolOutputTokens('中'.repeat(400))).toBe(400);
     expect(estimateToolOutputTokens('🙂'.repeat(400))).toBe(800);
     expect(estimateToolOutputTokens('é'.repeat(400))).toBe(800);
     expect(dynamicToolOutputBudget(24_000, 2_000, 100_000)).toBe(7_699);
