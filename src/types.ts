@@ -371,6 +371,16 @@ export interface ContextSource {
   addedAt: string;
 }
 
+/** A redacted oversized tool result retained outside the model transcript. */
+export interface ToolArtifactReference {
+  toolCallId: string;
+  sha256: string;
+  bytes: number;
+  createdAt: string;
+  expiresAt: string;
+  redacted: boolean;
+}
+
 export interface Session {
   id: string;
   title: string;
@@ -388,6 +398,7 @@ export interface Session {
   compactedThroughMessageId?: string;
   workingMemory?: WorkingMemory;
   contextSources?: ContextSource[];
+  toolArtifacts?: ToolArtifactReference[];
   taskContract?: TaskContract;
   lastRun?: SessionRunRecord;
   usage: {

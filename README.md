@@ -43,6 +43,10 @@ inspectable index for code retrieval and no retrieval service dependency.
   source spans, and rebuild it explicitly when needed.
 - **Visible trust:** per-category permissions, deny rules, hooks, workspace path
   enforcement, changed-file telemetry, and persisted tool results.
+- **Bounded tool context:** large tool results cannot crowd the task out of the
+  model window. Skein keeps a token-budgeted head/tail receipt and, when the
+  producer captured the complete result, retains a redacted session-scoped
+  artifact for bounded readback.
 - **Reversible work:** Skein snapshots affected files before mutation without
   touching your Git history.
 - **Resumable by default:** conversations, tasks, usage, and changed files live
@@ -78,7 +82,7 @@ To build, verify, and install a local package artifact from this checkout:
 
 ```bash
 npm run verify:package -- --output-dir artifacts/package
-npm install -g ./artifacts/package/skein-code-cli-0.3.10.tgz
+npm install -g ./artifacts/package/skein-code-cli-0.3.11.tgz
 ```
 
 To install the published package from npm:
@@ -182,6 +186,19 @@ toggles one live inspector for the active transcript, mutable working memory,
 compacted session summary, and durable retrieval layer separately. Model-
 suggested durable memories can be reviewed with `/memory candidates` and then
 approved or rejected.
+
+Tool output has three explicit boundaries. Shell capture is bounded while the
+process runs; completed MCP responses are reduced to a 5 MiB adapter result
+before entering the runner. This MCP boundary limits transcript amplification,
+but it is not a process sandbox or a streaming transport limit. The runner then
+uses the remaining session/context headroom to expose at most 1,024–8,192
+estimated tokens to the model. An oversized result becomes a head/tail receipt
+that preserves completion or failure state, exit code, changed files, original
+size, and a SHA-256-bound `read_tool_artifact` continuation when the complete
+captured result is available. Artifacts are redacted before persistence, belong
+only to the originating session, expire after seven days, and are removed when
+that session is deleted. A receipt marked `source-truncated` is honest about
+bytes already omitted by the producing tool; those bytes cannot be recovered.
 
 At 96 columns and wider, a fresh session uses a two-column welcome surface. The
 left side keeps Skein's brand, workspace path, and next actions close to the
@@ -499,8 +516,11 @@ Add both `.mosaic/` and `.skein/` to `.gitignore` unless the team intentionally
 shares a sanitized configuration file elsewhere.
 
 Session JSON also keeps a bounded audit trail of permission decisions, tool
-outcomes, changed files, and checkpoint ids. `skein session export` includes
-that trail in the Markdown export.
+outcomes, changed files, checkpoint ids, and artifact receipts, never artifact
+contents. `skein session export` includes the audit trail in the Markdown
+export. Oversized result contents live separately under the active project
+namespace's `tool-artifacts/` directory and are governed by session deletion,
+expiry, per-item size, total-storage, and integrity checks.
 
 ## Development
 

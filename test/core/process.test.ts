@@ -57,6 +57,9 @@ describe('process runner', () => {
 
     expect(result.stdout).toHaveLength(12);
     expect(streamed).toHaveLength(100);
+    expect(result.stdoutBytes).toBe(100);
+    expect(result.stdoutTruncated).toBe(true);
+    expect(result.stderrTruncated).toBe(false);
 
     const unicode = await runProcess(process.execPath, [
       '-e',

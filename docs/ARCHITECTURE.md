@@ -82,12 +82,39 @@ The runner keeps the cacheable system prefix separate from mutable task state:
 2. Dynamic turn state: intent directive, current plan, working memory, compacted
    handoff, workflow instructions, activated Skills, retrieved memories, and
    current code evidence.
-3. Conversation: recent user/assistant/tool messages, with old tool output
-   replaced by structured receipts when context pressure rises.
+3. Conversation: recent user/assistant/tool messages. Every new tool result is
+   bounded before it enters this layer; old tool output is replaced by compact
+   receipts when conversation pressure later triggers compaction.
 
 This lets providers reuse stable prompt prefixes while ensuring a changed plan
 or newly retrieved file is visible on the next turn. Every retrieved or generated
 state block is marked as untrusted context and cannot authorize a tool call.
+
+## Tool output boundary
+
+Tool output crosses three independent limits:
+
+1. Shell uses bounded capture and reports the stdout/stderr bytes it observed
+   and whether that limit omitted source bytes. After an MCP SDK call returns,
+   normalization applies a separate 5 MiB ceiling and preserves both ends. It
+   limits what reaches the runner; it does not sandbox the MCP process or bound
+   bytes already materialized by the transport.
+2. The runner sanitizes terminal control sequences, redacts credential-shaped
+   values, estimates CJK and non-CJK token cost, and derives a 1,024–8,192 token
+   model-visible budget from active context and remaining session headroom.
+3. If the sanitized captured result is complete and at most 5 MiB, the runner
+   can retain it outside the transcript. The model receives a head/tail receipt
+   with status, size, failure/exit/changed-file signals, hash, expiry, and a
+   bounded `read_tool_artifact` continuation.
+
+Artifacts are stored beneath the active project namespace, capped at 20 MiB in
+total, evicted oldest-first, and expired after seven days. File names are hashes
+of validated session/tool-call identities. Reads validate the session binding,
+file identity, byte count, and SHA-256; symlinks and corrupt records fail closed.
+At the start of a run, expired files are pruned and persisted session receipts
+are reconciled against storage before the readback tool can be exposed. Deleting
+a session removes its artifact directory. Session JSON and JSONL events carry
+only receipts and bounded previews, never artifact contents.
 
 ## Local context selection
 
@@ -122,6 +149,8 @@ Project-local data is kept in `.mosaic/` and ignored by default:
 - `config.json` — project overrides;
 - `index.json` — local retrieval index;
 - `sessions/` — auditable conversation and tool state;
+- `tool-artifacts/` — redacted, expiring oversized tool results scoped to a
+  saved session;
 - `checkpoints/` — pre-mutation file snapshots and manifests.
 
 No source content is sent anywhere except the model endpoint selected by the

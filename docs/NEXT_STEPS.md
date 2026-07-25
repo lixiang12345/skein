@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.10`.
+- Current repository version: `0.3.11`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -41,8 +41,8 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.10.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.10.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.11.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.11.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
@@ -50,7 +50,7 @@ archive it describes.
 The final verification included a fresh install and real PTY interaction for
 all three executable aliases, `/about`, a permission prompt, denial, and clean
 Ctrl+C exit. PTY coverage included 20, 24 ASCII, 40, 80, 120 columns and a
-40x10 short-height case. The current 40-file, 403-test suite passes the full check.
+40x10 short-height case. The current 42-file, 424-test suite passes the full check.
 
 ## Recommended Order
 
@@ -78,11 +78,13 @@ Implementation notes:
 - `npm run release:verify` reproduces the package from source, installs it into
   an isolated prefix, rejects packaged local state, and exercises `skein`,
   `mosaic`, and `mosaic-code`.
-- The `main` branch rule requires the strict `check` status. Version 0.3.10
-  adds durable Task Contracts for complex executable requests, binds acceptance
-  to successful audit evidence and current verification, and gives tool
-  failures stable classes, bounded retry budgets, repair hints, and identical-
-  call circuit breaking. Short requests keep the smaller tool surface.
+- The `main` branch rule requires the strict `check` status. Version 0.3.11
+  gives every tool-result path a language-aware dynamic token firewall, retains
+  complete captured output as redacted session-scoped artifacts, exposes
+  SHA-bound line or UTF-8 byte readback only when storage receipts agree, and
+  makes upstream shell/MCP truncation explicit. Session deletion and expiry
+  remove retained output; ordinary short result events keep their existing
+  shape.
   Its tag, GitHub verification, and npm publication use the same source commit.
 
 ### P1: Skein Storage Namespace And Migration

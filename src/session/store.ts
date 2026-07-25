@@ -66,6 +66,15 @@ const contextSourceSchema = z.object({
   addedAt: z.string(),
 }).strict();
 
+const toolArtifactSchema = z.object({
+  toolCallId: z.string().min(1).max(512).refine((value) => !/[\u0000-\u001f\u007f-\u009f]/u.test(value)),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  bytes: z.number().int().nonnegative().max(5 * 1024 * 1024),
+  createdAt: z.string().datetime(),
+  expiresAt: z.string().datetime(),
+  redacted: z.boolean(),
+}).strict();
+
 const verificationEvidenceSchema = z.object({
   toolCallId: z.string(),
   tool: z.enum(['shell', 'git']),
@@ -147,6 +156,7 @@ const sessionSchema = z.object({
   compactedThroughMessageId: z.string().optional(),
   workingMemory: workingMemorySchema.optional(),
   contextSources: z.array(contextSourceSchema).max(64).optional(),
+  toolArtifacts: z.array(toolArtifactSchema).max(200).optional(),
   taskContract: taskContractSchema.optional(),
   lastRun: lastRunSchema.optional(),
   usage: z.object({

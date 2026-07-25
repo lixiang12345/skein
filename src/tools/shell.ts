@@ -94,6 +94,9 @@ export const shellTool: AgentTool = {
       `Exit code: ${result.exitCode}${result.timedOut ? ' (timed out)' : ''}`,
       result.stdout ? `stdout:\n${result.stdout}` : '',
       result.stderr ? `stderr:\n${result.stderr}` : '',
+      result.stdoutTruncated || result.stderrTruncated
+        ? `Source output exceeded the command capture limit (${result.stdoutBytes} stdout bytes, ${result.stderrBytes} stderr bytes observed). Rerun with max_output_bytes up to 5000000 or narrow the command; omitted source bytes are not recoverable from this result.`
+        : '',
     ].filter(Boolean);
     return {
       ok: result.exitCode === 0 && !result.timedOut,
@@ -103,6 +106,9 @@ export const shellTool: AgentTool = {
         exitCode: result.exitCode,
         timedOut: result.timedOut,
         durationMs: result.durationMs,
+        stdoutBytes: result.stdoutBytes,
+        stderrBytes: result.stderrBytes,
+        sourceTruncated: result.stdoutTruncated || result.stderrTruncated,
         changeTracking: candidates.length
           ? 'targeted'
           : beforeWorkspace && afterWorkspace && beforeWorkspace.complete && afterWorkspace.complete

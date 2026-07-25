@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,9 +16,9 @@
   },
   "skein": {
     "releaseNotes": [
-      "Complex executable requests now use a durable Task Contract with evidence-bound acceptance criteria",
-      "Completion stays unverified while required acceptance or final verification remains unresolved",
-      "Structured tool failure receipts add concise repair hints, retry budgets, cancellation handling, and identical-call circuit breaking"
+      "Large tool results now use a language-aware dynamic token budget with status-preserving head and tail receipts",
+      "Complete captured output can be read back through redacted, expiring, session-scoped local artifacts",
+      "Shell and MCP source truncation is explicit, and session deletion removes retained output"
     ]
   },
   "bin": {

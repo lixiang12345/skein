@@ -65,6 +65,48 @@ describe('MCP validation and tool adapters', () => {
     );
   });
 
+  it('leaves complete MCP output for the runner-level token firewall', async () => {
+    const content = `${'head '.repeat(20_000)}TAIL_STATUS`;
+    const tool = createMcpToolAdapter({
+      serverName: 'logs',
+      exposedName: 'mcp_logs_read',
+      remoteTool: {name: 'read', inputSchema: {type: 'object', properties: {}}},
+      timeoutMs: 1_000,
+      callTool: async () => ({content: [{type: 'text', text: content}]}),
+    });
+
+    const execution = await tool.execute({}, {
+      config: {} as never,
+      workspace: {} as never,
+      session: {} as never,
+    });
+    expect(execution.content).toBe(content);
+    expect(execution.content).toContain('TAIL_STATUS');
+    expect(execution.metadata).toMatchObject({sourceTruncated: false});
+  });
+
+  it('bounds hostile MCP output while preserving head, tail, and source telemetry', async () => {
+    const content = `HEAD_STATUS\n${'x'.repeat(6 * 1024 * 1024)}\nTAIL_STATUS`;
+    const tool = createMcpToolAdapter({
+      serverName: 'logs',
+      exposedName: 'mcp_logs_read',
+      remoteTool: {name: 'read', inputSchema: {type: 'object', properties: {}}},
+      timeoutMs: 1_000,
+      callTool: async () => ({content: [{type: 'text', text: content}]}),
+    });
+
+    const execution = await tool.execute({}, {
+      config: {} as never,
+      workspace: {} as never,
+      session: {} as never,
+    });
+    expect(Buffer.byteLength(execution.content)).toBeLessThanOrEqual(5 * 1024 * 1024);
+    expect(execution.content).toContain('HEAD_STATUS');
+    expect(execution.content).toContain('TAIL_STATUS');
+    expect(execution.metadata).toMatchObject({sourceTruncated: true});
+    expect(execution.metadata?.sourceBytes).toBeGreaterThan(5 * 1024 * 1024);
+  });
+
   it('limits insecure HTTP and stdio environment/workspace escapes', async () => {
     expect(() => validateHttpConfig(server({
       transport: 'http',

@@ -22,7 +22,7 @@ import {resolveAgentModelRoute} from './agent/model-route.js';
 import {createAgentConnectionSetup, mergeAgentSetup} from './agent/model-setup.js';
 import {discoverWorkspaceRules} from './agent/rules.js';
 import {createProvider} from './providers/index.js';
-import {SessionStore, type SessionSummary} from './session/index.js';
+import {SessionStore, ToolArtifactStore, type SessionSummary} from './session/index.js';
 import {CheckpointStore} from './checkpoint/index.js';
 import {createDefaultToolRegistry} from './tools/index.js';
 import {runDoctor} from './cli/doctor.js';
@@ -457,9 +457,11 @@ sessionCommand
   .option('-w, --workspace <path>', 'workspace root')
   .option('--yes', 'skip confirmation')
   .action(async (id: string, options: SessionCommandOptions & {yes?: boolean}) => {
-    const store = new SessionStore(workspaceOption(options.workspace));
+    const workspace = workspaceOption(options.workspace);
+    const store = new SessionStore(workspace);
     const session = await requireSessionSelector(store, id);
     if (!options.yes && !(await confirm(`Delete session ${session.id.slice(0, 8)}?`))) return;
+    await new ToolArtifactStore(workspace).removeSession(session.id);
     await store.remove(session.id);
     process.stdout.write(`Deleted ${session.id}\n`);
   });

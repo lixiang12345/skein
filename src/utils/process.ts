@@ -12,6 +12,10 @@ export interface ProcessResult {
   stderr: string;
   timedOut: boolean;
   durationMs: number;
+  stdoutBytes: number;
+  stderrBytes: number;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
 }
 
 export interface ExecutableRuntime {
@@ -125,6 +129,8 @@ export function runProcess(
     let stderr = '';
     let stdoutBytes = 0;
     let stderrBytes = 0;
+    let stdoutObservedBytes = 0;
+    let stderrObservedBytes = 0;
     let timedOut = false;
     let callbackError: unknown;
     const stdoutDecoder = new StringDecoder('utf8');
@@ -155,12 +161,14 @@ export function runProcess(
       }
     };
     child.stdout.on('data', (chunk: Buffer) => {
+      stdoutObservedBytes += chunk.length;
       const appended = append(stdoutDecoder, chunk, stdoutBytes);
       stdout += appended.text;
       stdoutBytes = appended.usedBytes;
       notify(options.onStdout, stdoutCallbackDecoder, chunk);
     });
     child.stderr.on('data', (chunk: Buffer) => {
+      stderrObservedBytes += chunk.length;
       const appended = append(stderrDecoder, chunk, stderrBytes);
       stderr += appended.text;
       stderrBytes = appended.usedBytes;
@@ -198,6 +206,10 @@ export function runProcess(
         stderr,
         timedOut,
         durationMs: Date.now() - started,
+        stdoutBytes: stdoutObservedBytes,
+        stderrBytes: stderrObservedBytes,
+        stdoutTruncated: stdoutObservedBytes > stdoutBytes,
+        stderrTruncated: stderrObservedBytes > stderrBytes,
       });
     });
     if (options.stdin) child.stdin.end(options.stdin);

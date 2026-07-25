@@ -1,5 +1,6 @@
 import type {AgentEvent, MosaicConfig, Session, ToolCategory, ToolDefinition} from '../types.js';
 import type {ContextHit, PackedContext} from '../types.js';
+import type {ToolArtifactStore} from '../session/tool-artifacts.js';
 import type {WorkspaceAccess} from './workspace.js';
 
 export interface ContextProvider {
@@ -12,6 +13,8 @@ export interface ToolExecutionContext {
   readonly workspace: WorkspaceAccess;
   readonly session: Session;
   readonly contextEngine?: ContextProvider;
+  /** Session-bound overflow output retained outside the model transcript. */
+  readonly toolArtifactStore?: ToolArtifactStore;
   readonly signal?: AbortSignal;
   readonly emit?: (event: AgentEvent) => void | Promise<void>;
   /** Pre-write checkpoint captured by the parent runner, when enabled. */

@@ -3,6 +3,7 @@ import {applyPatchTool} from './apply-patch.js';
 import {gitTool} from './git.js';
 import {listFilesTool} from './list.js';
 import {readFileTool} from './read.js';
+import {readToolArtifactTool} from './read-artifact.js';
 import {ToolRegistry} from './registry.js';
 import {searchCodeTool} from './search.js';
 import {shellTool} from './shell.js';
@@ -21,6 +22,7 @@ export function createDefaultToolRegistry(
 ): ToolRegistry {
   return new ToolRegistry([
     readFileTool,
+    readToolArtifactTool,
     listFilesTool,
     searchCodeTool,
     writeFileTool,
@@ -45,6 +47,7 @@ export type {
 export {ToolExecutionError, ToolInputError} from './types.js';
 export {
   readFileTool,
+  readToolArtifactTool,
   listFilesTool,
   searchCodeTool,
   writeFileTool,

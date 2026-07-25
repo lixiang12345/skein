@@ -6,6 +6,7 @@ import {createProvider, type ModelProvider} from '../providers/index.js';
 import {CheckpointStore} from '../checkpoint/store.js';
 import {HookRunner} from '../hooks/runner.js';
 import {SessionStore, createSession} from '../session/store.js';
+import {ToolArtifactStore} from '../session/tool-artifacts.js';
 import {
   createDefaultToolRegistry,
   evaluatePermission,
@@ -33,6 +34,7 @@ import type {
   ToolCategory,
   ToolResult,
   ToolFailureReceipt,
+  ToolArtifactReference,
   TaskContract,
 } from '../types.js';
 import {
@@ -57,6 +59,7 @@ import {
   formatFailureReceipt,
   ToolRecoveryController,
 } from './tool-recovery.js';
+import {dynamicToolOutputBudget, protectToolOutput} from './tool-output.js';
 import type {PromptContextProvider} from './prompt-context.js';
 import {discoverWorkspaceRules, formatWorkspaceRules} from './rules.js';
 import {
@@ -73,6 +76,7 @@ export interface AgentRunnerOptions {
   contextEngine?: ContextProvider;
   toolRegistry?: ToolRegistry;
   sessionStore?: SessionStore;
+  toolArtifactStore?: ToolArtifactStore;
   checkpointStore?: CheckpointStore;
   session?: Session;
   promptContextProvider?: PromptContextProvider;
@@ -87,6 +91,7 @@ export class AgentRunner {
   readonly contextEngine: ContextProvider;
   readonly tools: ToolRegistry;
   readonly sessionStore: SessionStore;
+  readonly toolArtifactStore: ToolArtifactStore;
   readonly checkpointStore: CheckpointStore;
   readonly workspace: WorkspaceAccess;
   readonly hooks: HookRunner;
@@ -109,6 +114,7 @@ export class AgentRunner {
       contextEngine: this.contextEngine,
     });
     this.sessionStore = options.sessionStore ?? new SessionStore(this.workspace.primaryRoot);
+    this.toolArtifactStore = options.toolArtifactStore ?? new ToolArtifactStore(this.workspace.primaryRoot);
     this.checkpointStore = options.checkpointStore ?? new CheckpointStore(this.workspace);
     this.hooks = new HookRunner(options.config.hooks, this.workspace);
     this.contextManager = options.contextManager ?? new ContextManager(options.config);
@@ -204,6 +210,7 @@ export class AgentRunner {
     };
     try {
       throwIfAborted(options.signal);
+      await this.reconcileToolArtifacts();
       if (this.session.messages.length === 0 && this.session.title === 'New session') {
         this.session.title = titleFromInput(request);
       }
@@ -321,9 +328,13 @@ export class AgentRunner {
         );
         const availableTokens = this.config.agent.maxSessionTokens -
           (this.session.usage.inputTokens + this.session.usage.outputTokens);
-        const estimatedInputTokens = estimateMessages(messages) + estimateToolDefinitions(
-          visibleToolDefinitions(this.tools, options.askMode === true, contractEnabled),
+        const visibleTools = visibleToolDefinitions(
+          this.tools,
+          options.askMode === true,
+          contractEnabled,
+          this.hasReadableToolArtifact(),
         );
+        const estimatedInputTokens = estimateMessages(messages) + estimateToolDefinitions(visibleTools);
         if (availableTokens <= 0 || estimatedInputTokens >= availableTokens) {
           return finishRun('token_budget');
         }
@@ -331,7 +342,6 @@ export class AgentRunner {
           this.config.model.maxTokens ?? 8_192,
           availableTokens - estimatedInputTokens,
         ));
-        const visibleTools = visibleToolDefinitions(this.tools, options.askMode === true, contractEnabled);
         const assistantId = randomUUID();
         const response = await this.completeModel(
           messages,
@@ -516,17 +526,17 @@ export class AgentRunner {
   ): Promise<ToolResult> {
     const preflight = recovery.preflight(call);
     if (preflight) {
-      const result = failedResult(call, 'Tool call rejected by the recovery circuit.', preflight);
+      const result = await this.protectToolResult(
+        failedResult(call, 'Tool call rejected by the recovery circuit.', preflight),
+      );
       this.recordToolResult(result);
       await emit({type: 'tool_result', result});
       return result;
     }
     if (visibleToolNames && !visibleToolNames.has(call.name)) {
       const receipt = recovery.recordFailure(call, 'unknown_tool');
-      const result = failedResult(
-        call,
-        `Tool is not exposed for this turn: ${call.name}`,
-        receipt,
+      const result = await this.protectToolResult(
+        failedResult(call, `Tool is not exposed for this turn: ${call.name}`, receipt),
       );
       this.recordToolResult(result);
       await emit({type: 'tool_result', result});
@@ -535,7 +545,7 @@ export class AgentRunner {
     const tool = this.tools.get(call.name);
     if (!tool) {
       const receipt = recovery.recordFailure(call, 'unknown_tool');
-      const result = failedResult(call, `Unknown tool: ${call.name}`, receipt);
+      const result = await this.protectToolResult(failedResult(call, `Unknown tool: ${call.name}`, receipt));
       this.recordToolResult(result);
       await emit({type: 'tool_result', result});
       return result;
@@ -548,16 +558,15 @@ export class AgentRunner {
     } catch (error) {
       const failureClass = classifyThrownToolFailure(error, options.signal);
       const receipt = recovery.recordFailure(call, failureClass);
-      const result = failedResult(call, formatToolError(error), receipt);
+      const result = await this.protectToolResult(failedResult(call, formatToolError(error), receipt));
       this.recordToolResult(result, tool.definition.category);
       await emit({type: 'tool_result', result});
       return result;
     }
     if (categories.some((category) => category !== 'read') && this.session.taskContract?.state === 'draft') {
       const receipt = recovery.recordFailure(call, 'contract_required');
-      const result = failedResult(call,
-        'Potentially mutating work is paused until the draft Task Contract is activated.',
-        receipt,
+      const result = await this.protectToolResult(
+        failedResult(call, 'Potentially mutating work is paused until the draft Task Contract is activated.', receipt),
       );
       this.recordToolResult(result, tool.definition.category);
       await emit({type: 'tool_result', result});
@@ -567,7 +576,9 @@ export class AgentRunner {
       const allowed = await this.authorize(call, category, options, emit);
       if (!allowed) {
         const receipt = recovery.recordFailure(call, 'permission_denied');
-        const result = failedResult(call, `Permission denied for ${category} operation.`, receipt);
+        const result = await this.protectToolResult(
+          failedResult(call, `Permission denied for ${category} operation.`, receipt),
+        );
         this.recordToolResult(result, category);
         await emit({type: 'tool_result', result});
         return result;
@@ -578,11 +589,12 @@ export class AgentRunner {
     await this.persist();
     throwIfAborted(options.signal);
     await emit({type: 'tool_start', call, category: tool.definition.category});
-      const executionContext: ToolExecutionContext = {
+    const executionContext: ToolExecutionContext = {
       config: this.config,
       workspace: this.workspace,
       session: this.session,
       contextEngine: this.contextEngine,
+      toolArtifactStore: this.toolArtifactStore,
       emit,
       ...(options.signal ? {signal: options.signal} : {}),
     };
@@ -619,33 +631,36 @@ export class AgentRunner {
       } catch (error) {
         afterHookError = toError(error);
       }
-      const result: ToolResult = {
-        toolCallId: call.id,
-        name: call.name,
-        ok: execution.ok !== false && !afterHookError,
-        content: truncateToolOutput(afterHookError
-          ? `${execution.content}\n\nTool succeeded, but afterTool hook failed: ${afterHookError.message}`
-          : execution.content),
-        metadata: {
-          ...(execution.metadata ?? {}),
-          ...(changedFiles.length ? {changedFiles} : {}),
-          ...(checkpointId ? {checkpointId} : {}),
-          ...(beforeHooks.length || afterHooks.length
-            ? {hooks: {before: beforeHooks.length, after: afterHooks.length}}
-            : {}),
-          ...(afterHookError ? {toolSucceeded: true, hookError: afterHookError.message} : {}),
-        },
+      let completeContent = afterHookError
+        ? `${execution.content}\n\nTool succeeded, but afterTool hook failed: ${afterHookError.message}`
+        : execution.content;
+      const metadata: Record<string, unknown> = {
+        ...(execution.metadata ?? {}),
+        ...(changedFiles.length ? {changedFiles} : {}),
+        ...(checkpointId ? {checkpointId} : {}),
+        ...(beforeHooks.length || afterHooks.length
+          ? {hooks: {before: beforeHooks.length, after: afterHooks.length}}
+          : {}),
+        ...(afterHookError ? {toolSucceeded: true, hookError: afterHookError.message} : {}),
       };
-      if (!result.ok) {
+      const ok = execution.ok !== false && !afterHookError;
+      if (!ok) {
         const failureClass = options.signal?.aborted
           ? 'cancelled'
-          : classifyToolFailure(result);
+          : classifyToolFailure({toolCallId: call.id, name: call.name, ok, content: completeContent, metadata});
         const receipt = recovery.recordFailure(call, failureClass);
-        result.content = truncateToolOutput(`${formatFailureReceipt(receipt)}\n${result.content}`);
-        result.metadata = {...result.metadata, failure: receipt};
+        completeContent = `${formatFailureReceipt(receipt)}\n${completeContent}`;
+        metadata.failure = receipt;
       } else {
         recovery.recordSuccess(call);
       }
+      const result = await this.protectToolResult({
+        toolCallId: call.id,
+        name: call.name,
+        ok,
+        content: completeContent,
+        metadata,
+      });
       this.contextManager.recordTool(this.session, call, result);
       if (JSON.stringify(this.session.tasks) !== tasksBefore || call.name === 'task') {
         await emit({type: 'tasks', tasks: this.session.tasks.map((task) => ({...task}))});
@@ -660,7 +675,7 @@ export class AgentRunner {
       const normalized = toError(error);
       const failureClass = classifyThrownToolFailure(normalized, options.signal);
       const receipt = recovery.recordFailure(call, failureClass);
-      const result = failedResult(call, formatToolError(error), receipt);
+      const result = await this.protectToolResult(failedResult(call, formatToolError(error), receipt));
       this.recordToolResult(result, tool.definition.category);
       await emit({type: 'tool_result', result});
       return result;
@@ -853,6 +868,77 @@ export class AgentRunner {
   private persist(): Promise<void> {
     return this.persistSession ? this.sessionStore.save(this.session) : Promise.resolve();
   }
+
+  private toolOutputBudget(): number {
+    const contextWindowTokens = Math.max(24_000, Math.min(100_000, this.config.context.maxTokens * 3));
+    const activeContextTokens = this.contextManager.status(this.session, contextWindowTokens).activeTokens;
+    const remainingSessionTokens = this.config.agent.maxSessionTokens -
+      (this.session.usage.inputTokens + this.session.usage.outputTokens);
+    return dynamicToolOutputBudget(contextWindowTokens, activeContextTokens, remainingSessionTokens);
+  }
+
+  private async protectToolResult(result: ToolResult): Promise<ToolResult> {
+    const metadata = {...(result.metadata ?? {})};
+    const output = await protectToolOutput({
+      content: result.content,
+      sessionId: this.session.id,
+      toolCallId: result.toolCallId,
+      tool: result.name,
+      ok: result.ok,
+      budgetTokens: this.toolOutputBudget(),
+      metadata,
+      artifacts: this.toolArtifactStore,
+    });
+    if (output.metadata.artifact) this.registerToolArtifact({
+      ...output.metadata.artifact,
+      redacted: output.metadata.redacted,
+    });
+    return {
+      ...result,
+      content: output.content,
+      ...(output.metadata.truncated || output.metadata.redacted || output.metadata.sanitized ||
+        output.metadata.artifact || output.metadata.artifactUnavailable
+        ? {metadata: {...metadata, toolOutput: output.metadata}}
+        : Object.keys(metadata).length ? {metadata} : {}),
+    };
+  }
+
+  private hasReadableToolArtifact(): boolean {
+    const now = Date.now();
+    return (this.session.toolArtifacts ?? []).some((artifact) =>
+      Date.parse(artifact.expiresAt) > now,
+    );
+  }
+
+  private registerToolArtifact(artifact: ToolArtifactReference): void {
+    const now = Date.now();
+    const artifacts = (this.session.toolArtifacts ?? [])
+      .filter((candidate) => Date.parse(candidate.expiresAt) > now && candidate.toolCallId !== artifact.toolCallId);
+    artifacts.push(artifact);
+    artifacts.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    if (artifacts.length > 200) artifacts.splice(0, artifacts.length - 200);
+    this.session.toolArtifacts = artifacts;
+  }
+
+  private async reconcileToolArtifacts(): Promise<void> {
+    let stored: ToolArtifactReference[];
+    try {
+      stored = await this.toolArtifactStore.prune(this.session.id);
+    } catch {
+      // Corrupt or unsafe retention state must not enter the prompt, but it
+      // also must not prevent the user from continuing the coding session.
+      this.session.toolArtifacts = [];
+      return;
+    }
+    const valid = new Map(stored.map((artifact) => [artifact.toolCallId, artifact]));
+    const reconciled = (this.session.toolArtifacts ?? []).filter((receipt) => {
+      const artifact = valid.get(receipt.toolCallId);
+      return artifact !== undefined && artifact.sha256 === receipt.sha256 &&
+        artifact.bytes === receipt.bytes && artifact.createdAt === receipt.createdAt &&
+        artifact.expiresAt === receipt.expiresAt && artifact.redacted === receipt.redacted;
+    });
+    this.session.toolArtifacts = reconciled;
+  }
 }
 
 function message(
@@ -957,9 +1043,7 @@ function failedResult(
     toolCallId: call.id,
     name: call.name,
     ok: false,
-    content: truncateToolOutput(failure
-      ? `${formatFailureReceipt(failure)}\n${content}`
-      : content),
+    content: failure ? `${formatFailureReceipt(failure)}\n${content}` : content,
     ...(failure ? {metadata: {failure}} : {}),
   };
 }
@@ -968,18 +1052,13 @@ function visibleToolDefinitions(
   tools: ToolRegistry,
   askMode: boolean,
   contractEnabled: boolean,
+  artifactReadAvailable: boolean,
 ): ReturnType<ToolRegistry['definitions']> {
   return tools.definitions().filter((tool) =>
     (!askMode || tool.category === 'read') &&
-    (contractEnabled || tool.name !== 'task_contract'),
+    (contractEnabled || tool.name !== 'task_contract') &&
+    (artifactReadAvailable || tool.name !== 'read_tool_artifact'),
   );
-}
-
-function truncateToolOutput(content: string): string {
-  // Keep a single tool result below the smallest model context budget. Large
-  // command logs otherwise defeat conversation packing and crowd out the task.
-  const max = 80_000;
-  return content.length <= max ? content : `${content.slice(0, max)}\n… tool output truncated`;
 }
 
 function formatToolError(error: unknown): string {

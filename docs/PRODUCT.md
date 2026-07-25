@@ -71,7 +71,7 @@ Sources:
 | Context | Local BM25/path/symbol index, visible startup build/validation gate, freshness checks, token packing, multi-root, `@file` mentions |
 | Models | OpenAI, Anthropic, Gemini, OpenAI-compatible endpoints |
 | Agent | Multi-turn tool loop, task plan, evidence-gated completion, automatic verification, ask-only mode |
-| Tools | Read, list, search, write, patch, shell, Git, context search, task updates |
+| Tools | Read, list, search, write, patch, shell, Git, context search, task updates, session-scoped oversized-result readback |
 | Trust | Workspace path boundary, allow/ask/deny policy, command rules, hooks, checkpoints |
 | Sessions | Local persistence, resume/latest, list/show/delete/export |
 | UX | Ink TUI, responsive branded welcome/workspace rail, action timeline, context telemetry, plan rail, inline permission band, interruption |
@@ -94,6 +94,12 @@ The runtime treats provider usage as a hard session budget. It estimates usage
 when a compatible endpoint omits token counters, clamps the provider output
 allowance to the remaining budget, and records skipped tool calls rather than
 leaving an incomplete assistant/tool message pair.
+
+Tool output has a separate budget. Oversized success and failure results retain
+the evidence needed to decide the next action without injecting the full log
+into every following model call. Complete captured output can be paged from a
+redacted, expiring, session-bound local artifact; upstream capture loss remains
+explicit and is never described as recoverable.
 
 That makes Skein particularly strong for individual developers, regulated
 teams, self-hosted environments, and tooling groups building their own agent

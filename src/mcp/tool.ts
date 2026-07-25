@@ -7,7 +7,7 @@ import {ToolInputError} from '../tools/types.js';
 
 const MAX_ARGUMENT_BYTES = 256_000;
 const MAX_DESCRIPTION_LENGTH = 4_000;
-const MAX_RESULT_LENGTH = 80_000;
+const MAX_RESULT_BYTES = 5 * 1024 * 1024;
 const MAX_SCHEMA_BYTES = 100_000;
 
 export type McpRemoteTool = Pick<
@@ -58,6 +58,8 @@ export function createMcpToolAdapter(options: McpToolAdapterOptions): AgentTool 
         metadata: {
           mcpServer: options.serverName,
           mcpTool: remoteTool.name,
+          sourceBytes: normalized.sourceBytes,
+          sourceTruncated: normalized.sourceTruncated,
           ...(normalized.isError ? {mcpError: true} : {}),
         },
       };
@@ -128,9 +130,14 @@ function assertArguments(arguments_: Record<string, unknown>): void {
   }
 }
 
-function normalizeCallResult(result: unknown): {content: string; isError: boolean} {
+function normalizeCallResult(result: unknown): {
+  content: string;
+  isError: boolean;
+  sourceBytes: number;
+  sourceTruncated: boolean;
+} {
   if (!isRecord(result)) {
-    return {content: truncateResult(safeJson(result)), isError: false};
+    return boundResult(safeJson(result), false);
   }
   const isError = result.isError === true;
   const sections: string[] = [];
@@ -145,7 +152,26 @@ function normalizeCallResult(result: unknown): {content: string; isError: boolea
   }
   const content = sections.filter(Boolean).join('\n\n') ||
     (isError ? 'The MCP tool reported an error.' : 'The MCP tool completed without output.');
-  return {content: truncateResult(content), isError};
+  return boundResult(content, isError);
+}
+
+function boundResult(content: string, isError: boolean): {
+  content: string;
+  isError: boolean;
+  sourceBytes: number;
+  sourceTruncated: boolean;
+} {
+  const sourceBytes = Buffer.byteLength(content);
+  if (sourceBytes <= MAX_RESULT_BYTES) {
+    return {content, isError, sourceBytes, sourceTruncated: false};
+  }
+  const marker = `\n... ${sourceBytes - MAX_RESULT_BYTES} or more source bytes omitted by the MCP safety limit ...\n`;
+  const markerBytes = Buffer.byteLength(marker);
+  const available = MAX_RESULT_BYTES - markerBytes;
+  const headBytes = Math.floor(available * 0.6);
+  const tailBytes = available - headBytes;
+  const bounded = `${sliceUtf8Start(content, headBytes)}${marker}${sliceUtf8End(content, tailBytes)}`;
+  return {content: bounded, isError, sourceBytes, sourceTruncated: true};
 }
 
 function formatContentBlock(block: unknown): string {
@@ -205,11 +231,6 @@ function shortHash(value: string): string {
   return createHash('sha256').update(value).digest('hex').slice(0, 8);
 }
 
-function truncateResult(content: string): string {
-  if (content.length <= MAX_RESULT_LENGTH) return content;
-  return `${content.slice(0, MAX_RESULT_LENGTH)}\n... MCP result truncated`;
-}
-
 function sanitizeOutputText(value: string): string {
   return stripAnsi(value).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
 }
@@ -224,6 +245,20 @@ function safeJson(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function sliceUtf8Start(value: string, maxBytes: number): string {
+  const buffer = Buffer.from(value);
+  let end = Math.min(buffer.length, maxBytes);
+  while (end > 0 && (buffer[end] ?? 0) >= 0x80 && (buffer[end] ?? 0) < 0xc0) end -= 1;
+  return buffer.subarray(0, end).toString('utf8');
+}
+
+function sliceUtf8End(value: string, maxBytes: number): string {
+  const buffer = Buffer.from(value);
+  let start = Math.max(0, buffer.length - maxBytes);
+  while (start < buffer.length && (buffer[start] ?? 0) >= 0x80 && (buffer[start] ?? 0) < 0xc0) start += 1;
+  return buffer.subarray(start).toString('utf8');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
