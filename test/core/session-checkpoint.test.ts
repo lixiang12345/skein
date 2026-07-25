@@ -1,4 +1,4 @@
-import {access, mkdtemp, readFile, rm, symlink, unlink, writeFile} from 'node:fs/promises';
+import {access, mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {afterEach, describe, expect, it} from 'vitest';
@@ -32,6 +32,31 @@ describe('sessions and checkpoints', () => {
     const loaded = await store.load(session.id);
     expect(loaded.messages).toHaveLength(1);
     expect((await store.list())[0]?.title).toBe('Fix queue');
+  });
+
+  it('loads an unmodified legacy 0.3.9 session without Contract fields', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-session-legacy-'));
+    const directory = join(root, 'sessions');
+    roots.push(root);
+    await mkdir(directory, {recursive: true});
+    const legacy = {
+      id: 'legacy-039',
+      title: 'Legacy session',
+      workspace: root,
+      createdAt: '2026-07-24T00:00:00.000Z',
+      updatedAt: '2026-07-24T00:00:00.000Z',
+      model: 'test',
+      provider: 'compatible',
+      messages: [],
+      tasks: [],
+      changedFiles: [],
+      audit: [],
+      usage: {inputTokens: 0, outputTokens: 0},
+    };
+    await writeFile(join(directory, 'legacy-039.json'), `${JSON.stringify(legacy)}\n`);
+    const loaded = await new SessionStore(root, directory).load('legacy-039');
+    expect(loaded.taskContract).toBeUndefined();
+    expect(loaded.lastRun).toBeUndefined();
   });
 
   it('restores file bytes without touching the project Git history', async () => {

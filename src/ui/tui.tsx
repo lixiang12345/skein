@@ -75,6 +75,7 @@ import {
   updateAgentQueued,
   updateAgentTelemetry,
   updateAssistantDelta,
+  updateContractProgress,
   updateTool,
 } from './timeline-reducers.js';
 
@@ -368,6 +369,11 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       case 'tasks':
         setTasks(event.tasks.map((task) => ({...task})));
         break;
+      case 'contract': {
+        setTimeline((items) => updateContractProgress(items, event.contract, separator));
+        refreshSession();
+        break;
+      }
       case 'skill':
         append({id: nextId(), kind: 'skill', name: event.name, description: event.description});
         break;
@@ -1654,6 +1660,17 @@ function initialTimeline(session: Session, banner: BannerInfo, setupProblem?: st
   // resumed session keeps its transcript and skips the banner.
   if (!items.length) {
     items.push({id: nextId(), kind: 'banner', model: banner.model, engine: banner.engine, workspace: banner.workspace, version: banner.version});
+  }
+  if (session.taskContract && session.taskContract.state !== 'satisfied') {
+    const required = session.taskContract.acceptanceCriteria.filter((item) => item.required);
+    const satisfied = required
+      .filter((item) => item.status === 'satisfied').length;
+    items.push({
+      id: 'task-contract-progress',
+      kind: 'notice',
+      tone: session.taskContract.state === 'blocked' ? 'error' : 'info',
+      text: `Contract ${session.taskContract.state} | ${satisfied}/${required.length} accepted`,
+    });
   }
   if (setupProblem && items.length <= 1) items.push({id: nextId(), kind: 'notice', tone: 'error', text: setupProblem});
   return items;

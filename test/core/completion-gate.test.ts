@@ -4,7 +4,7 @@ import {
   captureVerification,
   classifyVerificationCommand,
 } from '../../src/agent/completion-gate.js';
-import type {ToolCall, ToolResult} from '../../src/types.js';
+import type {SessionAuditEvent, TaskContract, ToolCall, ToolResult} from '../../src/types.js';
 
 describe('completion gate', () => {
   it.each([
@@ -82,7 +82,212 @@ describe('completion gate', () => {
     });
     expect(report.detail).toContain('may have changed workspace files');
   });
+
+  it('does not report verified while required acceptance is pending', () => {
+    const evidence = captureVerification(
+      shellCall('test-passed', 'npm test'), result('test-passed', true), 1, [],
+    );
+    const report = buildRunCompletion(
+      ['/workspace/src/app.ts'],
+      evidence ? [evidence] : [],
+      1,
+      'complete',
+      contract('pending', []),
+      [successfulAudit('test-passed')],
+    );
+    expect(report).toMatchObject({
+      status: 'unverified',
+      acceptance: {pending: 1, satisfied: 0},
+    });
+  });
+
+  it('requires a successful audit reference before accepting satisfied criteria', () => {
+    const withoutAudit = buildRunCompletion(
+      [], [], 0, 'complete', contract('satisfied', ['invented']), [],
+    );
+    expect(withoutAudit).toMatchObject({status: 'unverified', acceptance: {pending: 1}});
+
+    const testEvidence = captureVerification(
+      shellCall('test-ok', 'npm test'), result('test-ok', true), 0, [],
+    );
+    const withAudit = buildRunCompletion(
+      [], testEvidence ? [testEvidence] : [], 0, 'complete',
+      contract('satisfied', ['tool-ok']), [successfulAudit('tool-ok')],
+    );
+    expect(withAudit).toMatchObject({status: 'no_changes', acceptance: {satisfied: 1}});
+  });
+
+  it('enforces Contract verification requirements after the final mutation', () => {
+    const taskContract = contract('satisfied', ['write-ok']);
+    taskContract.verificationRequirements = ['npm test'];
+    const withoutCheck = buildRunCompletion(
+      ['/workspace/src/app.ts'], [], 1, 'complete', taskContract, [successfulAudit('write-ok')],
+    );
+    expect(withoutCheck).toMatchObject({
+      status: 'unverified',
+      acceptance: {missingVerification: ['npm test']},
+    });
+    const testEvidence = captureVerification(
+      shellCall('test-ok', 'npm test'), result('test-ok', true), 1, [],
+    );
+    const withCheck = buildRunCompletion(
+      ['/workspace/src/app.ts'], testEvidence ? [testEvidence] : [], 1,
+      'complete', taskContract, [successfulAudit('write-ok'), successfulAudit('test-ok')],
+    );
+    expect(withCheck).toMatchObject({
+      status: 'verified',
+      acceptance: {missingVerification: []},
+    });
+  });
+
+  it('does not accept a different command of the same verification kind', () => {
+    const taskContract = contract('satisfied', ['write-ok']);
+    taskContract.verificationRequirements = ['npm test'];
+    const differentTest = captureVerification(
+      shellCall('different-test', 'node --test'), result('different-test', true), 1, [],
+    );
+    const report = buildRunCompletion(
+      ['/workspace/src/app.ts'], differentTest ? [differentTest] : [], 1,
+      'complete', taskContract, [successfulAudit('write-ok'), successfulAudit('different-test')],
+    );
+    expect(report).toMatchObject({
+      status: 'unverified',
+      acceptance: {missingVerification: ['npm test']},
+    });
+  });
+
+  it('invalidates criterion evidence recorded before a later mutation', () => {
+    const taskContract = contract('satisfied', ['first-write']);
+    const verification = captureVerification(
+      shellCall('test-after-second-write', 'npm test'),
+      result('test-after-second-write', true),
+      2,
+      [],
+    );
+    const report = buildRunCompletion(
+      ['/workspace/src/app.ts'],
+      verification ? [verification] : [],
+      2,
+      'complete',
+      taskContract,
+      [
+        successfulAudit('first-write', '2026-07-25T00:00:01.000Z', ['/workspace/src/app.ts']),
+        successfulAudit('second-write', '2026-07-25T00:00:02.000Z', ['/workspace/src/app.ts']),
+        successfulAudit('test-after-second-write', '2026-07-25T00:00:03.000Z'),
+      ],
+    );
+    expect(report).toMatchObject({
+      status: 'unverified',
+      acceptance: {pending: 1, satisfied: 0},
+    });
+  });
+
+  it('uses the Contract audit boundary when timestamps are identical', () => {
+    const taskContract = contract('satisfied', ['old-tool']);
+    taskContract.auditBoundaryId = 'audit-before-contract';
+    const verification = captureVerification(
+      shellCall('verify-after-contract', 'npm test'),
+      result('verify-after-contract', true),
+      0,
+      [],
+    );
+    const sameTimestamp = '2026-07-25T00:00:00.000Z';
+    const report = buildRunCompletion(
+      [],
+      verification ? [verification] : [],
+      0,
+      'complete',
+      taskContract,
+      [
+        successfulAudit('old-tool', sameTimestamp),
+        successfulAudit('before-contract', sameTimestamp),
+        successfulAudit('verify-after-contract', sameTimestamp),
+      ],
+    );
+    expect(report).toMatchObject({status: 'unverified', acceptance: {pending: 1, satisfied: 0}});
+  });
+
+  it('invalidates evidence before a failed tool that changed files', () => {
+    const taskContract = contract('satisfied', ['first-write']);
+    const verification = captureVerification(
+      shellCall('verify-after-failed-write', 'npm test'),
+      result('verify-after-failed-write', true),
+      2,
+      [],
+    );
+    const failedMutation: SessionAuditEvent = {
+      id: 'audit-failed-write', createdAt: '2026-07-25T00:00:02.000Z',
+      type: 'tool', toolCallId: 'failed-write', tool: 'shell', outcome: 'failure',
+      metadata: {changedFiles: ['/workspace/src/app.ts']},
+    };
+    const report = buildRunCompletion(
+      ['/workspace/src/app.ts'],
+      verification ? [verification] : [],
+      2,
+      'complete',
+      taskContract,
+      [
+        successfulAudit('first-write', '2026-07-25T00:00:01.000Z', ['/workspace/src/app.ts']),
+        failedMutation,
+        successfulAudit('verify-after-failed-write', '2026-07-25T00:00:03.000Z'),
+      ],
+    );
+    expect(report).toMatchObject({status: 'unverified', acceptance: {pending: 1, satisfied: 0}});
+  });
+
+  it('keeps acceptance active when mutation tracking prevents a verified completion', () => {
+    const taskContract = contract('satisfied', ['write-ok']);
+    const verification = captureVerification(
+      shellCall('verify', 'npm test'), result('verify', true), 1, [],
+    );
+    const report = buildRunCompletion(
+      ['/workspace/src/app.ts'],
+      verification ? [verification] : [],
+      1,
+      'unknown',
+      taskContract,
+      [
+        successfulAudit('write-ok', '2026-07-25T00:00:01.000Z', ['/workspace/src/app.ts']),
+        successfulAudit('verify', '2026-07-25T00:00:02.000Z'),
+      ],
+    );
+    expect(report).toMatchObject({status: 'unverified', acceptance: {state: 'active', satisfied: 1}});
+  });
 });
+
+function contract(status: 'pending' | 'satisfied', evidenceRefs: string[]): TaskContract {
+  return {
+    version: 1,
+    state: status === 'satisfied' ? 'satisfied' : 'active',
+    objective: 'Implement the change',
+    scope: ['workspace'],
+    constraints: [],
+    nonGoals: [],
+    acceptanceCriteria: [{
+      id: 'criterion-1', description: 'Requested behavior works', required: true,
+      status, evidenceRefs,
+    }],
+    verificationRequirements: [],
+    createdAt: '2026-07-25T00:00:00.000Z',
+    updatedAt: '2026-07-25T00:00:00.000Z',
+  };
+}
+
+function successfulAudit(
+  toolCallId: string,
+  createdAt = '2026-07-25T00:00:01.000Z',
+  changedFiles: string[] = [],
+): SessionAuditEvent {
+  return {
+    id: `audit-${toolCallId}`,
+    createdAt,
+    type: 'tool',
+    toolCallId,
+    tool: 'shell',
+    outcome: 'success',
+    ...(changedFiles.length ? {metadata: {changedFiles}} : {}),
+  };
+}
 
 function shellCall(id: string, command: string): ToolCall {
   return {id, name: 'shell', arguments: {command}};

@@ -96,6 +96,27 @@ export function endStreamingAssistants(items: TimelineItem[]): TimelineItem[] {
     : item);
 }
 
+/** Keep complex-task acceptance visible as one compact, replaceable row. */
+export function updateContractProgress(
+  items: TimelineItem[],
+  contract: Extract<AgentEvent, {type: 'contract'}>['contract'],
+  separator = ' | ',
+): TimelineItem[] {
+  const id = 'task-contract-progress';
+  if (contract.state === 'satisfied') return items.filter((item) => item.id !== id);
+  const required = contract.acceptanceCriteria.filter((item) => item.required);
+  const satisfied = required.filter((item) => item.status === 'satisfied').length;
+  const next: TimelineItem = {
+    id,
+    kind: 'notice',
+    tone: contract.state === 'blocked' ? 'error' : 'info',
+    text: `Contract ${contract.state}${separator}${satisfied}/${required.length} accepted`,
+  };
+  const index = items.findIndex((item) => item.id === id);
+  if (index < 0) return [...items, next].slice(-500);
+  return items.map((item, itemIndex) => itemIndex === index ? next : item);
+}
+
 export function updateAgent(items: TimelineItem[], event: Extract<AgentEvent, {type: 'agent_done'}>): TimelineItem[] {
   const found = items.some((item) => item.kind === 'agent' && item.id === event.id);
   if (!found) {

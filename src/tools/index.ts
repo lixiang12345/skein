@@ -7,6 +7,7 @@ import {ToolRegistry} from './registry.js';
 import {searchCodeTool} from './search.js';
 import {shellTool} from './shell.js';
 import {taskTool} from './task.js';
+import {taskContractTool} from './task-contract.js';
 import {workingMemoryTool} from './working-memory.js';
 import {writeFileTool} from './write.js';
 
@@ -27,6 +28,7 @@ export function createDefaultToolRegistry(
     shellTool,
     gitTool,
     taskTool,
+    taskContractTool,
     workingMemoryTool,
   ]);
 }
@@ -50,5 +52,6 @@ export {
   shellTool,
   gitTool,
   taskTool,
+  taskContractTool,
   workingMemoryTool,
 };

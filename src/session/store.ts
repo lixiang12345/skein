@@ -80,6 +80,19 @@ const lastRunSchema = z.object({
   checks: z.array(verificationEvidenceSchema),
   detail: z.string(),
   mutationTracking: z.enum(['complete', 'unknown']).optional(),
+  acceptance: z.object({
+    state: z.enum(['draft', 'active', 'satisfied', 'blocked']),
+    total: z.number().int().nonnegative(),
+    satisfied: z.number().int().nonnegative(),
+    pending: z.number().int().nonnegative(),
+    blocked: z.number().int().nonnegative(),
+    missingVerification: z.array(z.string()),
+    unresolved: z.array(z.object({
+      id: z.string(),
+      description: z.string(),
+      status: z.enum(['pending', 'satisfied', 'blocked']),
+    }).strict()),
+  }).strict().optional(),
   reason: z.string(),
   finishedAt: z.string(),
 }).strict();
@@ -92,6 +105,29 @@ const workingMemorySchema = z.object({
   openQuestions: z.array(z.string()),
   relevantFiles: z.array(z.string()),
   lastUpdatedAt: z.string(),
+}).strict();
+
+const taskContractCriterionSchema = z.object({
+  id: z.string().min(1).max(128),
+  description: z.string().min(1).max(2_000),
+  required: z.boolean(),
+  status: z.enum(['pending', 'satisfied', 'blocked']),
+  evidenceRefs: z.array(z.string().min(1).max(256)).max(64),
+  note: z.string().max(2_000).optional(),
+}).strict();
+
+const taskContractSchema = z.object({
+  version: z.literal(1),
+  state: z.enum(['draft', 'active', 'satisfied', 'blocked']),
+  objective: z.string().min(1).max(20_000),
+  scope: z.array(z.string().min(1).max(2_000)).max(64),
+  constraints: z.array(z.string().min(1).max(2_000)).max(64),
+  nonGoals: z.array(z.string().min(1).max(2_000)).max(64),
+  acceptanceCriteria: z.array(taskContractCriterionSchema).min(1).max(64),
+  verificationRequirements: z.array(z.string().min(1).max(2_000)).max(64),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  auditBoundaryId: z.string().min(1).max(128).optional(),
 }).strict();
 
 const sessionSchema = z.object({
@@ -111,6 +147,7 @@ const sessionSchema = z.object({
   compactedThroughMessageId: z.string().optional(),
   workingMemory: workingMemorySchema.optional(),
   contextSources: z.array(contextSourceSchema).max(64).optional(),
+  taskContract: taskContractSchema.optional(),
   lastRun: lastRunSchema.optional(),
   usage: z.object({
     inputTokens: z.number().nonnegative(),

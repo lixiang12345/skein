@@ -246,6 +246,56 @@ export interface WorkingMemory {
   lastUpdatedAt: string;
 }
 
+export type TaskContractState = 'draft' | 'active' | 'satisfied' | 'blocked';
+
+export type TaskContractCriterionStatus = 'pending' | 'satisfied' | 'blocked';
+
+export interface TaskContractCriterion {
+  id: string;
+  description: string;
+  required: boolean;
+  status: TaskContractCriterionStatus;
+  evidenceRefs: string[];
+  note?: string;
+}
+
+/** Durable acceptance state for a complex executable request. */
+export interface TaskContract {
+  version: 1;
+  state: TaskContractState;
+  objective: string;
+  scope: string[];
+  constraints: string[];
+  nonGoals: string[];
+  acceptanceCriteria: TaskContractCriterion[];
+  verificationRequirements: string[];
+  createdAt: string;
+  updatedAt: string;
+  /** Final audit event before creation; avoids reusing same-timestamp evidence. */
+  auditBoundaryId?: string;
+}
+
+export type ToolFailureClass =
+  | 'schema_input'
+  | 'unknown_tool'
+  | 'permission_denied'
+  | 'command_exit'
+  | 'timeout'
+  | 'cancelled'
+  | 'hook'
+  | 'execution'
+  | 'contract_required';
+
+export interface ToolFailureReceipt {
+  class: ToolFailureClass;
+  retryable: boolean;
+  repairHint: string;
+  attempt: number;
+  remaining: number;
+  circuitOpen: boolean;
+  signature: string;
+}
+
 export type CompletionStatus =
   | 'no_changes'
   | 'verified'
@@ -275,6 +325,19 @@ export interface RunCompletion {
   checks: VerificationEvidence[];
   detail: string;
   mutationTracking?: 'complete' | 'unknown';
+  acceptance?: {
+    state: TaskContractState;
+    total: number;
+    satisfied: number;
+    pending: number;
+    blocked: number;
+    missingVerification: string[];
+    unresolved: Array<{
+      id: string;
+      description: string;
+      status: TaskContractCriterionStatus;
+    }>;
+  };
 }
 
 export interface SessionRunRecord extends RunCompletion {
@@ -325,6 +388,7 @@ export interface Session {
   compactedThroughMessageId?: string;
   workingMemory?: WorkingMemory;
   contextSources?: ContextSource[];
+  taskContract?: TaskContract;
   lastRun?: SessionRunRecord;
   usage: {
     inputTokens: number;
@@ -342,6 +406,7 @@ export type AgentEvent =
   | {type: 'tool_result'; result: ToolResult}
   | {type: 'permission'; call: ToolCall; category: ToolCategory}
   | {type: 'tasks'; tasks: SessionTask[]}
+  | {type: 'contract'; contract: TaskContract}
   | {type: 'skill'; name: string; description: string}
   | {type: 'memory'; count: number; scope: string}
   | {type: 'agent_queued'; id: string; profile: string; task: string; phase?: AgentPhase}

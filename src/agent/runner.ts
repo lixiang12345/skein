@@ -32,6 +32,8 @@ import type {
   ToolCall,
   ToolCategory,
   ToolResult,
+  ToolFailureReceipt,
+  TaskContract,
 } from '../types.js';
 import {
   buildRetrievedContext,
@@ -46,6 +48,15 @@ import {
   completionRecoveryDirective,
   type CapturedVerification,
 } from './completion-gate.js';
+import {
+  createDraftTaskContract,
+  shouldUseTaskContract,
+} from './task-contract.js';
+import {
+  classifyToolFailure,
+  formatFailureReceipt,
+  ToolRecoveryController,
+} from './tool-recovery.js';
 import type {PromptContextProvider} from './prompt-context.js';
 import {discoverWorkspaceRules, formatWorkspaceRules} from './rules.js';
 import {
@@ -142,6 +153,8 @@ export class AgentRunner {
     const changeSequenceAtStart = this.changeSequence;
     const runChangedFiles = new Set<string>();
     const verificationEvidence: CapturedVerification[] = [];
+    const toolRecovery = new ToolRecoveryController();
+    let activeRunContract: TaskContract | undefined = this.session.taskContract;
     let mutationTracking: 'complete' | 'unknown' = 'complete';
     let completionRecoveryAttempted = false;
     const recordExecution = (call: ToolCall, result: ToolResult): void => {
@@ -160,12 +173,21 @@ export class AgentRunner {
       );
       if (evidence) verificationEvidence.push(evidence);
     };
-    const completionReport = (): RunCompletion => buildRunCompletion(
-      runChangedFiles,
-      verificationEvidence,
-      this.changeSequence,
-      mutationTracking,
-    );
+    const completionReport = (): RunCompletion => {
+      const completion = buildRunCompletion(
+        runChangedFiles,
+        verificationEvidence,
+        this.changeSequence,
+        mutationTracking,
+        activeRunContract,
+        this.session.audit ?? [],
+      );
+      if (completion.acceptance && activeRunContract && activeRunContract.state !== 'draft') {
+        activeRunContract.state = completion.acceptance.state;
+        activeRunContract.updatedAt = new Date().toISOString();
+      }
+      return completion;
+    };
     const finishRun = async (reason: string, completion = completionReport()): Promise<Session> => {
       this.session.lastRun = {
         ...completion,
@@ -173,6 +195,10 @@ export class AgentRunner {
         finishedAt: new Date().toISOString(),
       };
       await this.persist();
+      const finalContract = activeRunContract && structuredClone(activeRunContract);
+      if (finalContract && finalContract.state !== 'satisfied') {
+        await emit({type: 'contract', contract: finalContract});
+      }
       await emit({type: 'done', reason, completion});
       return this.session;
     };
@@ -223,10 +249,22 @@ export class AgentRunner {
       const turnDirective = buildTurnDirective(request, {
         agents: Boolean(this.config.agents?.enabled),
       });
+      const contractEnabled = shouldUseTaskContract(
+        request,
+        turnDirective.intent,
+        this.session.taskContract,
+      );
+      if (contractEnabled && (!this.session.taskContract || this.session.taskContract.state === 'satisfied')) {
+        this.session.taskContract = createDraftTaskContract(request, this.session.audit?.at(-1)?.id);
+        await this.persist();
+        await emit({type: 'contract', contract: structuredClone(this.session.taskContract)});
+      }
+      activeRunContract = contractEnabled ? this.session.taskContract : undefined;
       const promptSections = [
         `intent:${turnDirective.intent}`,
         ...(workspaceRules ? ['rules'] : []),
         ...(this.session.workingMemory ? ['working-memory'] : []),
+        ...(contractEnabled ? ['task-contract'] : []),
         ...(this.session.contextSummary ? ['session-summary'] : []),
         ...(!trivialTurn ? [`context:${packed.engine}`] : []),
         ...(packed.text ? [`code:${packed.engine}`] : []),
@@ -284,9 +322,7 @@ export class AgentRunner {
         const availableTokens = this.config.agent.maxSessionTokens -
           (this.session.usage.inputTokens + this.session.usage.outputTokens);
         const estimatedInputTokens = estimateMessages(messages) + estimateToolDefinitions(
-          options.askMode
-            ? this.tools.definitions().filter((tool) => tool.category === 'read')
-            : this.tools.definitions(),
+          visibleToolDefinitions(this.tools, options.askMode === true, contractEnabled),
         );
         if (availableTokens <= 0 || estimatedInputTokens >= availableTokens) {
           return finishRun('token_budget');
@@ -295,9 +331,7 @@ export class AgentRunner {
           this.config.model.maxTokens ?? 8_192,
           availableTokens - estimatedInputTokens,
         ));
-        const visibleTools = options.askMode
-          ? this.tools.definitions().filter((tool) => tool.category === 'read')
-          : this.tools.definitions();
+        const visibleTools = visibleToolDefinitions(this.tools, options.askMode === true, contractEnabled);
         const assistantId = randomUUID();
         const response = await this.completeModel(
           messages,
@@ -342,9 +376,17 @@ export class AgentRunner {
         }
 
         if (response.toolCalls.length) {
+          const visibleToolNames = new Set(visibleTools.map((tool) => tool.name));
           for (const call of response.toolCalls) {
             throwIfAborted(options.signal);
-            const result = await this.executeTool(call, options, emit);
+            const result = await this.executeTool(
+              call,
+              options,
+              emit,
+              toolRecovery,
+              visibleToolNames,
+            );
+            if (call.name === 'task_contract') activeRunContract = this.session.taskContract;
             recordExecution(call, result);
             this.session.messages.push(message('tool', result.content, {
               toolCallId: result.toolCallId,
@@ -377,10 +419,13 @@ export class AgentRunner {
         }
 
         const completion = completionReport();
-        if (this.config.agent.autoVerify &&
+        if ((this.config.agent.autoVerify || Boolean(completion.acceptance)) &&
           (completion.status === 'unverified' || completion.status === 'verification_failed') &&
           !completionRecoveryAttempted && turn < maxTurns) {
           completionRecoveryAttempted = true;
+          if (activeRunContract) {
+            await emit({type: 'contract', contract: structuredClone(activeRunContract)});
+          }
           this.session.messages.push(message('user', completionRecoveryDirective(completion)));
           await this.persist();
           await this.runAfterTurnHook(turn, [], options.signal);
@@ -466,10 +511,31 @@ export class AgentRunner {
     call: ToolCall,
     options: RunOptions,
     emit: (event: AgentEvent) => Promise<void>,
+    recovery = new ToolRecoveryController(),
+    visibleToolNames?: ReadonlySet<string>,
   ): Promise<ToolResult> {
+    const preflight = recovery.preflight(call);
+    if (preflight) {
+      const result = failedResult(call, 'Tool call rejected by the recovery circuit.', preflight);
+      this.recordToolResult(result);
+      await emit({type: 'tool_result', result});
+      return result;
+    }
+    if (visibleToolNames && !visibleToolNames.has(call.name)) {
+      const receipt = recovery.recordFailure(call, 'unknown_tool');
+      const result = failedResult(
+        call,
+        `Tool is not exposed for this turn: ${call.name}`,
+        receipt,
+      );
+      this.recordToolResult(result);
+      await emit({type: 'tool_result', result});
+      return result;
+    }
     const tool = this.tools.get(call.name);
     if (!tool) {
-      const result = failedResult(call, `Unknown tool: ${call.name}`);
+      const receipt = recovery.recordFailure(call, 'unknown_tool');
+      const result = failedResult(call, `Unknown tool: ${call.name}`, receipt);
       this.recordToolResult(result);
       await emit({type: 'tool_result', result});
       return result;
@@ -480,7 +546,19 @@ export class AgentRunner {
         tool.permissionCategories?.(call.arguments) ?? [tool.definition.category],
       );
     } catch (error) {
-      const result = failedResult(call, formatToolError(error));
+      const failureClass = classifyThrownToolFailure(error, options.signal);
+      const receipt = recovery.recordFailure(call, failureClass);
+      const result = failedResult(call, formatToolError(error), receipt);
+      this.recordToolResult(result, tool.definition.category);
+      await emit({type: 'tool_result', result});
+      return result;
+    }
+    if (categories.some((category) => category !== 'read') && this.session.taskContract?.state === 'draft') {
+      const receipt = recovery.recordFailure(call, 'contract_required');
+      const result = failedResult(call,
+        'Potentially mutating work is paused until the draft Task Contract is activated.',
+        receipt,
+      );
       this.recordToolResult(result, tool.definition.category);
       await emit({type: 'tool_result', result});
       return result;
@@ -488,7 +566,8 @@ export class AgentRunner {
     for (const category of categories) {
       const allowed = await this.authorize(call, category, options, emit);
       if (!allowed) {
-        const result = failedResult(call, `Permission denied for ${category} operation.`);
+        const receipt = recovery.recordFailure(call, 'permission_denied');
+        const result = failedResult(call, `Permission denied for ${category} operation.`, receipt);
         this.recordToolResult(result, category);
         await emit({type: 'tool_result', result});
         return result;
@@ -557,15 +636,31 @@ export class AgentRunner {
           ...(afterHookError ? {toolSucceeded: true, hookError: afterHookError.message} : {}),
         },
       };
+      if (!result.ok) {
+        const failureClass = options.signal?.aborted
+          ? 'cancelled'
+          : classifyToolFailure(result);
+        const receipt = recovery.recordFailure(call, failureClass);
+        result.content = truncateToolOutput(`${formatFailureReceipt(receipt)}\n${result.content}`);
+        result.metadata = {...result.metadata, failure: receipt};
+      } else {
+        recovery.recordSuccess(call);
+      }
       this.contextManager.recordTool(this.session, call, result);
       if (JSON.stringify(this.session.tasks) !== tasksBefore || call.name === 'task') {
         await emit({type: 'tasks', tasks: this.session.tasks.map((task) => ({...task}))});
+      }
+      if (call.name === 'task_contract' && this.session.taskContract) {
+        await emit({type: 'contract', contract: structuredClone(this.session.taskContract)});
       }
       this.recordToolResult(result, tool.definition.category);
       await emit({type: 'tool_result', result});
       return result;
     } catch (error) {
-      const result = failedResult(call, formatToolError(error));
+      const normalized = toError(error);
+      const failureClass = classifyThrownToolFailure(normalized, options.signal);
+      const receipt = recovery.recordFailure(call, failureClass);
+      const result = failedResult(call, formatToolError(error), receipt);
       this.recordToolResult(result, tool.definition.category);
       await emit({type: 'tool_result', result});
       return result;
@@ -853,13 +948,31 @@ function uniqueCategories(categories: ToolCategory[]): ToolCategory[] {
   return [...new Set(categories)];
 }
 
-function failedResult(call: ToolCall, content: string): ToolResult {
+function failedResult(
+  call: ToolCall,
+  content: string,
+  failure?: ToolFailureReceipt,
+): ToolResult {
   return {
     toolCallId: call.id,
     name: call.name,
     ok: false,
-    content: truncateToolOutput(content),
+    content: truncateToolOutput(failure
+      ? `${formatFailureReceipt(failure)}\n${content}`
+      : content),
+    ...(failure ? {metadata: {failure}} : {}),
   };
+}
+
+function visibleToolDefinitions(
+  tools: ToolRegistry,
+  askMode: boolean,
+  contractEnabled: boolean,
+): ReturnType<ToolRegistry['definitions']> {
+  return tools.definitions().filter((tool) =>
+    (!askMode || tool.category === 'read') &&
+    (contractEnabled || tool.name !== 'task_contract'),
+  );
 }
 
 function truncateToolOutput(content: string): string {
@@ -873,6 +986,14 @@ function formatToolError(error: unknown): string {
   const normalized = toError(error);
   if (normalized.name === 'ZodError') return `Invalid tool arguments: ${normalized.message}`;
   return normalized.message;
+}
+
+function classifyThrownToolFailure(error: unknown, signal?: AbortSignal) {
+  const normalized = toError(error);
+  if (isAbortError(normalized) || signal?.aborted) return 'cancelled' as const;
+  if (normalized.name === 'HookError') return 'hook' as const;
+  if (normalized.name === 'ZodError' || normalized.name === 'ToolInputError') return 'schema_input' as const;
+  return 'execution' as const;
 }
 
 function titleFromInput(input: string): string {

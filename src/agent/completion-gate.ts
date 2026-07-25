@@ -1,11 +1,14 @@
 import {createHash} from 'node:crypto';
 import type {
   RunCompletion,
+  SessionAuditEvent,
+  TaskContract,
   ToolCall,
   ToolResult,
   VerificationEvidence,
   VerificationKind,
 } from '../types.js';
+import {eventsSinceContract} from './task-contract.js';
 import {commandForCall} from '../tools/permissions.js';
 
 export interface CapturedVerification extends VerificationEvidence {
@@ -44,8 +47,13 @@ export function buildRunCompletion(
   evidence: CapturedVerification[],
   currentChangeSequence: number,
   mutationTracking: 'complete' | 'unknown' = 'complete',
+  taskContract?: TaskContract,
+  audit: SessionAuditEvent[] = [],
 ): RunCompletion {
   const files = [...new Set(changedFiles)];
+  const acceptance = taskContract
+    ? buildAcceptance(taskContract, audit, evidence, currentChangeSequence)
+    : undefined;
   if (mutationTracking === 'unknown') {
     return {
       status: 'unverified',
@@ -55,14 +63,25 @@ export function buildRunCompletion(
         ? `Workspace changes were observed, but a dynamic shell command prevented complete mutation tracking for ${fileCount(files.length)}.`
         : 'A dynamic shell command may have changed workspace files, but reliable mutation tracking was unavailable.',
       mutationTracking,
+      ...(acceptance ? {acceptance: acceptanceForCompletion(acceptance, 'unverified')} : {}),
     };
   }
   if (!files.length) {
+    if (acceptance && acceptanceUnresolved(acceptance)) {
+      return {
+        status: 'unverified',
+        changedFiles: [],
+        checks: [],
+        detail: acceptanceDetail(acceptance),
+        acceptance: acceptanceForCompletion(acceptance, 'unverified'),
+      };
+    }
     return {
       status: 'no_changes',
       changedFiles: [],
       checks: [],
       detail: 'No workspace files changed in this run.',
+      ...(acceptance ? {acceptance: acceptanceForCompletion(acceptance, 'no_changes')} : {}),
     };
   }
 
@@ -79,6 +98,7 @@ export function buildRunCompletion(
       changedFiles: files,
       checks,
       detail: `No successful verification was recorded after the last change to ${fileCount(files.length)}.`,
+      ...(acceptance ? {acceptance: acceptanceForCompletion(acceptance, 'unverified')} : {}),
     };
   }
   const failures = checks.filter((check) => !check.ok);
@@ -88,6 +108,16 @@ export function buildRunCompletion(
       changedFiles: files,
       checks,
       detail: `${failures.length} of ${checks.length} current verification ${checks.length === 1 ? 'check' : 'checks'} failed.`,
+      ...(acceptance ? {acceptance: acceptanceForCompletion(acceptance, 'verification_failed')} : {}),
+    };
+  }
+  if (acceptance && acceptanceUnresolved(acceptance)) {
+    return {
+      status: 'unverified',
+      changedFiles: files,
+      checks,
+      detail: acceptanceDetail(acceptance),
+      acceptance: acceptanceForCompletion(acceptance, 'unverified'),
     };
   }
   return {
@@ -95,10 +125,27 @@ export function buildRunCompletion(
     changedFiles: files,
     checks,
     detail: `${checks.length} current verification ${checks.length === 1 ? 'check' : 'checks'} passed for ${fileCount(files.length)}.`,
+    ...(acceptance ? {acceptance: acceptanceForCompletion(acceptance, 'verified')} : {}),
   };
 }
 
 export function completionRecoveryDirective(completion: RunCompletion): string {
+  if (completion.acceptance && acceptanceUnresolved(completion.acceptance)) {
+    const unresolved = completion.acceptance.unresolved
+      .map((item) => `- [${item.status}] ${item.id}: ${item.description}`)
+      .join('\n');
+    const failed = completion.checks
+      .filter((check) => !check.ok)
+      .map((check) => `- ${check.command} (tool call ${check.toolCallId})`)
+      .join('\n');
+    return `<runtime-completion-gate status="acceptance_unresolved" authorization="none">
+The run cannot be marked complete while required Task Contract criteria remain unresolved:
+${unresolved || '- Acceptance criteria are satisfied.'}${completion.acceptance.missingVerification.length
+    ? `\nMissing required verification:\n${completion.acceptance.missingVerification.map((item) => `- ${item}`).join('\n')}`
+    : ''}${failed ? `\nCurrent failed checks:\n${failed}` : ''}
+Complete or explicitly block only these criteria. Mark a criterion satisfied through task_contract only with successful tool audit evidence or a successful tool-call id. Run the smallest missing verification after the final mutation. Do not repeat the final summary or claim acceptance from prose alone.
+</runtime-completion-gate>`;
+  }
   if (completion.status === 'verification_failed') {
     const failed = completion.checks
       .filter((check) => !check.ok)
@@ -117,6 +164,98 @@ Inspect the recorded tool output, correct the underlying problem, and rerun the 
 ${changeSummary}
 Run the smallest relevant test, typecheck, lint, build, or git diff --check now. Do not repeat the final summary or claim a check passed without a successful tool result. If verification cannot be run safely, state the exact reason and leave the result unverified.
 </runtime-completion-gate>`;
+}
+
+function buildAcceptance(
+  contract: TaskContract,
+  audit: SessionAuditEvent[],
+  evidence: CapturedVerification[],
+  currentChangeSequence: number,
+): NonNullable<RunCompletion['acceptance']> {
+  const contractEvents = eventsSinceContract(audit, contract);
+  const successfulEvents = contractEvents.filter((event) =>
+    event.type === 'tool' &&
+    event.outcome === 'success' &&
+    event.tool !== 'task_contract' &&
+    event.tool !== 'task' &&
+    event.tool !== 'working_memory',
+  );
+  const latestMutationIndex = contractEvents.reduce((latest, event, index) => {
+    const changedFiles = event.metadata?.changedFiles;
+    return Array.isArray(changedFiles) && changedFiles.length > 0
+      ? index
+      : latest;
+  }, -1);
+  const successfulRefs = new Map<string, {event: SessionAuditEvent; index: number}>();
+  for (const event of successfulEvents) {
+    const index = contractEvents.indexOf(event);
+    successfulRefs.set(event.id, {event, index});
+    successfulRefs.set(event.toolCallId, {event, index});
+  }
+  const required = contract.acceptanceCriteria.filter((item) => item.required);
+  const normalized = required.map((item) => {
+    const evidenceValid = item.evidenceRefs.some((ref) => {
+      const event = successfulRefs.get(ref);
+      return event !== undefined && event.index >= latestMutationIndex;
+    });
+    const status = item.status === 'satisfied' && !evidenceValid ? 'pending' : item.status;
+    return {id: item.id, description: item.description, status};
+  });
+  const satisfied = normalized.filter((item) => item.status === 'satisfied').length;
+  const pending = normalized.filter((item) => item.status === 'pending').length;
+  const blocked = normalized.filter((item) => item.status === 'blocked').length;
+  const currentChecks = evidence.filter((item) => item.changeSequence === currentChangeSequence && item.ok);
+  const requirements = contract.verificationRequirements.length
+    ? contract.verificationRequirements
+    : ['Record at least one successful test, typecheck, lint, build, check, or diff check after the final mutation.'];
+  const missingVerification = requirements.filter((requirement) =>
+    !verificationRequirementMet(requirement, currentChecks),
+  );
+  return {
+    state: contract.state === 'draft'
+      ? 'draft'
+      : blocked > 0 ? 'blocked' : pending > 0 || missingVerification.length > 0 ? 'active' : 'satisfied',
+    total: normalized.length,
+    satisfied,
+    pending,
+    blocked,
+    missingVerification,
+    unresolved: normalized.filter((item) => item.status !== 'satisfied'),
+  };
+}
+
+function acceptanceDetail(acceptance: NonNullable<RunCompletion['acceptance']>): string {
+  const parts = [
+    acceptance.pending ? `${acceptance.pending} pending` : '',
+    acceptance.blocked ? `${acceptance.blocked} blocked` : '',
+    acceptance.missingVerification.length ? `${acceptance.missingVerification.length} verification requirements missing` : '',
+  ].filter(Boolean).join(' and ');
+  const unresolved = acceptance.pending + acceptance.blocked;
+  return `Task Contract acceptance is unresolved: ${parts} required ${unresolved === 1 ? 'criterion' : 'criteria'}.`;
+}
+
+function verificationRequirementMet(
+  requirement: string,
+  checks: CapturedVerification[],
+): boolean {
+  const normalized = normalizeCommand(requirement);
+  const broad = normalized.match(/^Record at least one successful (.+) after the final mutation\.?$/iu);
+  if (broad) return checks.length > 0;
+  const commandKey = createHash('sha256').update(normalized).digest('hex');
+  return checks.some((item) => item.commandKey === commandKey);
+}
+
+function acceptanceUnresolved(acceptance: NonNullable<RunCompletion['acceptance']>): boolean {
+  return acceptance.pending > 0 || acceptance.blocked > 0 || acceptance.missingVerification.length > 0;
+}
+
+function acceptanceForCompletion(
+  acceptance: NonNullable<RunCompletion['acceptance']>,
+  status: RunCompletion['status'],
+): NonNullable<RunCompletion['acceptance']> {
+  if (acceptance.state === 'draft' || acceptance.state === 'blocked' ||
+    status === 'verified' || status === 'no_changes') return acceptance;
+  return acceptance.state === 'active' ? acceptance : {...acceptance, state: 'active'};
 }
 
 export function classifyVerificationCommand(command: string): VerificationKind | undefined {

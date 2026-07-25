@@ -54,11 +54,13 @@ class ScriptedProvider implements ModelProvider {
 class QueueProvider implements ModelProvider {
   readonly name = 'compatible';
   readonly calls: ChatMessage[][] = [];
+  readonly seenTools: string[][] = [];
 
   constructor(private readonly responses: ModelResponse[]) {}
 
-  async complete(messages: ChatMessage[]): Promise<ModelResponse> {
+  async complete(messages: ChatMessage[], tools: Parameters<ModelProvider['complete']>[1]): Promise<ModelResponse> {
     this.calls.push(messages);
+    this.seenTools.push(tools.map((tool) => tool.name));
     const response = this.responses.shift();
     if (!response) throw new Error('No scripted response remaining.');
     return response;
@@ -150,6 +152,197 @@ describe('AgentRunner', () => {
     expect(session.changedFiles).toHaveLength(0);
   });
 
+  it('keeps task_contract hidden for short executable requests', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-contract-short-'));
+    roots.push(root);
+    const provider = new QueueProvider([{content: 'Done.', toolCalls: []}]);
+    const runner = new AgentRunner({config: config(root), provider, contextEngine: context});
+
+    const session = await runner.run('create result.txt');
+
+    expect(provider.seenTools[0]).not.toContain('task_contract');
+    expect(session.taskContract).toBeUndefined();
+  });
+
+  it('does not carry a satisfied Contract into a later short request', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-contract-finished-'));
+    roots.push(root);
+    const session = createSession({workspace: root, model: 'test-model', provider: 'compatible'});
+    session.taskContract = {
+      version: 1, state: 'satisfied', objective: 'Previous work', scope: ['workspace'],
+      constraints: [], nonGoals: [], verificationRequirements: ['npm test'],
+      acceptanceCriteria: [{
+        id: 'done', description: 'Previous work done', required: true,
+        status: 'satisfied', evidenceRefs: ['old-write'],
+      }],
+      createdAt: '2026-07-24T00:00:00.000Z', updatedAt: '2026-07-24T01:00:00.000Z',
+    };
+    const provider = new QueueProvider([{content: 'Hello.', toolCalls: []}]);
+    const runner = new AgentRunner({config: config(root), provider, contextEngine: context, session});
+
+    const completed = await runner.run('hello');
+
+    expect(provider.seenTools[0]).not.toContain('task_contract');
+    expect(completed.lastRun).toMatchObject({status: 'no_changes', reason: 'completed'});
+    expect(completed.lastRun?.acceptance).toBeUndefined();
+  });
+
+  it('rejects a hidden task_contract call remembered from session history', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-contract-hidden-call-'));
+    roots.push(root);
+    const provider = new QueueProvider([
+      {content: '', toolCalls: [{id: 'hidden-contract', name: 'task_contract', arguments: {action: 'show'}}]},
+      {content: 'Used only visible tools.', toolCalls: []},
+    ]);
+    const events: AgentEvent[] = [];
+    const runner = new AgentRunner({config: config(root), provider, contextEngine: context});
+
+    await runner.run('hello', {onEvent: (event) => { events.push(event); }});
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'tool_result',
+        result: expect.objectContaining({
+          ok: false,
+          content: expect.stringContaining('not exposed for this turn'),
+          metadata: {failure: expect.objectContaining({class: 'unknown_tool'})},
+        }),
+      }),
+    ]));
+  });
+
+  it('creates a draft Contract and blocks mutation until it is activated', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-contract-required-'));
+    roots.push(root);
+    const provider = new QueueProvider([
+      {
+        content: '',
+        toolCalls: [{
+          id: 'write-before-contract', name: 'write_file',
+          arguments: {path: 'result.txt', content: 'unsafe\n'},
+        }],
+      },
+      {content: 'Blocked.', toolCalls: []},
+      {content: 'Still blocked.', toolCalls: []},
+    ]);
+    const events: AgentEvent[] = [];
+    const runner = new AgentRunner({config: config(root), provider, contextEngine: context});
+    const request = 'Refactor the command runtime across the provider, session, and UI modules; preserve backward compatibility; add deterministic tests; verify typecheck and build; and keep unrelated files unchanged.';
+
+    const session = await runner.run(request, {onEvent: (event) => { events.push(event); }});
+
+    await expect(readFile(join(root, 'result.txt'), 'utf8')).rejects.toMatchObject({code: 'ENOENT'});
+    expect(provider.seenTools[0]).toContain('task_contract');
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({type: 'contract', contract: expect.objectContaining({state: 'draft'})}),
+      expect.objectContaining({
+        type: 'tool_result',
+        result: expect.objectContaining({
+          ok: false,
+          metadata: {failure: expect.objectContaining({class: 'contract_required'})},
+        }),
+      }),
+    ]));
+    expect(session.taskContract?.state).toBe('draft');
+    expect(session.lastRun).toMatchObject({status: 'unverified', acceptance: {pending: 2}});
+  });
+
+  it('activates a Contract, records real evidence, and completes accepted work', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-contract-complete-'));
+    roots.push(root);
+    const provider = new QueueProvider([
+      {content: '', toolCalls: [{id: 'activate', name: 'task_contract', arguments: {action: 'activate'}}]},
+      {content: '', toolCalls: [{
+        id: 'write-contract-result', name: 'write_file',
+        arguments: {path: 'result.txt', content: 'done\n'},
+      }]},
+      {content: '', toolCalls: [{
+        id: 'verify-contract-result', name: 'shell',
+        arguments: {command: 'node --test'},
+      }]},
+      {content: '', toolCalls: [
+        {id: 'accept-outcome', name: 'task_contract', arguments: {
+          action: 'update_criterion', id: 'requested-outcome-fixed', status: 'satisfied',
+          evidence_refs: ['write-contract-result'],
+        }},
+        {id: 'accept-verification', name: 'task_contract', arguments: {
+          action: 'update_criterion', id: 'verification-fixed', status: 'satisfied',
+          evidence_refs: ['verify-contract-result'],
+        }},
+      ]},
+      {content: 'Accepted and verified.', toolCalls: []},
+    ]);
+    const runnerConfig = config(root);
+    runnerConfig.agent.maxTurns = 6;
+    runnerConfig.agent.maxSessionTokens = 100_000;
+    runnerConfig.permissions.shell = 'allow';
+    runnerConfig.permissions.network = 'allow';
+    const session = createSession({workspace: root, model: 'test-model', provider: 'compatible'});
+    session.taskContract = {
+      version: 1,
+      state: 'draft',
+      objective: 'Implement a verified cross-module change',
+      scope: ['workspace'],
+      constraints: [],
+      nonGoals: [],
+      acceptanceCriteria: [
+        {id: 'requested-outcome-fixed', description: 'Implement outcome', required: true, status: 'pending', evidenceRefs: []},
+        {id: 'verification-fixed', description: 'Verify outcome', required: true, status: 'pending', evidenceRefs: []},
+      ],
+      verificationRequirements: ['node --test'],
+      createdAt: '2026-07-25T00:00:00.000Z',
+      updatedAt: '2026-07-25T00:00:00.000Z',
+    };
+    const runner = new AgentRunner({config: runnerConfig, provider, contextEngine: context, session});
+
+    const completed = await runner.run('Continue the active complex implementation and finish every required acceptance criterion with deterministic evidence.');
+
+    expect(await readFile(join(root, 'result.txt'), 'utf8')).toBe('done\n');
+    expect(completed.taskContract?.state).toBe('satisfied');
+    expect(completed.lastRun).toMatchObject({
+      status: 'verified',
+      acceptance: {pending: 0, blocked: 0, satisfied: 2},
+    });
+  });
+
+  it('rejects forged Contract evidence and keeps acceptance pending', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-contract-forged-'));
+    roots.push(root);
+    const session = createSession({workspace: root, model: 'test-model', provider: 'compatible'});
+    session.taskContract = {
+      version: 1, state: 'active', objective: 'Verified work', scope: ['workspace'],
+      constraints: [], nonGoals: [], verificationRequirements: [],
+      acceptanceCriteria: [{
+        id: 'criterion-1', description: 'Real evidence', required: true,
+        status: 'pending', evidenceRefs: [],
+      }],
+      createdAt: '2026-07-25T00:00:00.000Z', updatedAt: '2026-07-25T00:00:00.000Z',
+    };
+    const provider = new QueueProvider([
+      {content: '', toolCalls: [{id: 'forge', name: 'task_contract', arguments: {
+        action: 'update_criterion', id: 'criterion-1', status: 'satisfied',
+        evidence_refs: ['invented-tool-result'],
+      }}]},
+      {content: 'Unable to prove acceptance.', toolCalls: []},
+      {content: 'Still unable to prove acceptance.', toolCalls: []},
+    ]);
+    const events: AgentEvent[] = [];
+    const runner = new AgentRunner({config: config(root), provider, contextEngine: context, session});
+
+    const completed = await runner.run('Continue the active contract and complete it with valid evidence.', {
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'tool_result',
+        result: expect.objectContaining({ok: false, content: expect.stringContaining('Unknown or unsuccessful evidence refs')}),
+      }),
+    ]));
+    expect(completed.taskContract?.acceptanceCriteria[0]?.status).toBe('pending');
+    expect(completed.lastRun).toMatchObject({status: 'unverified', acceptance: {pending: 1}});
+  });
+
   it('injects steering received while a provider response is in flight', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mosaic-steering-'));
     roots.push(root);
@@ -211,6 +404,53 @@ describe('AgentRunner', () => {
     });
     expect(toolResults[0]?.content).toContain('Invalid tool arguments');
     expect(session.messages.at(-1)?.content).toBe('Recovered after invalid arguments.');
+  });
+
+  it('opens the identical-call circuit before a third malformed tool execution', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-identical-tool-circuit-'));
+    roots.push(root);
+    const malformed = {name: 'write_file', arguments: {path: 'missing-content.txt'}};
+    const provider = new QueueProvider([
+      {content: '', toolCalls: [{id: 'bad-one', ...malformed}]},
+      {content: '', toolCalls: [{id: 'bad-two', ...malformed}]},
+      {content: '', toolCalls: [{id: 'bad-three', ...malformed}]},
+      {content: 'Stopped retrying the identical call.', toolCalls: []},
+    ]);
+    const events: AgentEvent[] = [];
+    const runner = new AgentRunner({config: config(root), provider, contextEngine: context});
+
+    await runner.run('write a file', {onEvent: (event) => { events.push(event); }});
+
+    expect(events.filter((event) => event.type === 'tool_start')).toHaveLength(2);
+    const failures = events.filter((event): event is Extract<AgentEvent, {type: 'tool_result'}> =>
+      event.type === 'tool_result',
+    );
+    expect(failures).toHaveLength(3);
+    expect(failures[1]?.result.metadata).toMatchObject({
+      failure: {class: 'schema_input', attempt: 2, circuitOpen: true},
+    });
+    expect(failures[2]?.result.content).toContain('rejected by the recovery circuit');
+    expect(failures[2]?.result.content.startsWith('Failure: schema_input')).toBe(true);
+  });
+
+  it('allows a corrected retry after a schema failure', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-corrected-tool-retry-'));
+    roots.push(root);
+    const provider = new QueueProvider([
+      {content: '', toolCalls: [{
+        id: 'invalid-write', name: 'write_file', arguments: {path: 'result.txt'},
+      }]},
+      {content: '', toolCalls: [{
+        id: 'corrected-write', name: 'write_file',
+        arguments: {path: 'result.txt', content: 'corrected\n'},
+      }]},
+      {content: 'Corrected.', toolCalls: []},
+    ]);
+    const runner = new AgentRunner({config: config(root), provider, contextEngine: context});
+
+    await runner.run('write result.txt');
+
+    expect(await readFile(join(root, 'result.txt'), 'utf8')).toBe('corrected\n');
   });
 
   it('does not execute a tool after its permission request is aborted', async () => {

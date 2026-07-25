@@ -148,6 +148,15 @@ export class HeadlessReporter {
           process.stderr.write(this.paint.dim(`${this.glyphs.meta} plan ${this.glyphs.separator} ${completed}/${event.tasks.length} complete\n`));
         }
         break;
+      case 'contract': {
+        const required = event.contract.acceptanceCriteria.filter((item) => item.required);
+        const satisfied = required
+          .filter((item) => item.status === 'satisfied').length;
+        process.stderr.write(this.paint.dim(
+          `${this.glyphs.meta} contract ${this.glyphs.separator} ${event.contract.state} ${this.glyphs.separator} ${satisfied}/${required.length} accepted\n`,
+        ));
+        break;
+      }
       case 'writer_lane':
         process.stderr.write(
           `${event.status === 'ready' || event.status === 'integrated' ? this.paint.green(this.glyphs.success) : this.paint.red(this.glyphs.error)} writer ${event.id.slice(0, 8)} ${this.glyphs.separator} ${event.status} ${this.glyphs.separator} ${event.detail}\n`,
@@ -239,6 +248,7 @@ function sessionSummary(session: Session): Record<string, unknown> {
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     tasks: session.tasks,
+    ...(session.taskContract ? {taskContract: session.taskContract} : {}),
     changedFiles: session.changedFiles,
     ...(session.lastRun ? {lastRun: session.lastRun} : {}),
     usage: session.usage,

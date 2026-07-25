@@ -167,6 +167,32 @@ describe('HeadlessReporter', () => {
     expect(lines[1]).toMatchObject({type: 'session', session: {lastRun: {status: 'verified'}}});
   });
 
+  it('keeps unresolved Contract acceptance non-successful in JSON', () => {
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const reporter = new HeadlessReporter({format: 'json'});
+    reporter.onEvent({
+      type: 'done',
+      reason: 'unverified',
+      completion: {
+        status: 'unverified',
+        changedFiles: [],
+        checks: [],
+        detail: 'Task Contract acceptance is unresolved: 1 pending required criterion.',
+        acceptance: {
+          state: 'active', total: 1, satisfied: 0, pending: 1, blocked: 0, missingVerification: [],
+          unresolved: [{id: 'criterion-1', description: 'Verify behavior', status: 'pending'}],
+        },
+      },
+    });
+    reporter.finish(session);
+
+    const output = JSON.parse(stdout.mock.calls.map(([chunk]) => String(chunk)).join('')) as {
+      ok?: boolean;
+      completion?: {acceptance?: {pending?: number}};
+    };
+    expect(output).toMatchObject({ok: false, completion: {acceptance: {pending: 1}}});
+  });
+
   it('uses only ASCII chrome when the fallback glyph mode is enabled', () => {
     const previous = process.env.SKEIN_GLYPHS;
     process.env.SKEIN_GLYPHS = 'ascii';
