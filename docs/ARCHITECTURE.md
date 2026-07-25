@@ -53,7 +53,9 @@
     generation. After the write succeeds, compare only newly added or at least
     1.5x-expanded functions before refreshing changed index paths. Exact
     normalized hashes identify Type-1/2 clones; winnowed 10-token shingles and
-    Jaccard similarity identify warning-only Type-3 candidates. Type-4 semantic
+    Jaccard similarity identify Type-3 candidates. The repository-owned fixture
+    matrix calibrates threshold 0.55: unsuppressed Type-1/2 matches block the
+    existing completion gate, while Type-3 remains warning-only. Type-4 semantic
     equivalence is explicitly outside this deterministic contract.
 12. Run configured verification commands after changes. The completion gate accepts
    only current successful test, typecheck, lint, build, check, or `git diff
@@ -99,8 +101,8 @@ build, targeted upsert, and deletion. Audit receipts never retain source,
 normalized tokens, literal contents, prompts, or raw retrieval failures.
 
 Duplication findings are folded into the existing completion record rather than
-creating a parallel completion state. The enforcement is explicitly
-warning-only until fixture benchmarks establish the required precision. Active
+creating a parallel completion state. Fixture benchmarks establish the required
+precision for calibrated Type-1/2 blocking; Type-3 remains warning-only. Active
 matches receive stable, bounded ids; the optional `duplication_audit` read tool
 is exposed only while unsuppressed findings exist. Suppression is exact-match,
 reason-coded, and persisted as a content-free audit receipt. Repaired/deleted/

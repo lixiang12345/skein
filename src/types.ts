@@ -297,7 +297,8 @@ export interface DuplicationAuditReceipt {
   baselineGeneration: string;
   changeSequence: number;
   status: 'clear' | 'warning' | 'unresolved';
-  warningOnly: true;
+  warningOnly: boolean;
+  enforcement?: 'warning' | 'blocking';
   checkedFunctions: number;
   skippedSmallFunctions: number;
   matches: Array<{
@@ -322,7 +323,7 @@ export interface DuplicationSuppressionReceipt {
 }
 
 export interface DuplicationCompletionSummary {
-  enforcement: 'warning';
+  enforcement: 'warning' | 'blocking';
   status: 'clear' | 'warning' | 'unresolved' | 'suppressed';
   warningCount: number;
   unresolvedCount: number;

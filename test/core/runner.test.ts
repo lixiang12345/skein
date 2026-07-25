@@ -262,15 +262,15 @@ describe('AgentRunner', () => {
     const result = events.find((event): event is Extract<AgentEvent, {type: 'tool_result'}> =>
       event.type === 'tool_result' && event.result.name === 'write_file');
     expect(result?.result.metadata?.duplicationAudit).toMatchObject({
-      status: 'warning', baselineGeneration: 'g-before', warningOnly: true,
+      status: 'warning', baselineGeneration: 'g-before', warningOnly: false,
       matches: [{
         matchId: expect.stringMatching(/^[a-f0-9]{24}$/),
         kind: 'type-1-or-2', candidateSymbol: 'original', changedSymbol: 'copy',
       }],
     });
-    expect(result?.result.content).toContain('Duplication audit (warning-only)');
+    expect(result?.result.content).toContain('Duplication audit (completion-blocking Type-1/2)');
     expect(runner.getSession().lastRun?.duplication).toMatchObject({
-      enforcement: 'warning', status: 'warning', warningCount: 1,
+      enforcement: 'blocking', status: 'warning', warningCount: 1,
     });
     expect(provider.seenTools[0]).not.toContain('duplication_audit');
     expect(provider.seenTools[1]).toContain('duplication_audit');

@@ -45,10 +45,12 @@ inspectable index for code retrieval and no retrieval service dependency.
   enforcement, changed-file telemetry, and persisted tool results.
 - **Repository reuse guard:** the first substantive implementation addition gets
   a warning-only, content-free receipt of current helper candidates and read
-  evidence. After a successful TS/JS write, Skein also compares newly added or
+  evidence. After a successful TS/JS write, Skein compares newly added or
   significantly expanded functions with the pre-write index generation using
-  normalized fingerprints. Docs, config, fixtures, generated files, deletions,
-  small functions, and ordinary local edits stay quiet.
+  normalized fingerprints. Calibrated Type-1/2 matches block completion until
+  reuse, removal, or exact audited suppression; Type-3 remains warning-only.
+  Docs, config, fixtures, generated files, deletions, small functions, and
+  ordinary local edits stay quiet.
 - **Bounded tool context:** large tool results cannot crowd the task out of the
   model window. Skein keeps a token-budgeted head/tail receipt and, when the
   producer captured the complete result, retains a redacted session-scoped

@@ -755,7 +755,10 @@ export class AgentRunner {
         : execution.content;
       if (reuseWarning) completeContent = `${reuseWarning}\n\n${completeContent}`;
       if (duplicationAudit?.status === 'warning' || duplicationAudit?.status === 'unresolved') {
-        completeContent = `Duplication audit (warning-only): ${duplicationAudit.rationale}\n\n${completeContent}`;
+        const enforcement = duplicationAudit.enforcement === 'blocking'
+          ? 'completion-blocking Type-1/2'
+          : 'warning-only';
+        completeContent = `Duplication audit (${enforcement}): ${duplicationAudit.rationale}\n\n${completeContent}`;
       }
       const metadata: Record<string, unknown> = {
         ...(execution.metadata ?? {}),

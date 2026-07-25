@@ -121,7 +121,7 @@ ${body('located', 'values', 10).trimStart()}`;
         changeSequence: 1,
       });
       expect(receipt).toMatchObject({
-        status: 'warning', warningOnly: true, baselineGeneration: 'g-before',
+        status: 'warning', warningOnly: false, enforcement: 'blocking', baselineGeneration: 'g-before',
         matches: [{
           matchId: expect.stringMatching(/^[a-f0-9]{24}$/),
           kind: 'type-1-or-2', candidateSymbol: 'original', changedSymbol: 'copy',

@@ -54,7 +54,7 @@ short-height case. The current full-suite count is recorded from the latest
 
 ## Recommended Order
 
-### P0-D: Warning-only repository reuse and duplication audit
+### P0-D: Repository reuse and calibrated duplication enforcement
 
 Version `0.3.14` added the prompt ladder and pre-write `ReuseReceipt`. Version
 `0.3.15` added a post-write deterministic audit for ordinary TS/TSX/JS/JSX/MJS/
@@ -66,14 +66,16 @@ renames, moves, deletions, small functions, tests, fixtures, generated/vendor/
 dist/minified/declaration files, and failed writes stay quiet. Receipts expose
 at most eight path/symbol/similarity matches through session, TUI, JSON, and
 JSONL without storing source, normalized tokens, prompts, or raw index errors.
-Type-1/2 and Type-3 remain warning-only; unavailable evidence is `unresolved`,
-never a false pass. The next slice is completion-gate suppression UX and
-deterministic benchmark/threshold calibration. Type-4 semantic equivalence is
-not promised.
+Type-3 remains warning-only and unavailable evidence is `unresolved`, never a
+false pass. The repository-owned `duplication-benchmark-v1` fixture matrix
+calibrated threshold `0.55` at 100% recall, 100% precision, and 0% legitimate
+boundary false-positive rate. Unsuppressed Type-1/2 matches now block the
+existing completion record; Type-4 semantic equivalence is not promised.
 
-Version `0.3.16` keeps the same warning-only enforcement while integrating
-duplication summaries into the single completion receipt and every output
-surface. Active matches receive stable 24-character ids. The read-only
+Version `0.3.16` integrated duplication summaries into the single completion
+receipt and every output surface while keeping all matches warning-only. Version
+`0.3.17` keeps Type-3 warning-only but promotes calibrated Type-1/2 matches to
+the completion gate. Active matches receive stable 24-character ids. The read-only
 `duplication_audit` tool is disclosed only when unsuppressed matches exist and
 can suppress one exact match with a reason code plus a bounded explanation;
 wildcard/global suppression, credentials, and code-block reasons are rejected.

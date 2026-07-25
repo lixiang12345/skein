@@ -255,7 +255,7 @@ describe('completion gate', () => {
     expect(report).toMatchObject({status: 'unverified', acceptance: {state: 'active', satisfied: 1}});
   });
 
-  it('attaches warning-only duplication evidence without changing verified status', () => {
+  it('keeps Type-3 warning-only without changing verified status', () => {
     const verification = captureVerification(
       shellCall('verify-duplicate', 'npm test'), result('verify-duplicate', true), 1, [],
     );
@@ -273,7 +273,7 @@ describe('completion gate', () => {
           matchId: 'abcdef0123456789abcdef01',
           changedPath: '/workspace/src/copy.ts', changedSymbol: 'copy',
           candidatePath: '/workspace/src/helper.ts', candidateSymbol: 'helper',
-          kind: 'type-1-or-2', similarity: 1,
+          kind: 'type-3', similarity: 0.6,
         }],
       },
     );
@@ -282,6 +282,28 @@ describe('completion gate', () => {
       duplication: {enforcement: 'warning', status: 'warning', warningCount: 1},
     });
     expect(completionRecoveryDirective(report)).not.toContain('duplication');
+  });
+
+  it('blocks completion for an unsuppressed high-confidence Type-1/2 duplicate', () => {
+    const verification = captureVerification(
+      shellCall('verify-duplicate-block', 'npm test'), result('verify-duplicate-block', true), 1, [],
+    );
+    const report = buildRunCompletion(
+      ['/workspace/src/copy.ts'], verification ? [verification] : [], 1, 'complete', undefined, [],
+      {
+        enforcement: 'blocking', status: 'warning', warningCount: 1,
+        unresolvedCount: 0, suppressedCount: 0,
+        matches: [{
+          matchId: 'abcdef0123456789abcdef01',
+          changedPath: '/workspace/src/copy.ts', changedSymbol: 'copy',
+          candidatePath: '/workspace/src/helper.ts', candidateSymbol: 'helper',
+          kind: 'type-1-or-2', similarity: 1,
+        }],
+      },
+    );
+    expect(report).toMatchObject({status: 'unverified', duplication: {enforcement: 'blocking'}});
+    expect(completionRecoveryDirective(report)).toContain('duplication_blocking');
+    expect(completionRecoveryDirective(report)).toContain('abcdef0123456789abcdef01');
   });
 });
 

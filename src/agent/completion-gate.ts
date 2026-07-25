@@ -90,6 +90,17 @@ export function buildRunCompletion(
     };
   }
 
+  if (duplication?.enforcement === 'blocking' && duplication.warningCount > 0) {
+    return {
+      status: 'unverified',
+      changedFiles: files,
+      checks: [],
+      detail: 'A high-confidence duplicate implementation requires reuse, extension, or an exact audited suppression before completion.',
+      ...(acceptance ? {acceptance: acceptanceForCompletion(acceptance, 'unverified')} : {}),
+      duplication,
+    };
+  }
+
   const latestByCommand = new Map<string, CapturedVerification>();
   for (const item of evidence) {
     if (item.changeSequence === currentChangeSequence) {
@@ -139,6 +150,16 @@ export function buildRunCompletion(
 }
 
 export function completionRecoveryDirective(completion: RunCompletion): string {
+  if (completion.duplication?.enforcement === 'blocking' && completion.duplication.warningCount > 0) {
+    const matches = completion.duplication.matches
+      .filter((match) => match.kind === 'type-1-or-2')
+      .map((match) => `- ${match.matchId}: ${match.changedPath} ${match.changedSymbol} duplicates ${match.candidatePath} ${match.candidateSymbol}`)
+      .join('\n');
+    return `<runtime-completion-gate status="duplication_blocking" authorization="none">
+High-confidence Type-1/2 duplication was detected. Reuse or extend the existing implementation, remove the duplicate, or call the read-only duplication_audit tool to suppress an exact match with an audited reason. Suppression never waives verification, safety, accessibility, error handling, concurrency, or correctness requirements.
+${matches || '- Active duplicate match details are unavailable.'}
+</runtime-completion-gate>`;
+  }
   if (completion.acceptance && acceptanceUnresolved(completion.acceptance)) {
     const unresolved = completion.acceptance.unresolved
       .map((item) => `- [${item.status}] ${item.id}: ${item.description}`)

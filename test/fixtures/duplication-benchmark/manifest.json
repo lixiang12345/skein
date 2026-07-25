@@ -1,0 +1,51 @@
+[
+  {
+    "id": "exact-type-2",
+    "baseline": "baseline/helper.ts",
+    "current": "current/exact.ts",
+    "destination": "src/exact.ts",
+    "expected": "type-1-or-2"
+  },
+  {
+    "id": "near-type-3",
+    "baseline": "baseline/helper.ts",
+    "current": "current/near.ts",
+    "destination": "src/near.ts",
+    "expected": "type-3"
+  },
+  {
+    "id": "security-boundary",
+    "baseline": "baseline/security.ts",
+    "current": "current/formatting.ts",
+    "destination": "src/formatting.ts",
+    "expected": "none"
+  },
+  {
+    "id": "type-4-boundary",
+    "baseline": "baseline/helper.ts",
+    "current": "current/reduce.ts",
+    "destination": "src/reduce.ts",
+    "expected": "none"
+  },
+  {
+    "id": "same-function-edit",
+    "baseline": "baseline/editable.ts",
+    "current": "current/editable.ts",
+    "destination": "src/editable.ts",
+    "expected": "none"
+  },
+  {
+    "id": "small-function",
+    "baseline": "baseline/helper.ts",
+    "current": "current/small.ts",
+    "destination": "src/small.ts",
+    "expected": "none"
+  },
+  {
+    "id": "generated-path",
+    "baseline": "baseline/helper.ts",
+    "current": "current/generated.ts",
+    "destination": "src/generated.generated.ts",
+    "expected": "none"
+  }
+]

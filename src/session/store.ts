@@ -65,7 +65,7 @@ const reuseReceiptSchema = z.object({
   indexGeneration: z.string().optional(),
   changeSequence: z.number().int().nonnegative(),
   status: z.enum(['warning', 'skipped', 'unresolved']),
-  warningOnly: z.literal(true),
+  warningOnly: z.boolean(),
 }).strict();
 
 const duplicationMatchSchema = z.object({
@@ -82,7 +82,8 @@ const duplicationAuditSchema = z.object({
   baselineGeneration: z.string().min(1),
   changeSequence: z.number().int().nonnegative(),
   status: z.enum(['clear', 'warning', 'unresolved']),
-  warningOnly: z.literal(true),
+  warningOnly: z.boolean(),
+  enforcement: z.enum(['warning', 'blocking']).optional(),
   checkedFunctions: z.number().int().nonnegative(),
   skippedSmallFunctions: z.number().int().nonnegative(),
   matches: z.array(duplicationMatchSchema).max(8),
@@ -160,7 +161,7 @@ const lastRunSchema = z.object({
   detail: z.string(),
   mutationTracking: z.enum(['complete', 'unknown']).optional(),
   duplication: z.object({
-    enforcement: z.literal('warning'),
+    enforcement: z.enum(['warning', 'blocking']),
     status: z.enum(['clear', 'warning', 'unresolved', 'suppressed']),
     warningCount: z.number().int().nonnegative(),
     unresolvedCount: z.number().int().nonnegative(),

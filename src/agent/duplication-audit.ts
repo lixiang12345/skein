@@ -12,7 +12,7 @@ import {
   supportsFunctionFingerprintPath,
 } from '../context/function-fingerprint.js';
 
-const NEAR_CLONE_THRESHOLD = 0.55;
+export const DEFAULT_NEAR_CLONE_THRESHOLD = 0.55;
 const MAX_MATCHES = 8;
 
 export async function auditChangedFunctions(input: {
@@ -21,7 +21,12 @@ export async function auditChangedFunctions(input: {
   changeSequence: number;
   recheckFunctions?: ReadonlySet<string>;
   recheckPaths?: ReadonlySet<string>;
+  nearCloneThreshold?: number;
 }): Promise<DuplicationAuditReceipt | undefined> {
+  const nearCloneThreshold = input.nearCloneThreshold ?? DEFAULT_NEAR_CLONE_THRESHOLD;
+  if (!Number.isFinite(nearCloneThreshold) || nearCloneThreshold < 0 || nearCloneThreshold > 1) {
+    throw new Error('nearCloneThreshold must be a finite number between 0 and 1.');
+  }
   const auditableFiles = input.changedFiles.filter(supportsFunctionFingerprintPath);
   if (!auditableFiles.length) return undefined;
   const reports: ReturnType<typeof extractFunctionFingerprintReport>[] = [];
@@ -51,7 +56,7 @@ export async function auditChangedFunctions(input: {
   }
   if (!input.baseline) return unresolved(input.changeSequence);
   const lookup = createBaselineLookup(input.baseline.functions);
-  const previousByCurrent = matchCurrentFunctions(input.baseline.functions, currentFunctions);
+  const previousByCurrent = matchCurrentFunctions(input.baseline.functions, currentFunctions, nearCloneThreshold);
   const added = currentFunctions.flatMap((current) => {
     const previous = previousByCurrent.get(locationIdentity(current));
     const recheck = input.recheckFunctions?.has(identity(current)) ||
@@ -68,7 +73,7 @@ export async function auditChangedFunctions(input: {
     for (const candidate of findCandidateFunctions(lookup, item)) {
       if (previous && locationIdentity(candidate) === locationIdentity(previous)) continue;
       const similarity = fingerprintSimilarity(item, candidate);
-      if (similarity < NEAR_CLONE_THRESHOLD || (best && best.similarity >= similarity)) continue;
+      if (similarity < nearCloneThreshold || (best && best.similarity >= similarity)) continue;
       best = {candidate, similarity};
     }
     if (!best) continue;
@@ -85,11 +90,13 @@ export async function auditChangedFunctions(input: {
   matches.sort((left, right) => right.similarity - left.similarity ||
     left.changedPath.localeCompare(right.changedPath));
   const bounded = matches.slice(0, MAX_MATCHES);
+  const enforcement = bounded.some((match) => match.kind === 'type-1-or-2') ? 'blocking' : 'warning';
   return {
     baselineGeneration: input.baseline.generation,
     changeSequence: input.changeSequence,
     status: bounded.length ? 'warning' : 'clear',
-    warningOnly: true,
+    warningOnly: enforcement === 'warning',
+    enforcement,
     checkedFunctions: added.length,
     skippedSmallFunctions,
     matches: bounded,
@@ -109,6 +116,7 @@ function clear(
     changeSequence,
     status: 'clear',
     warningOnly: true,
+    enforcement: 'warning',
     checkedFunctions: 0,
     skippedSmallFunctions,
     matches: [],
@@ -182,15 +190,16 @@ function findCandidateFunctions(
 function matchCurrentFunctions(
   baseline: FunctionFingerprint[],
   current: FunctionFingerprint[],
+  nearCloneThreshold: number,
 ): Map<string, FunctionFingerprint> {
   const matches = new Map<string, FunctionFingerprint>();
   const available = new Map(baseline.map((item) => [locationIdentity(item), item]));
   assignMatches(current, matches, available, (item) => [...available.values()].filter((candidate) =>
-    identity(candidate) === identity(item) && linesOverlap(candidate, item)), false);
+    identity(candidate) === identity(item) && linesOverlap(candidate, item)), false, nearCloneThreshold);
   assignMatches(current, matches, available, (item) => [...available.values()].filter((candidate) =>
-    identity(candidate) === identity(item)), true);
+    identity(candidate) === identity(item)), true, nearCloneThreshold);
   assignMatches(current, matches, available, (item) => [...available.values()].filter((candidate) =>
-    candidate.path === item.path && linesOverlap(candidate, item)), true);
+    candidate.path === item.path && linesOverlap(candidate, item)), true, nearCloneThreshold);
   return matches;
 }
 
@@ -200,6 +209,7 @@ function assignMatches(
   available: Map<string, FunctionFingerprint>,
   candidatesFor: (item: FunctionFingerprint) => FunctionFingerprint[],
   requireSimilarity: boolean,
+  nearCloneThreshold: number,
 ): void {
   for (const item of current) {
     const currentId = locationIdentity(item);
@@ -209,7 +219,7 @@ function assignMatches(
       const similarity = fingerprintSimilarity(candidate, item);
       if (!best || similarity > best.similarity) best = {candidate, similarity};
     }
-    if (!best || (requireSimilarity && best.similarity < NEAR_CLONE_THRESHOLD)) continue;
+    if (!best || (requireSimilarity && best.similarity < nearCloneThreshold)) continue;
     matches.set(currentId, best.candidate);
     available.delete(locationIdentity(best.candidate));
   }
@@ -225,6 +235,7 @@ function unresolved(changeSequence: number, generation = 'unavailable'): Duplica
     changeSequence,
     status: 'unresolved',
     warningOnly: true,
+    enforcement: 'warning',
     checkedFunctions: 0,
     skippedSmallFunctions: 0,
     matches: [],

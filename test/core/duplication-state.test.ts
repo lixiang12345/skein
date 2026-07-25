@@ -20,7 +20,7 @@ describe('duplication completion state', () => {
     const repaired = auditEvent('repaired', clear(3), '/repo/src/a.ts');
     const summary = buildDuplicationCompletion([first, other, repaired]);
     expect(summary).toMatchObject({
-      enforcement: 'warning', status: 'warning', warningCount: 1,
+      enforcement: 'blocking', status: 'warning', warningCount: 1,
       unresolvedCount: 0, suppressedCount: 0,
       matches: [{matchId: '222222222222222222222222'}],
     });

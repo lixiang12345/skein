@@ -41,8 +41,9 @@ export function buildDuplicationCompletion(
     .map((item) => item.matchId));
   const warnings = [...active.values()].filter((match) => !suppressedIds.has(match.matchId));
   const suppressedCount = active.size - warnings.length;
+  const enforcement = warnings.some((match) => match.kind === 'type-1-or-2') ? 'blocking' : 'warning';
   return {
-    enforcement: 'warning',
+    enforcement,
     status: unresolved.size
       ? 'unresolved'
       : warnings.length ? 'warning' : suppressedCount ? 'suppressed' : 'clear',

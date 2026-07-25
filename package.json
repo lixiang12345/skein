@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.16",
+  "version": "0.3.17",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,6 +16,9 @@
   },
   "skein": {
     "releaseNotes": [
+      "Calibrated Type-1/2 duplication matches now block completion until reuse or exact audited suppression",
+      "Type-3 duplication remains warning-only and Type-4 semantic equivalence remains explicitly unsupported",
+      "Duplication benchmark fixtures report deterministic recall, precision, false-positive rate, and latency",
       "Duplication warnings now aggregate into the single completion receipt without changing verified status",
       "Exact match ids support bounded, reason-coded suppression with audit and credential/code-block safeguards",
       "Duplication audit tools are disclosed only when active warnings exist and repaired paths clear stale matches",
@@ -54,6 +57,7 @@
     "pretest:pty": "npm run build",
     "test:pty": "sh test/pty/run-visual.sh",
     "benchmark:context": "tsx scripts/benchmark-local-index.ts",
+    "benchmark:duplication": "tsx scripts/benchmark-duplication.ts",
     "verify:package": "node scripts/verify-package.mjs",
     "release:verify": "npm run check && npm run verify:package --",
     "typecheck": "tsc --noEmit",
