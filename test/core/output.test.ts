@@ -74,6 +74,7 @@ describe('HeadlessReporter', () => {
     ['completed', {reason: 'completed', completion: {status: 'no_changes'}}, 0],
     ['verified', {reason: 'completed', completion: {status: 'verified'}}, 0],
     ['needs_input', {reason: 'needs_input', completion: {status: 'no_changes'}}, 2],
+    ['needs_review', {reason: 'needs_review', completion: {status: 'no_changes'}}, 9],
     ['unverified', {reason: 'unverified', completion: {status: 'unverified'}}, 3],
     ['verification_failed', {reason: 'verification_failed', completion: {status: 'verification_failed'}}, 4],
     ['blocked', {reason: 'unverified', completion: {status: 'unverified', acceptance: {state: 'blocked'}}}, 5],

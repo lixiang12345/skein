@@ -89,6 +89,7 @@ interface PermissionRequest {
   call: ToolCall;
   category: ToolCategory;
   reason?: string;
+  humanOnly?: boolean;
   resolve: (grant: PermissionGrant) => void;
 }
 
@@ -326,6 +327,16 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     }));
   }, []);
 
+  const requestHumanApproval = useCallback((call: ToolCall, category: ToolCategory, reason?: string) => {
+    return new Promise<boolean>((resolve) => setPermission({
+      call,
+      category,
+      humanOnly: true,
+      ...(reason ? {reason} : {}),
+      resolve: (grant) => resolve(grant === true),
+    }));
+  }, []);
+
   const onEvent = useCallback((event: AgentEvent) => {
     switch (event.type) {
       case 'thinking':
@@ -437,14 +448,31 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         append({id: nextId(), kind: 'notice', tone: 'info', text: `Team run ${event.id.slice(0, 8)} started${separator}${event.objective.slice(0, 180)}`});
         break;
       case 'team_done':
-        setTeamRun((current) => ({...current, id: current?.id ?? event.id, accepted: event.accepted, reviewRounds: event.reviewRounds, ...(event.review ? {review: event.review} : {})}));
-        append({id: nextId(), kind: 'notice', tone: event.accepted ? 'success' : 'error', text: `Team run ${event.id.slice(0, 8)} ${event.accepted ? 'accepted' : 'rejected'}${separator}${event.reviewRounds} revision round${event.reviewRounds === 1 ? '' : 's'}${event.review ? `${separator}judge ${event.review.decision} ${event.review.pass} pass ${event.review.fail} fail ${event.review.unknown} unknown` : ''}`});
+        setTeamRun((current) => ({
+          ...current,
+          id: current?.id ?? event.id,
+          accepted: event.accepted,
+          needsReview: event.needsReview ?? false,
+          unresolvedCriteria: event.unresolvedCriteria ?? [],
+          reviewRounds: event.reviewRounds,
+          ...(event.review ? {review: event.review} : {}),
+        }));
+        append({
+          id: nextId(),
+          kind: 'notice',
+          tone: event.needsReview ? 'warning' : event.accepted ? 'success' : 'error',
+          text: `Team run ${event.id.slice(0, 8)} ${event.needsReview ? 'needs review' : event.accepted ? 'accepted' : 'rejected'}${separator}${event.reviewRounds} revision round${event.reviewRounds === 1 ? '' : 's'}${event.unresolvedCriteria?.length ? `${separator}${event.unresolvedCriteria.length} unresolved` : ''}${event.review ? `${separator}judge ${event.review.decision} ${event.review.pass} pass ${event.review.fail} fail ${event.review.unknown} unknown` : ''}`,
+        });
         break;
       case 'writer_lane':
         append({
           id: nextId(),
           kind: 'notice',
-          tone: event.status === 'ready' || event.status === 'integrated' ? 'success' : 'error',
+          tone: event.status === 'ready' || event.status === 'integrated'
+            ? 'success'
+            : event.status === 'needs_review'
+              ? 'warning'
+              : 'error',
           text: `Writer ${event.id.slice(0, 8)} ${event.status}${separator}${event.detail}${event.status === 'conflict' || event.status === 'failed' || event.status === 'cancelled' ? `${separator}Run /recover before retrying or restoring.` : ''}`,
         });
         break;
@@ -1355,6 +1383,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
             } : {}),
             onEvent,
             requestPermission,
+            requestHumanApproval,
           });
           const snapshot = snapshotSession(nextSession);
           setSession(snapshot);
@@ -1412,7 +1441,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       setBusy(false);
       setActivity(undefined);
     }
-  }, [append, exit, interactionMode, onEvent, requestPermission, runLocalCommand, runner]);
+  }, [append, exit, interactionMode, onEvent, requestHumanApproval, requestPermission, runLocalCommand, runner]);
 
   const submitFromComposer = useCallback((raw: string, mode: 'steer' | 'follow-up' | 'normal' = 'normal') => {
     if (historySearch) {
@@ -1466,7 +1495,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     const {call, category, resolve} = permission;
     resolve(grant);
     setPermission(undefined);
-    if (grant === 'session') {
+    if (grant === 'session' && !permission.humanOnly) {
       append({
         id: nextId(),
         kind: 'notice',
@@ -1493,7 +1522,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         settlePermission(false, true);
       } else if (inputKey.toLocaleLowerCase() === 'y') {
         settlePermission(true);
-      } else if (inputKey.toLocaleLowerCase() === 'a') {
+      } else if (inputKey.toLocaleLowerCase() === 'a' && !permission.humanOnly) {
         settlePermission('session');
       } else if (inputKey.toLocaleLowerCase() === 'n') {
         settlePermission(false);
@@ -1871,7 +1900,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
               placeholder={busy ? `follow-up${ellipsis}` : interactionMode === 'ask' ? `trace or explain${ellipsis}` : interactionMode === 'plan' ? `outline the implementation${ellipsis}` : `inspect, change, or verify${ellipsis}`}
             />
           </PromptBar>
-        </> : <PermissionCard call={permission.call} category={permission.category} {...(permission.reason ? {reason: permission.reason} : {})} workspace={runner.workspace.primaryRoot} width={contentWidth} glyphMode={glyphMode} compact={constrainedHeight} />}
+        </> : <PermissionCard call={permission.call} category={permission.category} humanOnly={permission.humanOnly ?? false} {...(permission.reason ? {reason: permission.reason} : {})} workspace={runner.workspace.primaryRoot} width={contentWidth} glyphMode={glyphMode} compact={constrainedHeight} />}
         {showFooter ? (
           <Footer
             busy={busy}

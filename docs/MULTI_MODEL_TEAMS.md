@@ -69,9 +69,11 @@ flowchart LR
     U["User objective"] --> L["Main agent / lead"]
     L --> A["Independent specialists"]
     A --> B["Bounded shared reports"]
-    B --> R["Reviewer model"]
-    R -->|"Structured accept"| L
-    R -->|"Structured revise, max N rounds"| A
+    B --> R["Blind independent Reviewer"]
+    R --> O["Deterministic oracle reconciliation"]
+    O -->|"Structured accept"| L
+    O -->|"Structured revise, max N rounds"| A
+    O -->|"Unknown / conflict / independence gap"| H["Criterion-level human arbitration"]
     L --> W["Single writer implementation"]
     W --> V["Deterministic tests and checks"]
 ```
@@ -80,10 +82,12 @@ This is intentionally not a free-form infinite group chat. Every run has an
 objective, bounded specialists, a reviewer, a revision cap, cancellation
 propagation, and a deterministic return value. By default, Skein persists a
 local Team Run manifest under the active namespace's `team-runs/` directory.
-Reports and peer handoffs are content-addressed blobs. Team Run v3 also stores
+Reports and peer handoffs are content-addressed blobs. Team Run v4 also stores
 the semantic Review Contract, each exact Council report bundle, the artifact and
 verdict hashes, evidence receipts, per-criterion pass/fail/unknown results,
-reviewer route, conflicts, residual risks, and final decision.
+reviewer route, Author/Reviewer independence and correlation, oracle conflicts,
+artifact-bound human arbitration, residual risks, and final decision. Team Run
+v1/v2/v3 remains read-only compatible.
 
 Inspect or remove runs with:
 
@@ -125,7 +129,7 @@ profiles, and recursive agents remain unavailable. The reviewer must also use
 an API route so it receives the complete patch. The patch is rejected rather
 than truncated above `maxWriterPatchBytes` (60,000 by default; 120,000 maximum).
 
-The worktree is removed and pruned before the tool returns. Team Run v3 stores
+The worktree is removed and pruned before the tool returns. Team Run v4 stores
 the Git `--binary` text patch, SHA-256, base commit, file list, writer and
 reviewer reports, cleanup result, deterministic preflight, semantic Review
 Contract, structured verdict, and integration state. A Reviewer must return one
@@ -133,8 +137,9 @@ strict JSON object. Every pass or fail cites a supplied evidence handle; missing
 or unknown handles, duplicate or omitted criteria, prose, code fences, invalid
 JSON, deterministic failures, and contract/artifact drift fail closed.
 `skein agents show <run-id>` displays normalized evidence; `--json` retains raw
-review artifacts for machine audit. Team Run v1/v2 remains readable, but its
-text review cannot authorize integration.
+review artifacts for machine audit. Team Run v1/v2/v3 remains readable, but
+legacy text review and pre-v4 review state cannot substitute for current human
+arbitration or approval.
 
 `writer_integrate` is a separate main-agent action. It requires the accepted
 Team Run ID and patch SHA, reparses and bounds every path, requires the same
@@ -146,6 +151,39 @@ the exact `skein checkpoint restore <session> <checkpoint>` rollback command.
 Dirty main-workspace state is not mirrored into the writer worktree. Parallel
 writers, automatic merge or rebase, submodule mutation, and external CLI writer
 mode remain future increments.
+
+## Independent Review And Human Arbitration
+
+Writer and Council candidates are presented to the Reviewer under stable
+anonymous labels. Author summary, profile, provider, model, and self-assessment
+are omitted; candidate order swaps deterministically by review round and each
+report is bounded to the same maximum length. The audit manifest keeps the real
+route identities without exposing them to the judge prompt.
+
+Exact Author/Reviewer route reuse is never independent. High-risk review also
+requires different model providers and model families; a shared gateway remains
+recorded as correlation but does not erase independence between distinct model
+providers. Insufficient independence, unknown criteria, and open Reviewer
+conflicts produce `needs_review` instead of a completion claim.
+
+Deterministic receipts have precedence over model judgment. A passing oracle
+cannot be turned into a failure gate by Reviewer opinion, though the conflict is
+retained for judge calibration. A failing oracle cannot be overridden by a
+Reviewer or human arbitration. Human decisions bind one required criterion to
+the exact Contract and artifact SHA and become stale after either changes.
+
+```bash
+skein agents show <run-id>
+skein agents arbitrate <run-id> <criterion-id> \
+  --decision accept \
+  --reason "Verified the remaining UX trade-off in the live terminal"
+```
+
+Arbitration requires a live interactive TTY. JSON/JSONL and other headless
+flows retain `needs_review` and exit with status 9. `writer_integrate`, Git
+push, npm publish, deployments, migrations, destructive commands, and external
+mutations additionally require a live-human approval handler; model verdicts,
+config allow rules, `--yes`, and ordinary session grants cannot replace it.
 
 ## Configuration
 
@@ -161,8 +199,9 @@ skein agents setup
 ```
 
 It asks for a connection name, explicit relay transport, inference endpoint,
-optional model-catalog endpoint, `env` or `none` authentication, and default
-model. The wizard writes only the environment-variable name and saves shared
+optional model-catalog endpoint, `env` or `none` connection authentication,
+separate inference/catalog credential placement, and default model. The wizard
+writes only the environment-variable name and saves shared
 settings under the user Skein namespace, so the same connection is available
 in every workspace. The non-interactive equivalent is useful for provisioning:
 
@@ -266,8 +305,30 @@ connections may share the same credential reference:
 
 `modelsBaseUrl` is independent from the inference `baseUrl`. Anthropic
 transport requires it explicitly because discovery is commonly OpenAI-shaped.
-Skein never probes one protocol and silently retries another: that could run
-the same inference twice and double bill the user.
+Inference auth accepts `bearer` or `x-api-key`; the catalog independently
+accepts `bearer`, `x-api-key`, or `none`. Explicit `none` guarantees model
+discovery does not read or send the inference secret, which is useful for
+public catalogs such as Vercel's `/v1/models`. Omitted catalog auth retains the
+backward-compatible behavior of inheriting inference auth. Skein never probes
+one protocol and silently retries another: that could run the same inference
+twice and double bill the user.
+
+For a relay whose catalog is documented as public, make the no-secret boundary
+explicit:
+
+```bash
+skein agents setup --yes \
+  --name public-catalog-relay \
+  --provider compatible \
+  --protocol openai-responses \
+  --base-url https://ai-gateway.example/v1 \
+  --models-base-url https://ai-gateway.example/v1 \
+  --auth env \
+  --auth-header bearer \
+  --models-auth-header none \
+  --api-key-env AI_GATEWAY_API_KEY \
+  --model provider/coding-model
+```
 
 Unified gateway examples: [OpenRouter](https://openrouter.ai/docs/quickstart) and
 [LiteLLM](https://docs.litellm.ai/docs/learn/gateway_quickstart).
@@ -528,14 +589,16 @@ activity, and reviewer decisions are the explainable artifacts.
 - Cancellation uses the parent abort signal.
 - Model routes inherit a credential only when provider and endpoint match the
   parent; otherwise an explicit `apiKeyEnv` is required.
+- Deterministic oracles override model judgment, and model judgment never
+  substitutes for live-human approval.
 
 ## Next Increments
 
 1. Add provider-native search/tool adapters so a research route can use live
    search without granting arbitrary shell/network authority.
-2. Add independent judge routing, correlation penalties, blind review, and
-   criterion-level human arbitration on top of the local shadow Registry.
-3. Add per-route cost accounting, replay gates, and user-confirmed spend
+2. Add drift canaries, degraded/quarantine/recovery state, and judge-bias
+   replay fixtures on top of the local shadow Registry.
+3. Add per-route cost accounting, Token Ledger linkage, replay gates, and user-confirmed spend
    controls before any automatic route selection.
 4. Add dependency-aware parallel writer worktrees after conflict-rate and
    rollback evidence justify relaxing the single-lane gate.

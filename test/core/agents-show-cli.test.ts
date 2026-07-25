@@ -11,6 +11,11 @@ import {
   reviewArtifactSha256,
   reviewArtifactText,
 } from '../../src/agent/review-verdict.js';
+import {
+  assessReviewIndependence,
+  buildReviewRouteIdentity,
+  reviewCriterionConflicts,
+} from '../../src/agent/review-arbitration.js';
 
 const roots: string[] = [];
 
@@ -19,7 +24,7 @@ afterEach(async () => {
 });
 
 describe('agents show CLI', () => {
-  it('normalizes v3 reviewer JSON in text while retaining raw evidence in JSON', async () => {
+  it('normalizes v4 reviewer JSON in text while retaining raw evidence in JSON', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'skein-agents-show-'));
     roots.push(workspace);
     const store = new TeamRunStore(workspace);
@@ -47,7 +52,18 @@ describe('agents show CLI', () => {
       contract, artifactSha256, evidence,
       reviewer: {profile: 'reviewer', provider: 'compatible', model: 'judge'},
     });
-    await store.recordReviewVerdict(run.id, contract, verdict, reviewArtifactText(bundle));
+    await store.recordReviewVerdict(
+      run.id,
+      contract,
+      verdict,
+      reviewArtifactText(bundle),
+      assessReviewIndependence({
+        authors: [buildReviewRouteIdentity({runtime: 'api', provider: 'compatible', model: 'worker'})],
+        reviewer: buildReviewRouteIdentity({runtime: 'api', provider: 'openai', model: 'judge'}),
+        highRisk: false,
+      }),
+      reviewCriterionConflicts(contract, verdict),
+    );
     await store.complete(run.id, {accepted: true, reviewRounds: 0});
 
     const textResult = await runCli(['agents', 'show', run.id, '--workspace', workspace]);
@@ -67,6 +83,15 @@ describe('agents show CLI', () => {
     expect(output.reviews[0]).toMatchObject({
       artifact: {sha256: artifactSha256}, verdict: {decision: 'accept'},
     });
+
+    const arbitration = await runCli([
+      'agents', 'arbitrate', run.id, contract.criteria[0]!.id,
+      '--workspace', workspace,
+      '--decision', 'accept',
+      '--reason', 'Reviewed the exact bound evidence.',
+    ]);
+    expect(arbitration.exitCode).toBe(1);
+    expect(arbitration.stderr).toContain('requires a live interactive TTY');
   }, 20_000);
 });
 

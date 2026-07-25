@@ -616,6 +616,8 @@ agentsCommand
   .option('--base-url <url>', 'relay inference base URL')
   .option('--models-base-url <url>', 'separate OpenAI-compatible base URL for GET /models')
   .option('--auth <type>', 'connection authentication: env or none')
+  .option('--auth-header <header>', 'inference credential header: bearer or x-api-key')
+  .option('--models-auth-header <header>', 'model-directory auth: bearer, x-api-key, or none; defaults to inference')
   .option('--api-key-env <name>', 'environment variable containing the credential')
   .option('--model <model>', 'default model identifier')
   .option('--yes', 'use supplied or existing defaults without prompting')
@@ -641,6 +643,10 @@ agentsCommand
       endpoint: redactEndpoint(connection.baseUrl),
       modelsEndpoint: redactEndpoint(connection.modelsBaseUrl ?? connection.baseUrl),
       credentials: connectionCredentialReference(connection),
+      authHeader: connection.auth.type === 'env' ? connection.auth.header ?? 'bearer' : null,
+      modelsAuthHeader: connection.auth.type === 'env'
+        ? connection.modelsAuthHeader ?? connection.auth.header ?? 'bearer'
+        : null,
       routes: Object.values(config.agents?.routes ?? {}).filter((route) => route.connection === connection.id).length,
       default: catalog.defaultConnection === connection.id,
       complete: connectionRuntimeCatalog({profiles: [connection]}).profiles[0]?.complete ?? false,
@@ -648,7 +654,7 @@ agentsCommand
     if (options.json) printObject(connections, true);
     else if (!connections.length) process.stdout.write('No named model connections configured.\n');
     else for (const connection of connections) {
-      process.stdout.write(`${connection.name.padEnd(16)} ${connection.protocol.padEnd(20)} ${connection.credentials.padEnd(28)} ${connection.source.padEnd(11)} ${connection.complete ? 'ready' : 'incomplete'}${connection.default ? ' + default' : ''}  inference=${connection.endpoint} models=${connection.modelsEndpoint}\n`);
+      process.stdout.write(`${connection.name.padEnd(16)} ${connection.protocol.padEnd(20)} ${connection.credentials.padEnd(28)} ${connection.source.padEnd(11)} ${connection.complete ? 'ready' : 'incomplete'}${connection.default ? ' + default' : ''}  inference=${connection.endpoint} auth=${connection.authHeader ?? 'none'} models=${connection.modelsEndpoint} models-auth=${connection.modelsAuthHeader ?? 'none'}\n`);
     }
   });
 agentsCommand
@@ -774,7 +780,7 @@ agentsCommand
     if (options.json) printObject(runs, true);
     else if (!runs.length) process.stdout.write('No team runs found.\n');
     else for (const run of runs) {
-      process.stdout.write(`${run.id.slice(0, 8)}  ${run.status.padEnd(8)} ${run.createdAt}  ${run.agentCount} agents  ${run.totalTokens} tok  ${run.toolCalls} tools  ${run.objective.replace(/\s+/gu, ' ').slice(0, 180)}\n`);
+      process.stdout.write(`${run.id.slice(0, 8)}  ${run.status.padEnd(12)} ${run.createdAt}  ${run.agentCount} agents  ${run.totalTokens} tok  ${run.toolCalls} tools  ${run.objective.replace(/\s+/gu, ' ').slice(0, 180)}\n`);
     }
   });
 agentsCommand
@@ -793,14 +799,14 @@ agentsCommand
       ...message,
       contentText: await store.readArtifact(run.id, message.content),
     })));
-    const writer = (run.version === 2 || run.version === 3) && run.writer ? {
+    const writer = (run.version === 2 || run.version === 3 || run.version === 4) && run.writer ? {
       ...run.writer,
       ...(run.writer.review ? {reviewText: await store.readArtifact(run.id, run.writer.review)} : {}),
     } : undefined;
     if (options.json) printObject({...run, agents, messages, writer}, true);
     else {
       process.stdout.write(`Team run ${run.id}\n${run.status}  ${run.createdAt}\n\n${run.objective}\n\n`);
-      const hasStructuredReviews = run.version === 3 && (
+      const hasStructuredReviews = (run.version === 3 || run.version === 4) && (
         run.reviews.length > 0 || Boolean(writer && 'verdict' in writer && writer.verdict)
       );
       for (const agent of agents) {
@@ -814,19 +820,71 @@ agentsCommand
         process.stdout.write(`Writer patch ${writer.patch.sha256}  ${writer.outcome}  ${writer.files.length} files  cleanup ${writer.worktreeCleaned ? 'verified' : 'failed'}\n`);
         if (writer.integration) process.stdout.write(`Integration ${writer.integration.status}: ${writer.integration.detail}\n`);
         if ('verdict' in writer && writer.verdict) process.stdout.write(`\nStructured writer verdict\n${formatReviewVerdict(writer.verdict)}\n`);
+        if ('independence' in writer && writer.independence) {
+          process.stdout.write(`Review independence ${writer.independence.sufficient ? 'sufficient' : 'insufficient'}; maximum correlation penalty ${writer.independence.maximumCorrelationPenalty.toFixed(2)}.\n`);
+        }
+        if ('criterionConflicts' in writer && writer.criterionConflicts.length) {
+          process.stdout.write(`Criterion conflicts: ${writer.criterionConflicts.map((item) => item.criterionId).join(', ')}\n`);
+        }
         if (writer.reviewText && (!('verdict' in writer) || !writer.verdict)) {
           process.stdout.write(`\nWriter review\n${writer.reviewText}\n`);
         }
         process.stdout.write('\n');
       }
-      if (run.version === 3) run.reviews.forEach((review, index) => {
+      if (run.version === 3 || run.version === 4) run.reviews.forEach((review, index) => {
         process.stdout.write(`Structured council verdict ${index + 1}/${run.reviews.length}\n${formatReviewVerdict(review.verdict)}\n\n`);
       });
+      if (run.version === 4 && run.arbitrations.length) {
+        process.stdout.write('Human arbitration\n');
+        for (const arbitration of run.arbitrations) {
+          process.stdout.write(`- ${arbitration.criterionId}: ${arbitration.decision} — ${arbitration.reason}\n`);
+        }
+        process.stdout.write('\n');
+      }
       if (messages.length) {
         process.stdout.write('Peer handoffs\n');
         for (const message of messages) process.stdout.write(`- ${message.from} -> ${message.to}: ${message.contentText.replace(/\s+/gu, ' ').slice(0, 400)}\n`);
       }
     }
+  });
+agentsCommand
+  .command('arbitrate <id> <criterion>')
+  .description('Record one live-human criterion decision for a needs_review Team Run')
+  .requiredOption('--decision <decision>', 'accept, request-changes, or reject')
+  .requiredOption('--reason <reason>', 'concise evidence-backed human rationale')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--json', 'print JSON')
+  .action(async (id: string, criterion: string, options: {
+    workspace?: string;
+    decision: string;
+    reason: string;
+    json?: boolean;
+  }) => {
+    if (!process.stdin.isTTY || !process.stdout.isTTY) {
+      throw new Error('Human arbitration requires a live interactive TTY; non-interactive runs must remain needs_review.');
+    }
+    const decision = options.decision === 'request-changes'
+      ? 'request_changes' as const
+      : options.decision === 'accept' || options.decision === 'reject'
+        ? options.decision
+        : undefined;
+    if (!decision) throw new Error('Unknown arbitration decision; use accept, request-changes, or reject.');
+    const store = new TeamRunStore(workspaceOption(options.workspace));
+    const run = await requireTeamRun(store, id);
+    const approved = await confirm(
+      `Record human arbitration ${decision} for ${run.id.slice(0, 8)} criterion ${criterion}?`,
+    );
+    if (!approved) throw new Error('Human arbitration was cancelled; Team Run remains unchanged.');
+    const result = await store.arbitrate(run.id, {
+      criterionId: criterion,
+      decision,
+      reason: options.reason,
+    });
+    if (options.json) printObject(result, true);
+    else process.stdout.write(
+      `Recorded ${decision} for ${criterion}; Team Run is ${result.gate.status}` +
+      `${result.gate.unresolvedCriteria.length ? ` (${result.gate.unresolvedCriteria.join(', ')} unresolved)` : ''}.\n`,
+    );
   });
 agentsCommand
   .command('delete <id>')
@@ -1254,6 +1312,8 @@ interface AgentSetupOptions {
   baseUrl?: string;
   modelsBaseUrl?: string;
   auth?: string;
+  authHeader?: string;
+  modelsAuthHeader?: string;
   apiKeyEnv?: string;
   model?: string;
   yes?: boolean;
@@ -1435,6 +1495,13 @@ async function runChat(prompts: string[], options: RootOptions): Promise<void> {
         category === 'read' || category === 'write' ? true : askConsolePermission(_call, category, colorOutput, reason)
       : async (call: Parameters<typeof askConsolePermission>[0], category: Parameters<typeof askConsolePermission>[1], reason?: string) =>
         askConsolePermission(call, category, colorOutput, reason);
+  const requestHumanApproval = process.stdin.isTTY && process.stderr.isTTY
+    ? async (
+      call: Parameters<typeof askConsolePermission>[0],
+      category: Parameters<typeof askConsolePermission>[1],
+      reason?: string,
+    ) => askConsolePermission(call, category, colorOutput, reason)
+    : undefined;
   let extensionsClosed = false;
   try {
     let session = await runner.run(firstPrompt, {
@@ -1443,6 +1510,7 @@ async function runChat(prompts: string[], options: RootOptions): Promise<void> {
       maxTurns: positiveInt(options.maxTurns, config.agent.maxTurns),
       onEvent: reporter.onEvent,
       requestPermission,
+      ...(requestHumanApproval ? {requestHumanApproval} : {}),
     });
     for (const queued of options.queue) {
       if (session.pendingInput) break;
@@ -1452,6 +1520,7 @@ async function runChat(prompts: string[], options: RootOptions): Promise<void> {
         maxTurns: positiveInt(options.maxTurns, config.agent.maxTurns),
         onEvent: reporter.onEvent,
         requestPermission,
+        ...(requestHumanApproval ? {requestHumanApproval} : {}),
       });
     }
     await extensions.close();
@@ -1558,6 +1627,12 @@ async function runAgentSetup(options: AgentSetupOptions): Promise<void> {
   let baseUrl = options.baseUrl ?? currentConnection?.baseUrl ?? '';
   let modelsBaseUrl = options.modelsBaseUrl ?? currentConnection?.modelsBaseUrl ?? '';
   let auth = validateConnectionAuth(options.auth ?? currentConnection?.auth?.type ?? 'env');
+  let authHeader = validateConnectionApiKeyHeader(
+    options.authHeader ?? (currentConnection?.auth?.type === 'env' ? currentConnection.auth.header : undefined) ?? 'bearer',
+  );
+  let modelsAuthHeader = validateConnectionModelAuth(
+    options.modelsAuthHeader ?? currentConnection?.modelsAuthHeader ?? authHeader,
+  );
   const currentApiKeyEnv = currentConnection?.apiKeyEnv ??
     (currentConnection?.auth?.type === 'env' ? currentConnection.auth.name : undefined);
   let apiKeyEnv = options.apiKeyEnv ?? (auth === 'env' ? currentApiKeyEnv ?? providerEnvironment(provider) : '');
@@ -1572,6 +1647,18 @@ async function runAgentSetup(options: AgentSetupOptions): Promise<void> {
       baseUrl = await question(readline, 'Inference base URL', baseUrl);
       modelsBaseUrl = await question(readline, 'Models base URL (optional unless Anthropic)', modelsBaseUrl);
       auth = validateConnectionAuth(await question(readline, 'Authentication (env or none)', auth));
+      if (auth === 'env') {
+        authHeader = validateConnectionApiKeyHeader(await question(
+          readline,
+          'Inference credential header (bearer or x-api-key)',
+          authHeader,
+        ));
+        modelsAuthHeader = validateConnectionModelAuth(await question(
+          readline,
+          'Models authentication (bearer, x-api-key, or none)',
+          modelsAuthHeader,
+        ));
+      }
       apiKeyEnv = auth === 'env'
         ? await question(readline, 'Credential environment variable', apiKeyEnv || providerEnvironment(provider))
         : '';
@@ -1588,6 +1675,7 @@ async function runAgentSetup(options: AgentSetupOptions): Promise<void> {
     ...(baseUrl ? {baseUrl} : {}),
     ...(modelsBaseUrl ? {modelsBaseUrl} : {}),
     auth,
+    ...(auth === 'env' ? {authHeader, modelsAuthHeader} : {}),
     ...(apiKeyEnv ? {apiKeyEnv} : {}),
     defaultModel: model,
   });
@@ -1601,6 +1689,8 @@ async function runAgentSetup(options: AgentSetupOptions): Promise<void> {
     endpoint: redactEndpoint(baseUrl),
     modelsEndpoint: redactEndpoint(modelsBaseUrl || baseUrl),
     auth,
+    authHeader: auth === 'env' ? authHeader : null,
+    modelsAuthHeader: auth === 'env' ? modelsAuthHeader : null,
     apiKeyEnv: apiKeyEnv || null,
     credentialConfigured,
     defaultModel: setup.defaultModel,
@@ -1612,7 +1702,7 @@ async function runAgentSetup(options: AgentSetupOptions): Promise<void> {
   process.stdout.write(`${chalk.green(cliGlyphs.success)} Saved shared connection ${setup.defaultConnection} to ${path}\n`);
   process.stdout.write(`  Default: ${protocol}/${setup.defaultModel} via ${redactEndpoint(baseUrl)}\n`);
   process.stdout.write(`  Models: ${PRODUCT_COMMAND} agents models ${setup.defaultConnection} via ${redactEndpoint(modelsBaseUrl || baseUrl)}\n`);
-  process.stdout.write(`  Credential: ${auth === 'none' ? 'none' : `env:${apiKeyEnv} (${credentialConfigured ? 'configured' : 'not set'})`}\n`);
+  process.stdout.write(`  Credential: ${auth === 'none' ? 'none' : `env:${apiKeyEnv} via ${authHeader}; models via ${modelsAuthHeader} (${credentialConfigured ? 'configured' : 'not set'})`}\n`);
   process.stdout.write(`  Routes: ${PRODUCT_COMMAND} agents list\n`);
 }
 
@@ -1933,6 +2023,18 @@ function validateConnectionProtocol(value: string): Exclude<import('./types.js')
 function validateConnectionAuth(value: string): import('./types.js').ConnectionAuth['type'] {
   if (value === 'env' || value === 'none') return value;
   throw new Error(`Unknown connection authentication ${value}; use env or none.`);
+}
+
+function validateConnectionApiKeyHeader(value: string): import('./types.js').ConnectionApiKeyHeader {
+  const normalized = value.trim().toLocaleLowerCase();
+  if (normalized === 'bearer' || normalized === 'x-api-key') return normalized;
+  throw new Error(`Unknown credential header ${value}; use bearer or x-api-key.`);
+}
+
+function validateConnectionModelAuth(value: string): import('./types.js').ConnectionModelAuth {
+  const normalized = value.trim().toLocaleLowerCase();
+  if (normalized === 'bearer' || normalized === 'x-api-key' || normalized === 'none') return normalized;
+  throw new Error(`Unknown model-directory authentication ${value}; use bearer, x-api-key, or none.`);
 }
 
 function environmentName(provider: ProviderName): string {

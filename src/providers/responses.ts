@@ -6,6 +6,7 @@ import type {
   ToolDefinition,
 } from '../types.js';
 import {
+  apiKeyHeaders,
   joinUrl,
   parseErrorResponse,
   parseServerSentEvents,
@@ -175,7 +176,7 @@ export class ResponsesProvider implements ModelProvider {
       method: 'POST',
       redirect: 'error',
       headers: {
-        ...(apiKey ? {authorization: `Bearer ${apiKey}`} : {}),
+        ...apiKeyHeaders(apiKey, this.config.apiKeyHeader, 'bearer'),
         'content-type': 'application/json',
       },
       body: JSON.stringify({

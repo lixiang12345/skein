@@ -156,6 +156,43 @@ describe('model connection catalog', () => {
     })).resolves.toEqual([{id: 'claude-relay'}]);
   });
 
+  it('uses the independently configured model-directory authentication header', async () => {
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.headers).toMatchObject({authorization: 'Bearer relay-secret'});
+      expect(init?.headers).not.toHaveProperty('x-api-key');
+      return new Response(JSON.stringify({data: [{id: 'claude-relay'}]}), {status: 200});
+    });
+    vi.stubGlobal('fetch', fetch);
+
+    await listConnectionModels({
+      provider: 'compatible',
+      protocol: 'anthropic-messages',
+      baseUrl: 'https://relay.example',
+      modelsBaseUrl: 'https://relay.example/v1',
+      modelsAuthHeader: 'bearer',
+      auth: {type: 'env', name: 'RELAY_KEY', header: 'x-api-key'},
+    }, {RELAY_KEY: 'relay-secret'});
+  });
+
+  it('does not read or send the inference credential for an explicitly public model directory', async () => {
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.headers).toMatchObject({accept: 'application/json'});
+      expect(init?.headers).not.toHaveProperty('authorization');
+      expect(init?.headers).not.toHaveProperty('x-api-key');
+      return new Response(JSON.stringify({data: [{id: 'public-model'}]}), {status: 200});
+    });
+    vi.stubGlobal('fetch', fetch);
+
+    await expect(listConnectionModels({
+      provider: 'compatible',
+      protocol: 'openai-responses',
+      baseUrl: 'https://relay.example/v1',
+      modelsBaseUrl: 'https://catalog.example/v1',
+      modelsAuthHeader: 'none',
+      auth: {type: 'env', name: 'MISSING_RELAY_KEY'},
+    }, {})).resolves.toEqual([{id: 'public-model'}]);
+  });
+
   it('bounds process-local catalog metadata and evicts the least recently used endpoint', async () => {
     const fetch = vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify({
       data: [{id: String(input)}],

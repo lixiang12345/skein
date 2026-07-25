@@ -219,6 +219,16 @@ describe('configuration defaults', () => {
       relay: {provider: 'compatible', protocol: 'anthropic-messages', baseUrl: 'https://relay.example/anthropic', auth: {type: 'none'}},
     }}}));
     await expect(loadConfig(root, path)).rejects.toThrow('requires modelsBaseUrl');
+
+    await writeFile(path, JSON.stringify({agents: {connections: {
+      relay: {
+        provider: 'compatible', protocol: 'anthropic-messages', baseUrl: 'https://relay.example',
+        modelsBaseUrl: 'https://relay.example/v1', modelsAuthHeader: 'none', auth: {type: 'none'},
+      },
+    }}}));
+    await expect(loadConfig(root, path)).resolves.toMatchObject({
+      agents: {connections: {relay: {modelsAuthHeader: 'none', auth: {type: 'none'}}}},
+    });
   });
 
   it('loads and merges user-level JSON connection setup', async () => {

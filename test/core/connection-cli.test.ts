@@ -99,6 +99,17 @@ describe('CLI connection selection', () => {
       endpoint: 'https://relay.example/anthropic',
       modelsEndpoint: 'https://relay.example/v1',
     });
+
+    const publicCatalog = await runCli([
+      'agents', 'setup', '--yes', '--json', '--name', 'relay', '--provider', 'compatible',
+      '--protocol', 'anthropic-messages', '--base-url', 'https://relay.example',
+      '--models-base-url', 'https://relay.example/v1', '--model', 'claude-relay', '--auth', 'env',
+      '--auth-header', 'x-api-key', '--models-auth-header', 'none', '--api-key-env', 'RELAY_KEY',
+    ], {...environment, RELAY_KEY: 'not-persisted'});
+    expect(publicCatalog.exitCode).toBe(0);
+    expect(JSON.parse(publicCatalog.stdout)).toMatchObject({
+      authHeader: 'x-api-key', modelsAuthHeader: 'none', apiKeyEnv: 'RELAY_KEY',
+    });
   }, 20_000);
 });
 

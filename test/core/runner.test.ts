@@ -1008,6 +1008,66 @@ describe('AgentRunner', () => {
       event.type === 'permission' && event.reason === 'Approved for this session.')).toHaveLength(2);
   });
 
+  it('keeps high-risk Git pushes in needs_review when only an automation grant is available', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-human-only-push-'));
+    roots.push(root);
+    const provider = new QueueProvider([
+      {
+        content: '',
+        toolCalls: [{id: 'push', name: 'git', arguments: {args: ['push', 'origin', 'main']} }],
+      },
+      {content: 'Push is waiting for a human.', toolCalls: []},
+    ]);
+    const runnerConfig = config(root);
+    runnerConfig.permissions.git = 'allow';
+    runnerConfig.permissions.shell = 'allow';
+    runnerConfig.permissions.network = 'allow';
+    const results: ToolResult[] = [];
+    const runner = new AgentRunner({config: runnerConfig, provider, contextEngine: context});
+    const session = await runner.run('push the branch', {
+      // This is the same automation channel used by --yes; it is deliberately inadmissible.
+      requestPermission: async () => true,
+      onEvent(event) {
+        if (event.type === 'tool_result') results.push(event.result);
+      },
+    });
+    expect(results[0]).toMatchObject({
+      name: 'git', ok: false, metadata: {humanApproval: true, needsReview: true},
+    });
+    expect(session.lastRun?.reason).toBe('needs_review');
+    expect(session.audit?.some((event) =>
+      event.type === 'permission' && event.reason?.includes('No live human approval handler'))).toBe(true);
+  });
+
+  it('applies hard network denies to high-risk shell commands before live-human approval', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-human-policy-deny-'));
+    roots.push(root);
+    const provider = new QueueProvider([
+      {
+        content: '',
+        toolCalls: [{
+          id: 'push', name: 'shell', arguments: {command: 'git -C packages/app push origin main'},
+        }],
+      },
+      {content: 'The configured network deny blocked the push.', toolCalls: []},
+    ]);
+    const runnerConfig = config(root);
+    runnerConfig.permissions.shell = 'allow';
+    runnerConfig.permissions.git = 'allow';
+    runnerConfig.permissions.network = 'deny';
+    let humanRequests = 0;
+    const runner = new AgentRunner({config: runnerConfig, provider, contextEngine: context});
+    const session = await runner.run('push the branch', {
+      requestHumanApproval: async () => {
+        humanRequests += 1;
+        return true;
+      },
+    });
+    expect(humanRequests).toBe(0);
+    expect(session.audit?.some((event) => event.type === 'permission' &&
+      event.category === 'network' && event.outcome === 'deny')).toBe(true);
+  });
+
   it('marks non-zero shell exits as failed tool results without aborting the turn', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mosaic-shell-result-'));
     roots.push(root);

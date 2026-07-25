@@ -611,6 +611,8 @@ export interface TeamRunSummary {
   objective?: string;
   startedAt?: number;
   accepted?: boolean;
+  needsReview?: boolean;
+  unresolvedCriteria?: string[];
   reviewRounds?: number;
   review?: {
     decision: 'accept' | 'revise' | 'escalate';
@@ -643,10 +645,11 @@ export function TeamWorkbench({items, tasks, width = 80, glyphMode = 'auto', vie
   const cancelled = agents.filter((agent) => agent.state === 'cancelled').length;
   const totalTokens = agents.reduce((sum, agent) => sum + (agent.inputTokens ?? 0) + (agent.outputTokens ?? 0), 0);
   const totalTools = agents.reduce((sum, agent) => sum + (agent.toolCalls ?? 0), 0);
-  const status = run?.accepted === true ? 'accepted' : run?.accepted === false ? 'rejected' : running ? 'running' : agents.length ? 'complete' : 'idle';
+  const status = run?.needsReview ? 'needs review' : run?.accepted === true ? 'accepted' : run?.accepted === false ? 'rejected' : running ? 'running' : agents.length ? 'complete' : 'idle';
   const summary = [
     `${status}${run?.reviewRounds !== undefined ? ` ${glyphs.separator} review ${run.reviewRounds}` : ''}`,
     run?.review ? `judge ${run.review.decision} ${run.review.pass}/${run.review.fail}/${run.review.unknown}` : '',
+    run?.needsReview && run.unresolvedCriteria?.length ? `${run.unresolvedCriteria.length} unresolved` : '',
     `${completed}/${agents.length} done`,
     cancelled ? `${cancelled} cancelled` : '',
     `${formatTokens(totalTokens)} tok`,
@@ -800,10 +803,11 @@ export function TaskRail({tasks, width = 80, glyphMode = 'auto', maxItems}: {
   );
 }
 
-export function PermissionCard({call, category, reason, width = 80, glyphMode = 'auto', workspace, compact = false}: {
+export function PermissionCard({call, category, reason, humanOnly = false, width = 80, glyphMode = 'auto', workspace, compact = false}: {
   call: ToolCall;
   category: ToolCategory;
   reason?: string;
+  humanOnly?: boolean;
   width?: number;
   glyphMode?: GlyphMode;
   workspace?: string;
@@ -814,7 +818,7 @@ export function PermissionCard({call, category, reason, width = 80, glyphMode = 
   const summary = permissionSummary(call);
   const rowWidth = safeWidth(width);
   const innerWidth = Math.max(1, rowWidth - 2);
-  const title = truncateDisplay(`Permission required ${glyphs.separator} ${category}`, innerWidth);
+  const title = truncateDisplay(`${humanOnly ? 'Live human approval required' : 'Permission required'} ${glyphs.separator} ${category}`, innerWidth);
   const tool = truncateDisplay(`tool ${sanitizeInlineTerminalText(call.name)}`, innerWidth);
   const summaryLine = truncateDisplay(`target ${summary.label} ${summary.value}`, innerWidth);
   const reasonLine = truncateDisplay(`reason ${redactPermissionText(reason ?? `${category} tools require approval.`)}`, innerWidth);
@@ -823,20 +827,20 @@ export function PermissionCard({call, category, reason, width = 80, glyphMode = 
   const cwd = sanitizeInlineTerminalText(argumentCwd || workspace || '');
   const shortcuts: InlinePart[] = [
     {text: rowWidth >= 96 ? '[y] allow once' : '[y] once', color: theme.success},
-    {text: rowWidth >= 96 ? '[a] allow target for session' : '[a] session', color: theme.success},
+    ...(humanOnly ? [] : [{text: rowWidth >= 96 ? '[a] allow target for session' : '[a] session', color: theme.success} as InlinePart]),
     {text: '[n] deny', color: theme.error},
     {text: rowWidth >= 96 ? '[Esc] deny + stop' : '[Esc] stop', color: theme.muted},
   ];
   const compactNarrowShortcuts: InlinePart[] = innerWidth >= 17
     ? [
         {text: '[y] once', color: theme.success},
-        {text: '[a] sess', color: theme.success},
+        ...(humanOnly ? [] : [{text: '[a] sess', color: theme.success} as InlinePart]),
         {text: '[n] no', color: theme.error},
         {text: '[Esc] stop', color: theme.muted},
       ]
     : [
         {text: '[y] yes', color: theme.success},
-        {text: '[a] sess', color: theme.success},
+        ...(humanOnly ? [] : [{text: '[a] sess', color: theme.success} as InlinePart]),
         {text: '[n] no', color: theme.error},
         {text: '[Esc]', color: theme.muted},
       ];

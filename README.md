@@ -125,9 +125,11 @@ On the first interactive `skein` run, an incomplete model configuration opens
 a keyboard-driven relay setup before any session is created. Choose OpenAI
 Responses (recommended), OpenAI Chat Completions, or Anthropic Messages, then
 provide the inference base URL, optional independent model-catalog base URL,
-model ID, and `env` or `none` authentication. Skein does not implement official
-account login for primary connections and never guesses the protocol or
-destination. Signed-in coding CLIs remain separate delegated runtimes.
+model ID, inference authentication, and independent model-catalog
+authentication. A catalog can explicitly use `none` so the inference key is
+never sent there. Skein does not implement official account login for primary
+connections and never guesses the protocol or destination. Signed-in coding
+CLIs remain separate delegated runtimes.
 
 Before a new interactive session, Skein prepares the workspace before opening the composer. It
 shows the real local index phases, reloads the persisted artifact, verifies its
@@ -193,17 +195,31 @@ model name:
   `/v1/messages` when needed. Configure `modelsBaseUrl` separately because its
   model directory is still commonly OpenAI-shaped at `/v1/models`.
 
-All relay transports use the configured relay bearer credential or explicit
-`none`; credentials, queries, and URL userinfo are never stored in connection
-metadata. Remote relays must use HTTPS in onboarding, while loopback endpoints
-may use HTTP. The first-run flow writes only endpoint/model metadata and the
-credential environment-variable name to owner-only user configuration.
+Inference authentication is explicit `Authorization: Bearer`, `x-api-key`, or
+connection-wide `none`. The independent model catalog can inherit that choice,
+select the other header, or use `modelsAuthHeader: none`; credentials, queries,
+and URL userinfo are never stored in connection metadata. Remote relays must
+use HTTPS in onboarding, while loopback endpoints may use HTTP. The first-run
+flow writes only endpoint/model metadata and the credential
+environment-variable name to owner-only user configuration.
 
 A relay may expose one protocol root or separate OpenAI- and Anthropic-style
 roots. Skein does not assume either shape. Model each transport as its own named
 connection and reuse the same credential environment variable when the relay
 account uses one key. Keep `modelsBaseUrl` independent when an Anthropic
 inference root still publishes its model catalog through `/v1/models`.
+
+Observed gateway shapes are deliberately examples, not presets:
+
+| Gateway | Responses base | Anthropic base | Models base/auth |
+| --- | --- | --- | --- |
+| OpenRouter | `https://openrouter.ai/api/v1` | same base | same base; Bearer available |
+| Vercel AI Gateway | `https://ai-gateway.vercel.sh/v1` | `https://ai-gateway.vercel.sh` | `.../v1`; public catalog |
+| New API | deployment base ending in `/v1` | commonly the same `/v1` base | commonly `/v1`; deployment-defined auth |
+| LiteLLM | proxy root or `/v1` SDK base | root for unified Messages, `/anthropic` for passthrough | deployment-defined |
+
+Skein never turns this table into URL or authentication detection. Configure
+each transport and catalog exactly as the selected relay documents it.
 
 Capability routing is local and shadow-only in this release. It fingerprints
 the exact route, endpoint/auth reference, profile prompt, and tool catalog;
@@ -524,10 +540,17 @@ agents:
 temporary worktree. It cannot change the active workspace. A reviewed patch is
 applied only through `writer_integrate`, which requires its Team Run ID and
 SHA-256, rejects HEAD drift or dirty targets, and records a checkpoint rollback
-command. Team Run v3 stores the semantic Review Contract, exact patch and
-Council artifact hashes, content-addressed evidence receipts, and the normalized
-pass/fail/unknown verdict. Version 1 and 2 manifests remain inspectable, but an
-old text `VERDICT: ACCEPT` can never authorize integration. See
+command. Team Run v4 stores the semantic Review Contract, exact patch and
+Council artifact hashes, content-addressed evidence receipts, normalized
+pass/fail/unknown verdicts, Author/Reviewer independence evidence, criterion
+conflicts, and artifact-bound human arbitration. Blind review removes Author
+self-report and route identity, while deterministic oracle failures remain
+authoritative. Version 1–3 manifests remain inspectable, but old text
+`VERDICT: ACCEPT` can never authorize integration. Headless conflicts produce
+`needs_review` and exit code 9; a live operator resolves only named criteria
+with `skein agents arbitrate`. Model review never grants the human approval
+required by `writer_integrate`, Git push, npm publish, deployments, migrations,
+destructive commands, or external mutations. See
 [docs/MULTI_MODEL_TEAMS.md](docs/MULTI_MODEL_TEAMS.md) for the full trust and
 lifecycle contract.
 

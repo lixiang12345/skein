@@ -2,8 +2,13 @@ export type ProviderName = 'openai' | 'anthropic' | 'gemini' | 'compatible';
 
 export type ConnectionProtocol = 'openai-responses' | 'openai-chat' | 'anthropic-messages' | 'gemini';
 
+export type ConnectionApiKeyHeader = 'bearer' | 'x-api-key';
+
+/** Model catalogs may reuse the inference credential or be explicitly public. */
+export type ConnectionModelAuth = ConnectionApiKeyHeader | 'none';
+
 export type ConnectionAuth =
-  | {type: 'env'; name: string}
+  | {type: 'env'; name: string; header?: ConnectionApiKeyHeader}
   | {type: 'none'};
 
 export type ConnectionSource = 'cli' | 'user' | 'environment' | 'legacy';
@@ -48,6 +53,8 @@ export interface ModelConfig {
   /** Runtime transport selected by a named relay connection. */
   protocol?: ConnectionProtocol;
   apiKey?: string;
+  /** Explicit relay credential placement. Compatible transports default to Bearer for backward compatibility. */
+  apiKeyHeader?: ConnectionApiKeyHeader;
   baseUrl?: string;
   temperature?: number;
   maxTokens?: number;
@@ -143,6 +150,8 @@ export interface AgentConnectionConfig {
   protocol?: ConnectionProtocol;
   baseUrl?: string;
   modelsBaseUrl?: string;
+  /** Optional model-directory credential placement; defaults to the inference auth header. */
+  modelsAuthHeader?: ConnectionModelAuth;
   defaultModel?: string;
   auth?: ConnectionAuth;
   /** Legacy environment reference retained for existing user configuration. */
@@ -159,6 +168,8 @@ export interface ConnectionRuntimeInfo {
   modelsEndpoint: string;
   defaultModel?: string;
   authType: ConnectionAuth['type'];
+  authHeader?: ConnectionApiKeyHeader;
+  modelsAuthHeader?: ConnectionModelAuth;
   authStatus: 'configured' | 'missing' | 'none';
   complete: boolean;
   issues: string[];
@@ -504,6 +515,8 @@ export interface ToolDefinition {
   completionEvidence?: CompletionEvidenceSupport;
   /** Argument fields redacted from terminal, JSON events, and approval UIs. */
   sensitiveFields?: string[];
+  /** This action requires a live human grant and cannot use config allow, --yes, or a session grant. */
+  humanApproval?: boolean;
 }
 
 export interface ContextHit {
@@ -822,6 +835,7 @@ export type AgentPhase = 'work' | 'review' | 'revision' | 'write';
 
 export type WriterLaneStatus =
   | 'ready'
+  | 'needs_review'
   | 'conflict'
   | 'integrated'
   | 'rejected'
@@ -905,7 +919,7 @@ export type AgentEvent =
   | {type: 'agent_update'; id: string; profile: string; stage: 'context' | 'thinking' | 'tool' | 'response' | 'review'; detail?: string; tool?: string; toolCalls?: number; inputTokens?: number; outputTokens?: number}
   | {type: 'agent_cancelled'; id: string; profile: string; phase?: AgentPhase; reason: string; queued: boolean}
   | {type: 'team_start'; id: string; objective: string}
-  | {type: 'team_done'; id: string; accepted: boolean; reviewRounds: number; review?: {
+  | {type: 'team_done'; id: string; accepted: boolean; reviewRounds: number; needsReview?: boolean; unresolvedCriteria?: string[]; review?: {
     decision: 'accept' | 'revise' | 'escalate';
     pass: number;
     fail: number;
@@ -935,4 +949,10 @@ export interface RunOptions {
     category: ToolCategory,
     reason?: string,
   ) => Promise<PermissionGrant>;
+  /** Separate live-human channel for high-risk actions; automation grants are not admissible. */
+  requestHumanApproval?: (
+    call: ToolCall,
+    category: ToolCategory,
+    reason?: string,
+  ) => Promise<boolean>;
 }

@@ -204,11 +204,17 @@ export class HeadlessReporter {
         ));
         break;
       }
-      case 'writer_lane':
+      case 'writer_lane': {
+        const writerSymbol = event.status === 'ready' || event.status === 'integrated'
+          ? this.paint.green(this.glyphs.success)
+          : event.status === 'needs_review'
+            ? this.paint.yellow(this.glyphs.warning)
+            : this.paint.red(this.glyphs.error);
         process.stderr.write(
-          `${event.status === 'ready' || event.status === 'integrated' ? this.paint.green(this.glyphs.success) : this.paint.red(this.glyphs.error)} writer ${event.id.slice(0, 8)} ${this.glyphs.separator} ${event.status} ${this.glyphs.separator} ${event.detail}\n`,
+          `${writerSymbol} writer ${event.id.slice(0, 8)} ${this.glyphs.separator} ${event.status} ${this.glyphs.separator} ${event.detail}\n`,
         );
         break;
+      }
       case 'needs_input':
         process.stderr.write(this.paint.yellow(`${this.glyphs.meta} ${event.pending.question}\n`));
         event.pending.options.forEach((option, index) => {
@@ -278,6 +284,8 @@ export class HeadlessReporter {
       process.stderr.write(this.paint.yellow(`${this.glyphs.warning} turn limit reached ${this.glyphs.separator} resume with --resume and a larger --max-turns value\n`));
     } else if (reason === 'token_budget') {
       process.stderr.write(this.paint.yellow(`${this.glyphs.warning} token budget reached ${this.glyphs.separator} inspect the saved session before resuming with a larger --token-budget\n`));
+    } else if (reason === 'needs_review') {
+      process.stderr.write(this.paint.yellow(`${this.glyphs.warning} needs review ${this.glyphs.separator} a live human decision is required before the pending action can continue\n`));
     }
   }
 }

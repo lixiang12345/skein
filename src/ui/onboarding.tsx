@@ -4,7 +4,14 @@ import TextInput from 'ink-text-input';
 import {redactEndpoint, saveUserConfig} from '../config.js';
 import {createAgentConnectionSetup, mergeAgentSetup} from '../agent/model-setup.js';
 import {PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
-import type {AgentTeamConfig, ConnectionAuth, ConnectionProtocol, MosaicConfig} from '../types.js';
+import type {
+  AgentTeamConfig,
+  ConnectionApiKeyHeader,
+  ConnectionAuth,
+  ConnectionModelAuth,
+  ConnectionProtocol,
+  MosaicConfig,
+} from '../types.js';
 import {displayWidth, padDisplay, sanitizeTerminalText, truncateDisplay} from './text.js';
 import {resolveKittyKeyboardConfig, resolveTerminalAccessibility} from './terminal-capabilities.js';
 import {resolveThemeWithColor, ThemeProvider, useTheme} from './theme.js';
@@ -16,6 +23,8 @@ export type OnboardingStep =
   | 'models-endpoint'
   | 'model'
   | 'auth'
+  | 'auth-header'
+  | 'models-auth'
   | 'api-key-env'
   | 'confirm'
   | 'saving';
@@ -26,6 +35,8 @@ export interface OnboardingDraft {
   modelsBaseUrl: string;
   model: string;
   auth: ConnectionAuth['type'] | undefined;
+  authHeader: ConnectionApiKeyHeader;
+  modelsAuthHeader: ConnectionModelAuth;
   apiKeyEnv: string;
 }
 
@@ -66,6 +77,17 @@ const authMethods: Array<{value: ConnectionAuth['type']; label: string; detail: 
   {value: 'none', label: 'No authentication', detail: 'For trusted keyless relays or local servers'},
 ];
 
+const authHeaders: Array<{value: ConnectionApiKeyHeader; label: string; detail: string}> = [
+  {value: 'bearer', label: 'Authorization: Bearer', detail: 'OpenAI SDK style · OpenRouter and most unified relays'},
+  {value: 'x-api-key', label: 'x-api-key', detail: 'Anthropic SDK style · Vercel and native Messages relays'},
+];
+
+const modelAuthMethods: Array<{value: ConnectionModelAuth; label: string; detail: string}> = [
+  {value: 'bearer', label: 'Authorization: Bearer', detail: 'Reuse the relay key with OpenAI-style model catalogs'},
+  {value: 'x-api-key', label: 'x-api-key', detail: 'Use the relay key with Anthropic-style model catalogs'},
+  {value: 'none', label: 'No model authentication', detail: 'Public catalog · never send the inference key to this endpoint'},
+];
+
 const DEFAULT_CONNECTION_NAME = 'primary-relay';
 
 const forbiddenDirectionControls = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
@@ -88,6 +110,8 @@ export function createOnboardingState(config: MosaicConfig): OnboardingState {
       modelsBaseUrl: '',
       model: config.model.provider === 'compatible' ? config.model.model : 'default',
       auth: undefined,
+      authHeader: 'bearer',
+      modelsAuthHeader: 'bearer',
       apiKeyEnv: 'SKEIN_API_KEY',
     },
     error: undefined,
@@ -178,6 +202,10 @@ export function buildOnboardingConfig(state: OnboardingState): OnboardingConfigP
     baseUrl: endpoint.value,
     ...(modelsEndpoint.value ? {modelsBaseUrl: modelsEndpoint.value} : {}),
     auth,
+    ...(auth === 'env' ? {
+      authHeader: state.draft.authHeader,
+      modelsAuthHeader: state.draft.modelsAuthHeader,
+    } : {}),
     ...(apiKeyEnv.value ? {apiKeyEnv: apiKeyEnv.value} : {}),
     defaultModel: model.value,
   });
@@ -197,6 +225,8 @@ function selectCurrentOption(state: OnboardingState): OnboardingState {
         modelsBaseUrl: '',
         model: 'default',
         auth: undefined,
+        authHeader: 'bearer',
+        modelsAuthHeader: 'bearer',
         apiKeyEnv: 'SKEIN_API_KEY',
       },
     }, 'endpoint');
@@ -205,7 +235,17 @@ function selectCurrentOption(state: OnboardingState): OnboardingState {
     const auth = authMethods[state.selected]?.value;
     if (!auth) return state;
     const next = {...state, draft: {...state.draft, auth, apiKeyEnv: auth === 'env' ? state.draft.apiKeyEnv : ''}};
-    return advance(next, auth === 'env' ? 'api-key-env' : 'confirm');
+    return advance(next, auth === 'env' ? 'auth-header' : 'confirm');
+  }
+  if (state.step === 'auth-header') {
+    const authHeader = authHeaders[state.selected]?.value;
+    if (!authHeader) return state;
+    return advance({...state, draft: {...state.draft, authHeader, modelsAuthHeader: authHeader}}, 'models-auth');
+  }
+  if (state.step === 'models-auth') {
+    const modelsAuthHeader = modelAuthMethods[state.selected]?.value;
+    if (!modelsAuthHeader) return state;
+    return advance({...state, draft: {...state.draft, modelsAuthHeader}}, 'api-key-env');
   }
   return state;
 }
@@ -384,10 +424,14 @@ export function OnboardingScreen({state, dispatch, width, compact = false}: {
       {!compact ? <Box height={1} /> : null}
       <Text color={theme.textStrong} bold>{truncateDisplay(titleForStep(state.step), headerWidth)}</Text>
       {!compact ? <Text color={theme.muted} wrap="wrap">{descriptionForStep(state)}</Text> : null}
-      {summary ? <Text color={theme.dim}>{truncateDisplay(summary, headerWidth)}</Text> : null}
+      {summary && !(compact && (state.step === 'confirm' || state.step === 'saving'))
+        ? <Text color={theme.dim}>{truncateDisplay(summary, headerWidth)}</Text>
+        : null}
       {!compact ? <Box height={1} /> : null}
       {state.step === 'relay-protocol' ? <OptionList options={relayProtocols} selected={state.selected} marker={marker} width={headerWidth} compact={compact} /> : null}
       {state.step === 'auth' ? <OptionList options={authMethods} selected={state.selected} marker={marker} width={headerWidth} compact={compact} /> : null}
+      {state.step === 'auth-header' ? <OptionList options={authHeaders} selected={state.selected} marker={marker} width={headerWidth} compact={compact} /> : null}
+      {state.step === 'models-auth' ? <OptionList options={modelAuthMethods} selected={state.selected} marker={marker} width={headerWidth} compact={compact} /> : null}
       {inputField ? (
         <Box flexDirection="column">
           <Box>
@@ -407,7 +451,9 @@ export function OnboardingScreen({state, dispatch, width, compact = false}: {
           </Box>
         </Box>
       ) : null}
-      {state.step === 'confirm' || state.step === 'saving' ? <Confirmation state={state} width={headerWidth} /> : null}
+      {state.step === 'confirm' || state.step === 'saving'
+        ? <Confirmation state={state} width={headerWidth} compact={compact} />
+        : null}
       {state.error ? <Text color={theme.error}>! {truncateDisplay(state.error, Math.max(1, headerWidth - 2))}</Text> : null}
       {!compact ? <Box height={1} /> : null}
       <Text color={theme.dim}>{footerForStep(state, headerWidth)}</Text>
@@ -437,7 +483,7 @@ function OptionList({options, selected, marker, width, compact}: {
               bold={active}
               {...(active ? {backgroundColor: theme.selection} : {})}
             >{active ? padDisplay(label, width) : label}</Text>
-            {(!compact && width >= 36) || active ? (
+            {!compact && (width >= 36 || active) ? (
               <Box marginLeft={2} width={Math.max(1, width - 2)}>
                 <Text color={active ? theme.muted : theme.dim} wrap="wrap">{option.detail}</Text>
               </Box>
@@ -449,26 +495,43 @@ function OptionList({options, selected, marker, width, compact}: {
   );
 }
 
-function Confirmation({state, width}: {state: OnboardingState; width: number}) {
+function Confirmation({state, width, compact}: {state: OnboardingState; width: number; compact: boolean}) {
   const theme = useTheme();
-  const values: Array<[string, string]> = [
+  const credential = state.draft.auth === 'env' ? `env:${state.draft.apiKeyEnv} · configured` : 'none';
+  const values: Array<[string, string]> = compact ? [
+    ...(state.draft.modelsBaseUrl ? [['Models', redactEndpoint(state.draft.modelsBaseUrl)] as [string, string]] : []),
+    ['Model', state.draft.model],
+    ['Credential', state.draft.auth === 'env'
+      ? `env:${state.draft.apiKeyEnv} · ${state.draft.authHeader}`
+      : 'none'],
+    ...(state.draft.auth === 'env' ? [
+      ['Models auth', state.draft.modelsAuthHeader] as [string, string],
+    ] : []),
+  ] : [
     ['Connection', DEFAULT_CONNECTION_NAME],
     ['Protocol', relayLabel(state.draft.relayProtocol)],
     ['Inference', redactEndpoint(state.draft.baseUrl)],
     ['Models', state.draft.modelsBaseUrl ? redactEndpoint(state.draft.modelsBaseUrl) : 'same base as inference'],
     ['Model', state.draft.model],
-    ['Credential', state.draft.auth === 'env' ? `env:${state.draft.apiKeyEnv} · configured` : 'none'],
+    ['Credential', credential],
+    ...(state.draft.auth === 'env' ? [
+      ['Inference auth', state.draft.authHeader] as [string, string],
+      ['Models auth', state.draft.modelsAuthHeader] as [string, string],
+    ] : []),
   ];
   const tabular = width >= 36;
+  const labelWidth = tabular
+    ? Math.min(16, Math.max(...values.map(([label]) => displayWidth(label))) + 2)
+    : undefined;
   return (
     <Box flexDirection="column">
       {values.map(([label, value]) => (
         <Box key={label} flexDirection={tabular ? 'row' : 'column'}>
-          <Box width={tabular ? 12 : undefined}><Text color={theme.dim}>{label}</Text></Box>
-          <Text color={theme.text}>{truncateDisplay(value, Math.max(1, width - (tabular ? 12 : 0)))}</Text>
+          <Box width={labelWidth}><Text color={theme.dim}>{label}</Text></Box>
+          <Text color={theme.text}>{truncateDisplay(value, Math.max(1, width - (labelWidth ?? 0)))}</Text>
         </Box>
       ))}
-      {state.step === 'saving' ? <Text color={theme.accent}>Saving and validating configuration…</Text> : null}
+      {state.step === 'saving' && !compact ? <Text color={theme.accent}>Saving and validating configuration…</Text> : null}
     </Box>
   );
 }
@@ -476,6 +539,8 @@ function Confirmation({state, width}: {state: OnboardingState; width: number}) {
 function menuCount(step: OnboardingStep): number {
   if (step === 'relay-protocol') return relayProtocols.length;
   if (step === 'auth') return authMethods.length;
+  if (step === 'auth-header') return authHeaders.length;
+  if (step === 'models-auth') return modelAuthMethods.length;
   return 0;
 }
 
@@ -499,7 +564,7 @@ function setupStage(state: OnboardingState): {index: number; name: string; progr
     ? 2
     : state.step === 'model'
       ? 3
-      : state.step === 'auth' || state.step === 'api-key-env'
+      : state.step === 'auth' || state.step === 'auth-header' || state.step === 'models-auth' || state.step === 'api-key-env'
         ? 4
         : state.step === 'confirm' || state.step === 'saving'
           ? 5
@@ -527,6 +592,8 @@ function titleForStep(step: OnboardingStep): string {
   if (step === 'models-endpoint') return 'Enter the model catalog base URL';
   if (step === 'model') return 'Enter the model identifier';
   if (step === 'auth') return 'Choose relay authentication';
+  if (step === 'auth-header') return 'Choose inference authentication';
+  if (step === 'models-auth') return 'Choose model catalog authentication';
   if (step === 'api-key-env') return 'Reference the credential environment';
   if (step === 'confirm') return 'Review and save';
   return 'Saving configuration';
@@ -540,13 +607,15 @@ function descriptionForStep(state: OnboardingState): string {
     : 'Leave blank when GET /models uses the same base as inference.';
   if (state.step === 'model') return 'Use the exact model identifier returned or documented by the relay.';
   if (state.step === 'auth') return 'Credentials are referenced from the environment and are never written to Skein configuration.';
+  if (state.step === 'auth-header') return 'Relays disagree here: OpenRouter documents Bearer while Anthropic SDK-compatible gateways commonly use x-api-key. Skein sends only the selected form.';
+  if (state.step === 'models-auth') return 'Model catalogs may use a different header or be public. Choose none to guarantee the inference key is not sent to the catalog endpoint.';
   if (state.step === 'api-key-env') return 'Enter the variable name only. It must already exist in this process environment.';
   if (state.step === 'confirm') return 'Only redacted endpoints, model metadata, and the credential variable name are saved.';
   return 'The configuration is saved only after this step succeeds.';
 }
 
 function footerForStep(state: OnboardingState, width: number): string {
-  if (state.step === 'saving') return 'Saving owner-only configuration · please wait';
+  if (state.step === 'saving') return width < 48 ? 'Saving · please wait' : 'Saving owner-only configuration · please wait';
   if (width < 28) return menuCount(state.step) ? '↑↓ · Enter · Esc' : 'Enter · Esc';
   if (state.step === 'confirm') return width < 48 ? 'Enter save · Esc back' : 'Enter save · Esc back · Ctrl+C cancel';
   if (menuCount(state.step)) return width < 48

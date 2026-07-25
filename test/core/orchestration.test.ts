@@ -62,12 +62,14 @@ describe('bounded orchestration', () => {
       maxReviewRounds: 1,
       routes: {
         architect: {provider: 'compatible', model: 'planner-model', baseUrl: 'https://models.example/v1', apiKeyEnv: 'TEAM_TEST_KEY'},
+        backend: {provider: 'compatible', model: 'planner-model', baseUrl: 'https://models.example/v1', apiKeyEnv: 'TEAM_TEST_KEY'},
         reviewer: {provider: 'compatible', model: 'judge-model', baseUrl: 'https://models.example/v1', apiKeyEnv: 'TEAM_TEST_KEY'},
       },
     };
     const profiles = new AgentProfileCatalog(root);
     await profiles.discover();
     const created: string[] = [];
+    const reviewPrompts: string[] = [];
     let reviews = 0;
     const provider: ModelProvider = {
       name: 'parent',
@@ -90,13 +92,18 @@ describe('bounded orchestration', () => {
           name: model.model,
           async complete(messages) {
             const text = messages.map((message) => message.content).join('\n');
-            if (text.includes('Return exactly one JSON object matching output_schema')) reviews += 1;
+            if (text.includes('Return exactly one JSON object matching output_schema')) {
+              reviews += 1;
+              reviewPrompts.push(text);
+            }
             return {
               content: text.includes('Return exactly one JSON object matching output_schema')
                 ? reviews === 1
                   ? structuredReview(text, 'revise')
                   : structuredReview(text, 'accept')
-                : 'Architecture evidence with file boundaries.',
+                : text.includes('runtime boundaries')
+                  ? 'Backend evidence with runtime boundaries.'
+                  : 'Architecture evidence with file boundaries.',
               toolCalls: [],
               usage: {inputTokens: 100, outputTokens: 20},
             };
@@ -107,7 +114,10 @@ describe('bounded orchestration', () => {
     const events: AgentEvent[] = [];
     const result = await manager.teamTool().execute({
       objective: 'Produce an evidence-backed implementation decision.',
-      tasks: [{profile: 'architect', task: 'Map the implementation boundaries.'}],
+      tasks: [
+        {profile: 'architect', task: 'Map the implementation boundaries.'},
+        {profile: 'backend', task: 'Map the runtime boundaries.'},
+      ],
     }, {
       config: cfg,
       workspace: new WorkspaceAccess([root]),
@@ -122,24 +132,37 @@ describe('bounded orchestration', () => {
     const persistedStore = new TeamRunStore(root);
     const persisted = await persistedStore.load(persistedRunId!);
     expect(persisted.status).toBe('accepted');
-    expect(persisted.agents.length).toBeGreaterThanOrEqual(4);
+    expect(persisted.agents.length).toBeGreaterThanOrEqual(6);
     expect(persisted.messages.length).toBeGreaterThanOrEqual(2);
     expect(persisted.agents.every((agent) => (agent.usage?.inputTokens ?? 0) >= 100)).toBe(true);
-    expect(persisted.version === 3 ? persisted.reviews : []).toHaveLength(2);
-    if (persisted.version !== 3) throw new Error('Expected a v3 Team Run.');
+    expect(persisted.version === 4 ? persisted.reviews : []).toHaveLength(2);
+    if (persisted.version !== 4) throw new Error('Expected a v4 Team Run.');
     expect(new Set(persisted.reviews.map((review) => review.artifact.sha256)).size).toBe(2);
     await expect(Promise.all(persisted.reviews.map((review) =>
       persistedStore.readArtifact(persisted.id, review.artifact)))).resolves.toHaveLength(2);
     expect(created).toEqual([
       'compatible/planner-model/key',
+      'compatible/planner-model/key',
       'compatible/judge-model/key',
+      'compatible/planner-model/key',
       'compatible/planner-model/key',
       'compatible/judge-model/key',
     ]);
-    expect(events.some((event) => event.type === 'agent_message' && event.from === 'architect' && event.to === 'reviewer')).toBe(true);
+    expect(events.some((event) => event.type === 'agent_message' && event.from === 'architect' && event.to === 'reviewer')).toBe(false);
     expect(events.some((event) => event.type === 'agent_start' && event.model === 'judge-model' && event.phase === 'review')).toBe(true);
     expect(events.some((event) => event.type === 'agent_start' && event.model === 'planner-model' && event.phase === 'revision')).toBe(true);
     expect(events.some((event) => event.type === 'agent_update' && event.inputTokens === 100 && event.outputTokens === 20)).toBe(true);
+    expect(reviewPrompts).toHaveLength(2);
+    for (const prompt of reviewPrompts) {
+      expect(prompt).toContain('Candidate A');
+      expect(prompt).toContain('Candidate B');
+      expect(prompt).not.toMatch(/planner-model|judge-model|compatible\/|##\s+(?:architect|backend)\s+(?:completed|failed)/iu);
+    }
+    const firstArchitecture = reviewPrompts[0]!.indexOf('Architecture evidence');
+    const firstBackend = reviewPrompts[0]!.indexOf('Backend evidence');
+    const secondArchitecture = reviewPrompts[1]!.indexOf('Architecture evidence');
+    const secondBackend = reviewPrompts[1]!.indexOf('Backend evidence');
+    expect(Math.sign(firstArchitecture - firstBackend)).toBe(-Math.sign(secondArchitecture - secondBackend));
   });
 
   it('aggregates by dispatch order across completion orders and reports specialist conflicts', async () => {
@@ -154,7 +177,7 @@ describe('bounded orchestration', () => {
       routes: {
         architect: {runtime: 'codex', provider: 'openai', model: 'team-model'},
         backend: {runtime: 'codex', provider: 'openai', model: 'team-model'},
-        reviewer: {runtime: 'codex', provider: 'openai', model: 'team-model'},
+        reviewer: {runtime: 'codex', provider: 'openai', model: 'judge-model'},
       },
     };
     const profiles = new AgentProfileCatalog(root);
@@ -793,7 +816,7 @@ function structuredReview(
 ): string {
   const startMarker = 'Review input:\n';
   const start = prompt.indexOf(startMarker);
-  const end = prompt.indexOf('\n\n<untrusted-worker-reports', start + startMarker.length);
+  const end = prompt.indexOf('\n\n<untrusted-anonymous-candidate-reports', start + startMarker.length);
   if (start < 0 || end < 0) throw new Error('structured review input missing');
   const input = JSON.parse(prompt.slice(start + startMarker.length, end)) as {
     contract: {criteria: Array<{id: string}>};

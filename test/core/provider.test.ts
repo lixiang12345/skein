@@ -169,6 +169,24 @@ describe('provider streaming helpers', () => {
     await expect(provider.complete([], [])).resolves.toMatchObject({content: 'ok'});
   });
 
+  it('uses an explicitly selected x-api-key header for Anthropic-compatible relays', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('https://ai-gateway.example/v1/messages');
+      expect(init?.headers).toMatchObject({'x-api-key': 'relay-key'});
+      expect(init?.headers).not.toHaveProperty('authorization');
+      return new Response(JSON.stringify({content: [{type: 'text', text: 'ok'}]}), {
+        headers: {'content-type': 'application/json'},
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const provider = new AnthropicProvider({
+      provider: 'compatible', protocol: 'anthropic-messages', model: 'relay-claude',
+      baseUrl: 'https://ai-gateway.example', apiKey: 'relay-key', apiKeyHeader: 'x-api-key',
+    });
+
+    await expect(provider.complete([], [])).resolves.toMatchObject({content: 'ok'});
+  });
+
   it('replays exact Responses output items for stateless reasoning and tool continuation', async () => {
     const priorOutput = [
       {id: 'rs-1', type: 'reasoning', encrypted_content: 'opaque-reasoning', summary: []},

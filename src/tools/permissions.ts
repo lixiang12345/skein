@@ -4,6 +4,7 @@ import type {
   PermissionLevel,
   ToolCall,
   ToolCategory,
+  ToolDefinition,
 } from '../types.js';
 
 export interface PermissionDecision {
@@ -110,6 +111,77 @@ export function evaluatePermission(
   }
   return {outcome: 'ask', reason: `${category} tools require approval.`};
 }
+
+/** Identify external, destructive, release, migration, or explicitly human-gated mutations. */
+export function requiresLiveHumanApproval(
+  definition: ToolDefinition,
+  call: ToolCall,
+  categories: ToolCategory[],
+): boolean {
+  if (definition.humanApproval) return true;
+  if (definition.source === 'mcp' && categories.some((category) => category !== 'read')) return true;
+  if (categories.includes('network')) {
+    const method = typeof call.arguments.method === 'string'
+      ? call.arguments.method.trim().toLocaleUpperCase()
+      : 'GET';
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) return true;
+  }
+  if (call.name === 'git' && Array.isArray(call.arguments.args)) {
+    const args = call.arguments.args.filter((value): value is string => typeof value === 'string');
+    const subcommand = args.find((value) => !value.startsWith('-'));
+    if (subcommand === 'push' ||
+      (subcommand === 'reset' && args.includes('--hard')) ||
+      (subcommand === 'clean' && args.some((value) => /^-[a-z]*f[a-z]*$/iu.test(value))) ||
+      (subcommand === 'branch' && args.includes('-D'))) return true;
+  }
+  const command = commandForCall(call)?.toLocaleLowerCase();
+  if (!command) return false;
+  return highRiskCommandRules.some(({pattern}) => pattern.test(command));
+}
+
+/** Add the policy categories implied by a high-risk command before evaluating hard deny rules. */
+export function liveHumanApprovalCategories(
+  definition: ToolDefinition,
+  call: ToolCall,
+  categories: ToolCategory[],
+): ToolCategory[] {
+  if (!requiresLiveHumanApproval(definition, call, categories)) return [...categories];
+  const expanded = new Set(categories);
+  if (call.name === 'git' && Array.isArray(call.arguments.args)) {
+    const args = call.arguments.args.filter((value): value is string => typeof value === 'string');
+    const subcommand = args.find((value) => !value.startsWith('-'));
+    expanded.add('git');
+    if (subcommand === 'push') expanded.add('network');
+    if (subcommand === 'reset' || subcommand === 'clean' || subcommand === 'branch') expanded.add('write');
+  }
+  const command = commandForCall(call)?.toLocaleLowerCase();
+  if (command) {
+    for (const rule of highRiskCommandRules) {
+      if (rule.pattern.test(command)) rule.categories.forEach((category) => expanded.add(category));
+    }
+  }
+  return [...expanded];
+}
+
+const executableBoundary = '(?:^|[\\s;&|()`])(?:[^\\s;&|()`]+[\\\\/])?';
+const highRiskCommandRules: Array<{pattern: RegExp; categories: ToolCategory[]}> = [
+  {pattern: new RegExp(`${executableBoundary}(?:npm|pnpm|yarn|bun)\\b[^\\n;&|]*(?:publish|unpublish|deprecate)\\b`, 'iu'), categories: ['network']},
+  {pattern: new RegExp(`${executableBoundary}git\\b[^\\n;&|]*\\bpush\\b`, 'iu'), categories: ['git', 'network']},
+  {pattern: new RegExp(`${executableBoundary}git\\b[^\\n;&|]*(?:\\breset\\b[^\\n;&|]*--hard\\b|\\bclean\\b[^\\n;&|]*-[a-z]*f|\\bbranch\\b[^\\n;&|]*(?:-D\\b|--delete\\b[^\\n;&|]*--force\\b|--force\\b[^\\n;&|]*--delete\\b))`, 'iu'), categories: ['git', 'write']},
+  {pattern: new RegExp(`${executableBoundary}(?:rm|rmdir|shred|unlink|truncate|mkfs(?:\\.[a-z0-9]+)?)\\b`, 'iu'), categories: ['write']},
+  {pattern: new RegExp(`${executableBoundary}find\\b[^\\n;&|]*-(?:delete|exec|execdir)\\b`, 'iu'), categories: ['write']},
+  {pattern: new RegExp(`${executableBoundary}dd\\b[^\\n;&|]*\\bof=`, 'iu'), categories: ['write']},
+  {pattern: new RegExp(`${executableBoundary}(?:docker|podman)\\b[^\\n;&|]*(?:push|login)\\b`, 'iu'), categories: ['network']},
+  {pattern: new RegExp(`${executableBoundary}(?:kubectl|helm)\\b[^\\n;&|]*(?:apply|create|delete|replace|patch|scale|rollout|install|upgrade|uninstall)\\b`, 'iu'), categories: ['network']},
+  {pattern: new RegExp(`${executableBoundary}(?:terraform|tofu)\\b[^\\n;&|]*(?:apply|destroy|import)\\b`, 'iu'), categories: ['write', 'network']},
+  {pattern: new RegExp(`${executableBoundary}pulumi\\b[^\\n;&|]*(?:up|destroy|import)\\b`, 'iu'), categories: ['write', 'network']},
+  {pattern: new RegExp(`${executableBoundary}(?:vercel|fly|railway|serverless|sls|wrangler)\\b[^\\n;&|]*(?:deploy|up|remove|delete|destroy)\\b`, 'iu'), categories: ['network']},
+  {pattern: new RegExp(`${executableBoundary}gh\\b[^\\n;&|]*(?:release\\s+(?:create|delete|edit|upload)|pr\\s+(?:create|close|merge|reopen|review)|issue\\s+(?:create|close|reopen))\\b`, 'iu'), categories: ['network']},
+  {pattern: new RegExp(`${executableBoundary}(?:prisma|sequelize|typeorm|knex|alembic|flyway)\\b[^\\n;&|]*(?:migrat|upgrade|downgrade|deploy|rollback|revert|undo)`, 'iu'), categories: ['write', 'network']},
+  {pattern: new RegExp(`${executableBoundary}(?:rails|rake)\\b[^\\n;&|]*db:(?:migrate|rollback|drop|reset)\\b`, 'iu'), categories: ['write', 'network']},
+  {pattern: new RegExp(`${executableBoundary}curl\\b[^\\n;&|]*(?:(?:-X(?:=|\\s*)|--request(?:=|\\s+))(?:POST|PUT|PATCH|DELETE)\\b|(?:-d|--data(?:-raw|-binary|-urlencode)?|-F|--form|-T|--upload-file)(?:=|\\s|(?=[^\\s;&|])))`, 'iu'), categories: ['network']},
+  {pattern: new RegExp(`${executableBoundary}wget\\b[^\\n;&|]*(?:--method=(?:POST|PUT|PATCH|DELETE)\\b|--post-(?:data|file)(?:=|\\s))`, 'iu'), categories: ['network']},
+];
 
 function allowListCategory(call: ToolCall): ToolCategory | undefined {
   if (call.name === 'shell') return 'shell';

@@ -249,7 +249,8 @@ function materializeRoute(config: MosaicConfig, ref: string): {
       protocol: config.model.protocol ?? defaultProtocol(config.model.provider),
       model: config.model.model,
       endpointIdentity: config.model.baseUrl ?? `provider-default:${config.model.provider}`,
-      authReference: config.model.apiKey ? 'parent-runtime-key' : `provider-default:${config.model.provider}`,
+      authReference: `${config.model.apiKey ? 'parent-runtime-key' : `provider-default:${config.model.provider}`}` +
+        `:${config.model.apiKeyHeader ?? 'provider-default-header'}`,
     };
   }
   const resolved = ref === '@default'
@@ -261,11 +262,11 @@ function materializeRoute(config: MosaicConfig, ref: string): {
   const protocol = connection?.protocol ?? defaultProtocol(provider);
   const baseUrl = route.baseUrl ?? connection?.baseUrl;
   const authReference = route.apiKeyEnv
-    ? `env:${route.apiKeyEnv}`
+    ? `env:${route.apiKeyEnv}:bearer`
     : connection?.auth?.type === 'env'
-      ? `env:${connection.auth.name}`
+      ? `env:${connection.auth.name}:${connection.auth.header ?? 'bearer'}`
       : connection?.apiKeyEnv
-        ? `env:${connection.apiKeyEnv}`
+        ? `env:${connection.apiKeyEnv}:bearer`
         : connection?.auth?.type === 'none'
           ? 'none'
           : `provider-default:${provider}`;
@@ -347,6 +348,7 @@ function toolCatalogFingerprint(config: MosaicConfig, profile: AgentProfile): st
     category: definition.category,
     inputSchema: definition.inputSchema,
     completionEvidence: definition.completionEvidence ?? 'none',
+    humanApproval: definition.humanApproval ?? false,
   }));
   const mcp = profile.readOnly && config.mcp?.enabled
     ? Object.entries(config.mcp.servers).flatMap(([server, value]) => value.enabled === false

@@ -10,6 +10,20 @@ export {TeamRunStore} from './team-store.js';
 export type {TeamRunManifest, TeamRunSummary, TeamRunAgentRecord, TeamRunMessageRecord} from './team-store.js';
 export {formatReviewVerdict} from './review-verdict.js';
 export type {ReviewContract, ReviewEvidenceReceipt, ReviewVerdict} from './review-verdict.js';
+export {
+  assessReviewIndependence,
+  buildReviewRouteIdentity,
+  createHumanArbitration,
+  resolveReviewGate,
+  reviewContractHighRisk,
+  reviewCriterionConflicts,
+} from './review-arbitration.js';
+export type {
+  HumanArbitration,
+  ReviewCriterionConflict,
+  ReviewIndependence,
+  ReviewRouteIdentity,
+} from './review-arbitration.js';
 export {listConnectionModels} from './model-catalog.js';
 export type {ModelCatalogEntry} from './model-catalog.js';
 export {CapabilityRegistryStore, capabilityRegistrySchema} from './capability-registry.js';

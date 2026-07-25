@@ -27,6 +27,8 @@ function configuredDraft(overrides: Partial<OnboardingState['draft']> = {}): Onb
     modelsBaseUrl: '',
     model: 'relay-coder',
     auth: 'none',
+    authHeader: 'bearer',
+    modelsAuthHeader: 'bearer',
     apiKeyEnv: '',
     ...overrides,
   };
@@ -42,6 +44,47 @@ describe('first-run onboarding state machine', () => {
       ...official,
       model: {provider: 'compatible', model: 'local', baseUrl: 'http://127.0.0.1:11434/v1'},
     })).toBe(false);
+  });
+
+  it('persists an explicit Anthropic SDK x-api-key header without probing', () => {
+    const state: OnboardingState = {
+      step: 'confirm',
+      history: [],
+      selected: 0,
+      error: undefined,
+      draft: configuredDraft({
+        relayProtocol: 'anthropic-messages',
+        modelsBaseUrl: 'https://relay.example/v1',
+        auth: 'env',
+        authHeader: 'x-api-key',
+        modelsAuthHeader: 'x-api-key',
+        apiKeyEnv: 'RELAY_API_KEY',
+      }),
+    };
+    expect(buildOnboardingConfig(state).agents.connections?.['primary-relay']).toMatchObject({
+      auth: {type: 'env', name: 'RELAY_API_KEY', header: 'x-api-key'},
+      modelsAuthHeader: 'x-api-key',
+    });
+  });
+
+  it('can keep inference authenticated while guaranteeing a public model catalog receives no key', () => {
+    const state: OnboardingState = {
+      step: 'confirm',
+      history: [],
+      selected: 0,
+      error: undefined,
+      draft: configuredDraft({
+        modelsBaseUrl: 'https://ai-gateway.example/v1',
+        auth: 'env',
+        authHeader: 'bearer',
+        modelsAuthHeader: 'none',
+        apiKeyEnv: 'RELAY_API_KEY',
+      }),
+    };
+    expect(buildOnboardingConfig(state).agents.connections?.['primary-relay']).toMatchObject({
+      auth: {type: 'env', name: 'RELAY_API_KEY', header: 'bearer'},
+      modelsAuthHeader: 'none',
+    });
   });
 
   it('builds an explicit Anthropic relay with a separate model catalog and no secret value', () => {
@@ -109,6 +152,36 @@ describe('first-run onboarding state machine', () => {
       expect(submitted.step).toBe('confirm');
       expect(submitted.draft.apiKeyEnv).toBe('RELAY_API_KEY');
       expect(JSON.stringify(submitted)).not.toContain('secret-never-copied');
+    } finally {
+      if (previous === undefined) delete process.env.RELAY_API_KEY;
+      else process.env.RELAY_API_KEY = previous;
+    }
+  });
+
+  it('navigates the inference and catalog authentication menus without collapsing them into detection', () => {
+    const previous = process.env.RELAY_API_KEY;
+    process.env.RELAY_API_KEY = 'secret-never-copied';
+    try {
+      let state: OnboardingState = {
+        step: 'auth',
+        history: ['relay-protocol', 'endpoint', 'models-endpoint', 'model'],
+        selected: 0,
+        draft: configuredDraft({auth: undefined, apiKeyEnv: 'RELAY_API_KEY'}),
+        error: undefined,
+      };
+      state = onboardingReducer(state, {type: 'SELECT'});
+      expect(state.step).toBe('auth-header');
+      state = onboardingReducer(state, {type: 'MOVE', delta: 1, count: 2});
+      state = onboardingReducer(state, {type: 'SELECT'});
+      expect(state).toMatchObject({step: 'models-auth', draft: {authHeader: 'x-api-key', modelsAuthHeader: 'x-api-key'}});
+      state = onboardingReducer(state, {type: 'MOVE', delta: -1, count: 3});
+      state = onboardingReducer(state, {type: 'SELECT'});
+      expect(state).toMatchObject({step: 'api-key-env', draft: {modelsAuthHeader: 'none'}});
+      state = onboardingReducer(state, {type: 'SUBMIT_INPUT', field: 'apiKeyEnv', value: 'RELAY_API_KEY'});
+      expect(state.step).toBe('confirm');
+      expect(JSON.stringify(state)).not.toContain('secret-never-copied');
+      state = onboardingReducer(state, {type: 'BACK'});
+      expect(state.step).toBe('api-key-env');
     } finally {
       if (previous === undefined) delete process.env.RELAY_API_KEY;
       else process.env.RELAY_API_KEY = previous;
@@ -279,5 +352,55 @@ describe('onboarding presentation', () => {
     );
     expect(credentialOutput).toContain('Enter');
     expect(credentialOutput.split('\n').filter((line) => /[╭╰]/u.test(line))).toHaveLength(2);
+  });
+
+  it.each([20, 32, 40, 80])('keeps both authentication menus inside %i columns', (width) => {
+    const base: OnboardingState = {
+      step: 'auth-header',
+      history: ['relay-protocol', 'endpoint', 'models-endpoint', 'model', 'auth'],
+      selected: 1,
+      draft: configuredDraft({auth: 'env', apiKeyEnv: 'RELAY_API_KEY'}),
+      error: undefined,
+    };
+    for (const state of [base, {...base, step: 'models-auth' as const, selected: 2}]) {
+      const output = renderToString(
+        <OnboardingScreen state={state} dispatch={() => undefined} width={width} />,
+        {columns: width},
+      );
+      for (const line of output.split('\n')) {
+        expect(displayWidth(line), `${width}-column authentication row overflowed: ${JSON.stringify(line)}`)
+          .toBeLessThanOrEqual(width);
+      }
+      expect(output).toContain('AUTH');
+      expect(output).toContain(state.step === 'auth-header' ? 'x-api-key' : 'No model');
+      expect(output).toContain('Enter');
+    }
+  });
+
+  it('fits new authentication, review, validation, and saving states inside a 40x10 terminal', () => {
+    const base: OnboardingState = {
+      step: 'auth-header',
+      history: [],
+      selected: 1,
+      draft: configuredDraft({
+        modelsBaseUrl: 'https://relay.example/v1', auth: 'env', authHeader: 'x-api-key',
+        modelsAuthHeader: 'none', apiKeyEnv: 'RELAY_API_KEY',
+      }),
+      error: undefined,
+    };
+    const states: OnboardingState[] = [
+      base,
+      {...base, step: 'models-auth', selected: 2},
+      {...base, step: 'confirm', error: 'Example validation error.'},
+      {...base, step: 'saving'},
+    ];
+    for (const state of states) {
+      const output = renderToString(
+        <OnboardingScreen state={state} dispatch={() => undefined} width={40} compact />,
+        {columns: 40},
+      );
+      expect(output.split('\n').length, `${state.step} exceeded 40x10:\n${output}`).toBeLessThanOrEqual(10);
+      for (const line of output.split('\n')) expect(displayWidth(line)).toBeLessThanOrEqual(40);
+    }
   });
 });

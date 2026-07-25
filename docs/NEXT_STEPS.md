@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.31`.
+- Current repository version: `0.3.33`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -42,8 +42,8 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.31.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.31.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.33.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.33.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
@@ -423,7 +423,7 @@ Implementation progress:
 - The first writer lane is implemented behind `agents.writerEnabled=false` by
   default. `writer_run` creates one repo-leased disposable worktree, confines an
   API writer to five path-safe read/write tools, requires an API Reviewer, and
-  persists a bounded patch plus lifecycle evidence in Team Run v3.
+  persists a bounded patch plus lifecycle evidence in Team Run v4.
 - `writer_integrate` is the only main-workspace integration path. It gates on
   patch SHA, a structured evidence-backed verdict bound to the current semantic
   Task Contract, base `HEAD`, clean target paths, patch parsing,
@@ -441,13 +441,24 @@ Implementation progress:
   gates, simulated partial-apply recovery, workspace-profile rejection, v1/v2
   Team Run compatibility, artifact/manifest tampering, Reviewer failure and
   cancellation, Task Contract drift, and deterministic preflight short-circuit.
-  G2 Capability Registry/router shadow mode is complete in `0.3.32`:
+- G2 Capability Registry/router shadow mode is complete in `0.3.32`:
   privacy-safe route epochs, configured/observed separation, conservative
   Wilson utility, bounded decay,
   hard eligibility gates, fingerprint-bound pinning, and inspect/export/reset
-  controls without changing live routing. G3 independent judging and human
-  arbitration is the next evidence-routing slice; parallel writers and
+  controls without changing live routing.
+- G3 Judge Independence and Human Arbitration is complete in `0.3.33`: Team
+  Run v4 blinds Reviewer input, records route/model/gateway correlation,
+  reconciles model criteria against authoritative deterministic oracles,
+  persists artifact-bound criterion decisions, and exposes headless
+  `needs_review` with exit code 9. High-risk integration, release, deployment,
+  migration, destructive, and external-mutation actions require live-human
+  approval that model review and config cannot replace. Parallel writers and
   external CLI writer mode remain deferred.
+- Relay connections remain transport-explicit: Responses is the default,
+  Chat Completions and Anthropic Messages are compatibility transports, and
+  inference/model-directory bases and auth are independent. Public model
+  catalogs can use `modelsAuthHeader: none` without reading or sending the
+  inference key.
 
 ### P1: MCP capability trust (complete in 0.3.27)
 
@@ -540,8 +551,8 @@ deprecation window is complete.
 
 ## Suggested Next Conversation Opening
 
-Start with: “Implement P1-G G3 Judge Independence and Human Arbitration on top
-of Team Run v3 and the shadow-only Capability Registry. Keep deterministic
-oracles authoritative, blind the Reviewer to author identity and self-report,
-escalate criterion-level conflicts, and preserve a non-interactive
-`needs_review` state without treating model review as human approval.”
+Start with: “Implement P1-G G4 Drift Detection and Evals on top of Team Run v4
+and the shadow-only Capability Registry. Add model/endpoint/prompt/tool epochs,
+canary-driven degraded/quarantine/recovery state, route replay and judge-bias
+fixtures, and Token Ledger linkage. Keep automatic routing shadow-only until
+the replay, calibration, degradation, cost, and human-approval gates pass.”

@@ -58,6 +58,18 @@ export function requireApiKey(config: ModelConfig): string {
   return config.apiKey;
 }
 
+/** Build one explicit API-key header without probing or retrying another authentication convention. */
+export function apiKeyHeaders(
+  apiKey: string | undefined,
+  header: ModelConfig['apiKeyHeader'] | undefined,
+  fallback: NonNullable<ModelConfig['apiKeyHeader']>,
+): Record<string, string> {
+  if (!apiKey) return {};
+  return (header ?? fallback) === 'x-api-key'
+    ? {'x-api-key': apiKey}
+    : {authorization: `Bearer ${apiKey}`};
+}
+
 export async function parseErrorResponse(
   response: Response,
   secrets: Array<string | undefined> = [],

@@ -1,4 +1,12 @@
-import type {AgentConnectionConfig, AgentTeamConfig, ConnectionAuth, ConnectionProtocol, ProviderName} from '../types.js';
+import type {
+  AgentConnectionConfig,
+  AgentTeamConfig,
+  ConnectionApiKeyHeader,
+  ConnectionAuth,
+  ConnectionModelAuth,
+  ConnectionProtocol,
+  ProviderName,
+} from '../types.js';
 
 export interface AgentConnectionSetupInput {
   name: string;
@@ -7,6 +15,8 @@ export interface AgentConnectionSetupInput {
   baseUrl?: string;
   modelsBaseUrl?: string;
   auth?: ConnectionAuth['type'];
+  authHeader?: ConnectionApiKeyHeader;
+  modelsAuthHeader?: ConnectionModelAuth;
   apiKeyEnv?: string;
   defaultModel: string;
 }
@@ -63,6 +73,9 @@ export function createAgentConnectionSetup(input: AgentConnectionSetupInput): Ag
   if (auth === 'none' && apiKeyEnv) {
     throw new Error('Unauthenticated connections cannot include a credential environment variable.');
   }
+  if (auth === 'none' && (input.authHeader || (input.modelsAuthHeader && input.modelsAuthHeader !== 'none'))) {
+    throw new Error('Unauthenticated connections cannot include credential header settings.');
+  }
   return {
     defaultConnection: name,
     defaultModel,
@@ -73,7 +86,10 @@ export function createAgentConnectionSetup(input: AgentConnectionSetupInput): Ag
         defaultModel,
         baseUrl,
         ...(modelsBaseUrl ? {modelsBaseUrl} : {}),
-        auth: auth === 'env' ? {type: 'env', name: apiKeyEnv as string} : {type: 'none'},
+        ...(input.modelsAuthHeader ? {modelsAuthHeader: input.modelsAuthHeader} : {}),
+        auth: auth === 'env'
+          ? {type: 'env', name: apiKeyEnv as string, ...(input.authHeader ? {header: input.authHeader} : {})}
+          : {type: 'none'},
       },
     },
   };

@@ -30,11 +30,15 @@ describe('isolated writer lane', () => {
     const context = contextProvider();
     const session = createSession({workspace: root, provider: 'compatible', model: 'test'});
     const store = new TeamRunStore(root);
+    let reviewPrompt = '';
     const manager = await writerManager(root, cfg, context, store, async ({workspace}) => {
       await writeFile(join(workspace, 'source.txt'), 'after\n');
       await writeFile(join(workspace, 'added.txt'), 'new\n');
       await writeFile(join(workspace, 'binary.bin'), Buffer.from([0, 1, 2, 255]));
       return {summary: 'Updated source and added a regression fixture.'};
+    }, undefined, async (messages) => {
+      reviewPrompt = messages.map((message) => message.content).join('\n');
+      return {content: structuredReview(reviewPrompt, 'accept'), toolCalls: []};
     });
 
     const run = await manager.writerTool().execute({task: 'Update source and add the fixture.'},
@@ -43,11 +47,14 @@ describe('isolated writer lane', () => {
     expect(await readFile(join(root, 'source.txt'), 'utf8')).toBe('before\n');
     await expect(readFile(join(root, 'added.txt'), 'utf8')).rejects.toMatchObject({code: 'ENOENT'});
     expect(await auxiliaryWorktrees(root)).toEqual([]);
+    expect(reviewPrompt).toContain('<untrusted-writer-patch');
+    expect(reviewPrompt).not.toContain('Updated source and added a regression fixture.');
+    expect(reviewPrompt).not.toMatch(/implementer|writer-model|judge-model|compatible\//iu);
 
     const metadata = run.metadata as {teamRunId: string; patchSha256: string};
     const persisted = await store.load(metadata.teamRunId);
-    expect(persisted.version).toBe(3);
-    expect(persisted.version === 3 ? persisted.writer : undefined).toMatchObject({
+    expect(persisted.version).toBe(4);
+    expect(persisted.version === 4 ? persisted.writer : undefined).toMatchObject({
       outcome: 'accepted',
       worktreeCleaned: true,
       files: ['added.txt', 'binary.bin', 'source.txt'],
@@ -65,7 +72,7 @@ describe('isolated writer lane', () => {
     expect(await readFile(join(root, 'binary.bin'))).toEqual(Buffer.from([0, 1, 2, 255]));
     const checkpointId = (integrated.metadata as {checkpointId: string}).checkpointId;
     const afterIntegration = await store.load(metadata.teamRunId);
-    expect(afterIntegration.version === 3 ? afterIntegration.writer?.integration : undefined)
+    expect(afterIntegration.version === 4 ? afterIntegration.writer?.integration : undefined)
       .toMatchObject({status: 'integrated', checkpoint: {sessionId: session.id, checkpointId}});
 
     await new CheckpointStore(root).restore(session.id, checkpointId);
@@ -98,6 +105,33 @@ describe('isolated writer lane', () => {
       return 'oversize';
     })).rejects.toThrow('limit is 16 bytes');
     expect(await auxiliaryWorktrees(root)).toEqual([]);
+  });
+
+  it('keeps a same-route writer/reviewer verdict in needs_review even when the model says accept', async () => {
+    const root = await repository('before\n');
+    const cfg = writerConfig(root);
+    cfg.agents = {
+      ...cfg.agents!,
+      routes: {
+        implementer: {provider: 'compatible', model: 'same-model'},
+        reviewer: {provider: 'compatible', model: 'same-model'},
+      },
+    };
+    const context = contextProvider();
+    const store = new TeamRunStore(root);
+    const manager = await writerManager(root, cfg, context, store, async ({workspace}) => {
+      await writeFile(join(workspace, 'source.txt'), 'writer\n');
+      return {summary: 'Private author self-assessment marker.'};
+    });
+    const result = await manager.writerTool().execute({task: 'Update source.'},
+      executionContext(root, cfg, context));
+    expect(result).toMatchObject({ok: false, metadata: {needsReview: true}});
+    expect(result.content).toContain('Human review is required');
+    const run = await store.load((result.metadata as {teamRunId: string}).teamRunId);
+    expect(run).toMatchObject({version: 4, status: 'needs_review'});
+    if (run.version !== 4) throw new Error('v4 run missing');
+    expect(run.messages).toHaveLength(0);
+    expect(run.writer?.independence).toMatchObject({sufficient: false, maximumCorrelationPenalty: 1});
   });
 
   it('propagates cancellation and removes the worktree plus Git administration state', async () => {
@@ -158,7 +192,7 @@ describe('isolated writer lane', () => {
     expect(result.content).toContain('review was cancelled');
     const runId = (result.metadata as {teamRunId: string}).teamRunId;
     const persisted = await store.load(runId);
-    expect(persisted.version === 3 ? persisted.writer?.outcome : undefined).toBe('cancelled');
+    expect(persisted.version === 4 ? persisted.writer?.outcome : undefined).toBe('cancelled');
     expect(await auxiliaryWorktrees(root)).toEqual([]);
   });
 
@@ -190,7 +224,15 @@ describe('isolated writer lane', () => {
     expect(conflict.content).toContain('uncommitted main-workspace changes');
     expect(await readFile(join(root, 'source.txt'), 'utf8')).toBe('user change\n');
     const persisted = await store.load(metadata.teamRunId);
-    expect(persisted.version === 3 ? persisted.writer?.integration?.status : undefined).toBe('conflict');
+    expect(persisted.version === 4 ? persisted.writer?.integration?.status : undefined).toBe('conflict');
+
+    await writeFile(join(root, 'source.txt'), 'before\n');
+    const retried = await manager.writerIntegrateTool().execute({
+      run_id: metadata.teamRunId,
+      patch_sha256: metadata.patchSha256,
+    }, executionContext(root, cfg, context, session));
+    expect(retried.ok).toBe(true);
+    expect(await readFile(join(root, 'source.txt'), 'utf8')).toBe('writer\n');
   });
 
   it('keeps legacy v2 writer manifests readable but never integrable', async () => {
@@ -211,19 +253,23 @@ describe('isolated writer lane', () => {
       version: number;
       reviews?: unknown;
       contract?: unknown;
-      writer: {contract?: unknown; verdict?: unknown};
+      writer: {contract?: unknown; verdict?: unknown; independence?: unknown; criterionConflicts?: unknown};
+      arbitrations?: unknown;
     };
     manifest.version = 2;
     delete manifest.reviews;
     delete manifest.contract;
     delete manifest.writer.contract;
     delete manifest.writer.verdict;
+    delete manifest.writer.independence;
+    delete manifest.writer.criterionConflicts;
+    delete manifest.arbitrations;
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
     await expect(store.load(metadata.teamRunId)).resolves.toMatchObject({version: 2});
     await expect(manager.writerIntegrateTool().execute({
       run_id: metadata.teamRunId, patch_sha256: metadata.patchSha256,
-    }, executionContext(root, cfg, context, session))).rejects.toThrow('lacks a structured v3 writer verdict');
+    }, executionContext(root, cfg, context, session))).rejects.toThrow('lacks a structured v4 writer verdict');
     expect(await readFile(join(root, 'source.txt'), 'utf8')).toBe('before\n');
   });
 
@@ -268,15 +314,15 @@ describe('isolated writer lane', () => {
     const run = await manager.writerTool().execute({task: 'Update source.'},
       executionContext(root, cfg, context, session));
     expect(run.ok).toBe(false);
-    expect(run.content).toContain('decision is escalate');
+    expect(run.content).toContain('Decision: escalate');
     const metadata = run.metadata as {teamRunId: string; patchSha256: string};
     const persisted = await store.load(metadata.teamRunId);
-    expect(persisted.version === 3 ? persisted.writer : undefined).toMatchObject({
-      outcome: 'rejected', verdict: {decision: 'escalate'}, integration: {status: 'ready'},
+    expect(persisted.version === 4 ? persisted.writer : undefined).toMatchObject({
+      outcome: 'needs_review', verdict: {decision: 'escalate'}, integration: {status: 'ready'},
     });
     await expect(manager.writerIntegrateTool().execute({
       run_id: metadata.teamRunId, patch_sha256: metadata.patchSha256,
-    }, executionContext(root, cfg, context, session))).rejects.toThrow('not accepted');
+    }, executionContext(root, cfg, context, session))).rejects.toThrow('needs human review');
     expect(await readFile(join(root, 'source.txt'), 'utf8')).toBe('before\n');
   });
 
@@ -295,8 +341,8 @@ describe('isolated writer lane', () => {
     expect(run.ok).toBe(false);
     expect(run.content).toContain('review provider unavailable');
     const persisted = await store.load((run.metadata as {teamRunId: string}).teamRunId);
-    expect(persisted.version === 3 ? persisted.writer : undefined).toMatchObject({outcome: 'failed'});
-    expect(persisted.version === 3 ? persisted.writer?.verdict : undefined).toBeUndefined();
+    expect(persisted.version === 4 ? persisted.writer : undefined).toMatchObject({outcome: 'failed'});
+    expect(persisted.version === 4 ? persisted.writer?.verdict : undefined).toBeUndefined();
   });
 
   it('does not invoke the model reviewer after deterministic preflight fails', async () => {
@@ -319,7 +365,7 @@ describe('isolated writer lane', () => {
     expect(run.content).toContain('failed before model review');
     expect(reviewerCalls).toBe(0);
     const persisted = await store.load((run.metadata as {teamRunId: string}).teamRunId);
-    expect(persisted.version === 3 ? persisted.writer : undefined).toMatchObject({
+    expect(persisted.version === 4 ? persisted.writer : undefined).toMatchObject({
       outcome: 'rejected', integration: {status: 'conflict'},
     });
   });
@@ -411,21 +457,23 @@ async function writerManager(
 ): Promise<DelegationManager> {
   const profiles = new AgentProfileCatalog(root);
   await profiles.discover();
+  const provider: ModelProvider = {
+    name: 'test',
+    async complete(messages, tools, signal, maxOutputTokens) {
+      if (reviewerComplete) return reviewerComplete(messages, tools, signal, maxOutputTokens);
+      const prompt = messages.map((message) => message.content).join('\n');
+      return {
+        content: prompt.includes('Review a proposed isolated-writer patch')
+          ? structuredReview(prompt, 'accept')
+          : 'Completed.',
+        toolCalls: [],
+      };
+    },
+  };
   return new DelegationManager({
     config,
-    provider: {
-      name: 'test',
-      async complete(messages, tools, signal, maxOutputTokens) {
-        if (reviewerComplete) return reviewerComplete(messages, tools, signal, maxOutputTokens);
-        const prompt = messages.map((message) => message.content).join('\n');
-        return {
-          content: prompt.includes('Review a proposed isolated-writer patch')
-            ? structuredReview(prompt, 'accept')
-            : 'Completed.',
-          toolCalls: [],
-        };
-      },
-    },
+    provider,
+    providerFactory: () => provider,
     contextEngine: context,
     parentTools: createDefaultToolRegistry(),
     profiles,
@@ -524,6 +572,10 @@ function writerConfig(root: string): MosaicConfig {
     writerProfile: 'implementer',
     writerReviewerProfile: 'reviewer',
     maxWriterPatchBytes: 60_000,
+    routes: {
+      implementer: {provider: 'compatible', model: 'writer-model'},
+      reviewer: {provider: 'compatible', model: 'judge-model'},
+    },
   };
   return config;
 }

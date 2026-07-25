@@ -5,10 +5,12 @@ import {afterEach, describe, expect, it} from 'vitest';
 import {WorkspaceAccess} from '../../src/tools/workspace.js';
 import {
   evaluatePermission,
+  liveHumanApprovalCategories,
   matchesAllowedCommand,
   matchesDeniedCommand,
   permissionKey,
   permissionTarget,
+  requiresLiveHumanApproval,
 } from '../../src/tools/permissions.js';
 import {defaultPermissions} from '../../src/config.js';
 import {gitTool} from '../../src/tools/git.js';
@@ -68,6 +70,52 @@ describe('workspace and permission boundaries', () => {
     }
     const call: ToolCall = {id: '1', name: 'shell', arguments: {command: 'rm -rf /'}};
     expect(evaluatePermission(defaultPermissions, call, 'shell').outcome).toBe('deny');
+  });
+
+  it('separates high-risk human approval from ordinary permission policy', () => {
+    expect(requiresLiveHumanApproval(gitTool.definition, {
+      id: 'push', name: 'git', arguments: {args: ['push', 'origin', 'main']},
+    }, ['git'])).toBe(true);
+    expect(requiresLiveHumanApproval(gitTool.definition, {
+      id: 'status', name: 'git', arguments: {args: ['status']},
+    }, ['git'])).toBe(false);
+    expect(requiresLiveHumanApproval(shellTool.definition, {
+      id: 'publish', name: 'shell', arguments: {command: 'npm publish --access public'},
+    }, ['shell', 'network'])).toBe(true);
+    expect(requiresLiveHumanApproval(shellTool.definition, {
+      id: 'curl-post', name: 'shell', arguments: {command: 'curl -X POST https://relay.example/deploy'},
+    }, ['shell', 'network'])).toBe(true);
+    for (const command of [
+      'git -C packages/app push origin main',
+      'npm --workspace cli publish --access public',
+      'kubectl --context production apply -f deploy.yaml',
+      'curl -XPOST https://relay.example/deploy',
+      'curl -dpayload https://relay.example/deploy',
+      'find . -delete',
+      'dd if=image.bin of=/dev/disk9',
+    ]) {
+      expect(requiresLiveHumanApproval(shellTool.definition, {
+        id: command, name: 'shell', arguments: {command},
+      }, ['shell', 'network']), command).toBe(true);
+    }
+    expect(liveHumanApprovalCategories(shellTool.definition, {
+      id: 'global-push', name: 'shell', arguments: {command: 'git -C packages/app push origin main'},
+    }, ['shell', 'git'])).toEqual(['shell', 'git', 'network']);
+    expect(liveHumanApprovalCategories(shellTool.definition, {
+      id: 'find-delete', name: 'shell', arguments: {command: 'find . -delete'},
+    }, ['shell'])).toEqual(['shell', 'write']);
+    expect(requiresLiveHumanApproval(shellTool.definition, {
+      id: 'deploy', name: 'shell', arguments: {command: '/usr/local/bin/kubectl apply -f deploy.yaml'},
+    }, ['shell', 'network'])).toBe(true);
+    expect(requiresLiveHumanApproval(gitTool.definition, {
+      id: 'reset', name: 'git', arguments: {args: ['reset', '--hard', 'HEAD']},
+    }, ['git', 'write'])).toBe(true);
+    expect(requiresLiveHumanApproval(shellTool.definition, {
+      id: 'curl-get', name: 'shell', arguments: {command: 'curl https://relay.example/models'},
+    }, ['shell', 'network'])).toBe(false);
+    expect(requiresLiveHumanApproval({
+      name: 'writer_integrate', description: 'integrate', category: 'write', inputSchema: {}, humanApproval: true,
+    }, {id: 'integrate', name: 'writer_integrate', arguments: {}}, ['write', 'git'])).toBe(true);
   });
 
   it('scopes session approvals to a concrete command or resource without leaking it', () => {

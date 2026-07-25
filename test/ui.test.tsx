@@ -448,6 +448,21 @@ describe('terminal presentation', () => {
     expect(output).not.toMatch(/[┌┐└┘╭╮╰╯│]/u);
   });
 
+  it('distinguishes live-human approval and removes the session-grant affordance', () => {
+    const output = renderToString(<PermissionCard
+      call={{id: 'publish', name: 'shell', arguments: {command: 'npm publish --access public'}}}
+      category="network"
+      humanOnly
+      reason="High-risk action requires a live human approval."
+      width={80}
+    />, {columns: 80});
+    expect(output).toContain('Live human approval required');
+    expect(output).toContain('[y]');
+    expect(output).toContain('[n]');
+    expect(output).not.toContain('[a]');
+    expect(output).not.toContain('session');
+  });
+
   it('renders direct Git arguments as a readable permission command', () => {
     const call: ToolCall = {
       id: 'call-git',
@@ -517,6 +532,21 @@ describe('terminal presentation', () => {
     for (const line of output.split('\n')) {
       expect(displayWidth(line), `workbench row overflowed: ${JSON.stringify(line)}`).toBeLessThanOrEqual(60);
     }
+  });
+
+  it('renders team needs_review as a warning state instead of a rejection', () => {
+    const output = renderToString(<TeamWorkbench
+      items={[]}
+      tasks={[]}
+      width={80}
+      run={{
+        id: 'run', objective: 'Review a bound patch', accepted: false, needsReview: true,
+        unresolvedCriteria: ['writer-safety', 'writer-verification'], reviewRounds: 0,
+      }}
+    />, {columns: 80});
+    expect(output).toContain('needs review');
+    expect(output).toContain('2 unresolved');
+    expect(output).not.toContain('rejected');
   });
 
   it.each([20, 40, 80, 120])('renders a bounded interactive team workbench at %i columns', (columns) => {

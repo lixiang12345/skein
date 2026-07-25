@@ -19,6 +19,21 @@ import {
   type ReviewContract,
   type ReviewVerdict,
 } from './review-verdict.js';
+import {
+  createHumanArbitration,
+  humanArbitrationIntegrityValid,
+  humanArbitrationSchema,
+  resolveReviewGate,
+  reviewContractHighRisk,
+  reviewCriterionConflictsIntegrityValid,
+  reviewCriterionConflictSchema,
+  reviewIndependenceIntegrityValid,
+  reviewIndependenceSchema,
+  type HumanArbitration,
+  type HumanArbitrationDecision,
+  type ReviewCriterionConflict,
+  type ReviewIndependence,
+} from './review-arbitration.js';
 
 const runIdSchema = z.string().uuid();
 const hashSchema = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -85,9 +100,20 @@ const writerLaneV3Schema = writerLaneV2Schema.extend({
   verdict: reviewVerdictSchema.optional(),
 }).strict();
 
+const writerLaneV4Schema = writerLaneV3Schema.omit({outcome: true}).extend({
+  outcome: z.enum(['accepted', 'rejected', 'needs_review', 'failed', 'cancelled']),
+  independence: reviewIndependenceSchema.optional(),
+  criterionConflicts: z.array(reviewCriterionConflictSchema).max(64),
+}).strict();
+
 const reviewRecordSchema = z.object({
   artifact: artifactSchema,
   verdict: reviewVerdictSchema,
+}).strict();
+
+const reviewRecordV4Schema = reviewRecordSchema.extend({
+  independence: reviewIndependenceSchema,
+  criterionConflicts: z.array(reviewCriterionConflictSchema).max(64),
 }).strict();
 
 const manifestFields = {
@@ -97,7 +123,6 @@ const manifestFields = {
   reviewer: z.string(),
   createdAt: z.string(),
   updatedAt: z.string(),
-  status: z.enum(['running', 'accepted', 'rejected', 'failed']),
   maxReviewRounds: z.number().int().min(0).max(3),
   reviewRounds: z.number().int().min(0).max(3),
   agents: z.array(agentRecordSchema).max(256),
@@ -107,31 +132,46 @@ const manifestFields = {
 const manifestV1Schema = z.object({
   version: z.literal(1),
   ...manifestFields,
+  status: z.enum(['running', 'accepted', 'rejected', 'failed']),
 }).strict();
 
 const manifestV2Schema = z.object({
   version: z.literal(2),
   ...manifestFields,
+  status: z.enum(['running', 'accepted', 'rejected', 'failed']),
   writer: writerLaneV2Schema.optional(),
 }).strict();
 
 const manifestV3Schema = z.object({
   version: z.literal(3),
   ...manifestFields,
+  status: z.enum(['running', 'accepted', 'rejected', 'failed']),
   reviews: z.array(reviewRecordSchema).max(4),
   contract: reviewContractSchema.optional(),
   writer: writerLaneV3Schema.optional(),
 }).strict();
 
-const manifestSchema = z.discriminatedUnion('version', [manifestV1Schema, manifestV2Schema, manifestV3Schema]);
+const manifestV4Schema = z.object({
+  version: z.literal(4),
+  ...manifestFields,
+  status: z.enum(['running', 'accepted', 'rejected', 'needs_review', 'failed']),
+  reviews: z.array(reviewRecordV4Schema).max(4),
+  contract: reviewContractSchema.optional(),
+  writer: writerLaneV4Schema.optional(),
+  arbitrations: z.array(humanArbitrationSchema).max(128),
+}).strict();
+
+const manifestSchema = z.discriminatedUnion('version', [manifestV1Schema, manifestV2Schema, manifestV3Schema, manifestV4Schema]);
 
 export type TeamRunManifest = z.infer<typeof manifestSchema>;
 export type TeamRunAgentRecord = z.infer<typeof agentRecordSchema>;
 export type TeamRunMessageRecord = z.infer<typeof messageRecordSchema>;
-export type TeamRunWriterRecord = z.infer<typeof writerLaneV2Schema> | z.infer<typeof writerLaneV3Schema>;
+export type TeamRunWriterRecord = z.infer<typeof writerLaneV2Schema> | z.infer<typeof writerLaneV3Schema> | z.infer<typeof writerLaneV4Schema>;
 export type TeamRunWriterV3Record = z.infer<typeof writerLaneV3Schema>;
+export type TeamRunWriterV4Record = z.infer<typeof writerLaneV4Schema>;
 export type TeamRunWriterIntegration = z.infer<typeof writerIntegrationSchema>;
 export type TeamRunReviewRecord = z.infer<typeof reviewRecordSchema>;
+export type TeamRunReviewV4Record = z.infer<typeof reviewRecordV4Schema>;
 
 export interface TeamRunSummary {
   id: string;
@@ -164,7 +204,7 @@ export class TeamRunStore {
   async create(input: {objective: string; reviewer: string; maxReviewRounds: number}): Promise<TeamRunManifest> {
     const now = new Date().toISOString();
     const manifest = manifestSchema.parse({
-      version: 3,
+      version: 4,
       id: randomUUID(),
       workspace: this.workspace,
       objective: input.objective,
@@ -177,6 +217,7 @@ export class TeamRunStore {
       agents: [],
       messages: [],
       reviews: [],
+      arbitrations: [],
     });
     await this.queueWrite(async () => this.withManagedLease(() => this.writeManifest(manifest)));
     return manifest;
@@ -214,11 +255,24 @@ export class TeamRunStore {
     worktreeCleaned: boolean;
     contract: ReviewContract;
     verdict?: ReviewVerdict;
+    independence?: ReviewIndependence;
+    criterionConflicts?: ReviewCriterionConflict[];
     review?: string;
     integration?: TeamRunWriterIntegration;
   }): Promise<void> {
     await this.update(runId, async (manifest) => {
-      if (manifest.version !== 3) throw new Error('Writer lane records require a Team Run v3 manifest.');
+      if (manifest.version !== 4) throw new Error('Writer lane records require a Team Run v4 manifest.');
+      if (input.verdict && !input.independence) {
+        throw new Error('Structured writer verdicts require persisted author/reviewer independence evidence.');
+      }
+      if (input.verdict && (!reviewVerdictBindingValid(input.contract, createHash('sha256').update(input.patch).digest('hex'), input.verdict) ||
+        !reviewIndependenceIntegrityValid(input.independence as ReviewIndependence, reviewContractHighRisk(input.contract)) ||
+        !reviewCriterionConflictsIntegrityValid(input.contract, input.verdict, input.criterionConflicts ?? []))) {
+        throw new Error('Structured writer review evidence is corrupt or inconsistent.');
+      }
+      if (!input.verdict && (input.independence || input.criterionConflicts?.length)) {
+        throw new Error('Writer independence and conflicts require a structured verdict.');
+      }
       const patch = await this.writeArtifact(runId, input.patch, false);
       const review = input.review === undefined
         ? undefined
@@ -235,6 +289,8 @@ export class TeamRunStore {
           worktreeCleaned: input.worktreeCleaned,
           contract: input.contract,
           ...(input.verdict ? {verdict: input.verdict} : {}),
+          ...(input.independence ? {independence: input.independence} : {}),
+          criterionConflicts: input.criterionConflicts ?? [],
           ...(review ? {review} : {}),
           ...(input.integration ? {integration: input.integration} : {}),
         },
@@ -247,11 +303,17 @@ export class TeamRunStore {
     contract: ReviewContract,
     verdict: ReviewVerdict,
     artifact: string,
+    independence: ReviewIndependence,
+    criterionConflicts: ReviewCriterionConflict[] = [],
   ): Promise<void> {
     await this.update(runId, async (manifest) => {
-      if (manifest.version !== 3) throw new Error('Structured review verdicts require a Team Run v3 manifest.');
+      if (manifest.version !== 4) throw new Error('Structured review verdicts require a Team Run v4 manifest.');
       if (!reviewVerdictBindingValid(contract, verdict.artifactSha256, verdict)) {
         throw new Error('Structured review verdict does not match its contract or artifact binding.');
+      }
+      if (!reviewIndependenceIntegrityValid(independence, reviewContractHighRisk(contract)) ||
+        !reviewCriterionConflictsIntegrityValid(contract, verdict, criterionConflicts)) {
+        throw new Error('Structured review independence or conflict evidence is corrupt or inconsistent.');
       }
       if (manifest.contract && manifest.contract.sha256 !== contract.sha256) {
         throw new Error('A Team Run cannot change its review contract after review starts.');
@@ -263,30 +325,105 @@ export class TeamRunStore {
       return {
         ...manifest,
         contract,
-        reviews: [...manifest.reviews, {artifact: artifactReference, verdict}].slice(-4),
+        reviews: [...manifest.reviews, {
+          artifact: artifactReference,
+          verdict,
+          independence,
+          criterionConflicts,
+        }].slice(-4),
       };
     });
   }
 
   async recordWriterIntegration(runId: string, integration: TeamRunWriterIntegration): Promise<void> {
     await this.update(runId, async (manifest) => {
-      if ((manifest.version !== 2 && manifest.version !== 3) || !manifest.writer) {
+      if ((manifest.version !== 2 && manifest.version !== 3 && manifest.version !== 4) || !manifest.writer) {
         throw new Error('Writer lane integration requires a Team Run writer record.');
       }
       if (manifest.writer.integration?.status === 'integrated' && integration.status !== 'integrated') {
         throw new Error('An integrated writer record cannot be downgraded.');
       }
       if (manifest.version === 2) return {...manifest, writer: {...manifest.writer, integration}};
+      if (manifest.version === 3) return {...manifest, writer: {...manifest.writer, integration}};
       return {...manifest, writer: {...manifest.writer, integration}};
     });
   }
 
-  async complete(runId: string, input: {accepted: boolean; reviewRounds: number; failed?: boolean}): Promise<void> {
-    await this.update(runId, async (manifest) => ({
-      ...manifest,
-      status: input.failed ? 'failed' : input.accepted ? 'accepted' : 'rejected',
-      reviewRounds: input.reviewRounds,
-    }));
+  async complete(runId: string, input: {accepted: boolean; reviewRounds: number; failed?: boolean; needsReview?: boolean}): Promise<void> {
+    await this.update(runId, async (manifest) => {
+      if (manifest.version === 4) return {
+        ...manifest,
+        status: input.failed
+          ? 'failed' as const
+          : input.accepted
+            ? 'accepted' as const
+            : input.needsReview
+              ? 'needs_review' as const
+              : 'rejected' as const,
+        reviewRounds: input.reviewRounds,
+      };
+      return {
+        ...manifest,
+        status: input.failed ? 'failed' as const : input.accepted ? 'accepted' as const : 'rejected' as const,
+        reviewRounds: input.reviewRounds,
+      };
+    });
+  }
+
+  async arbitrate(runId: string, input: {
+    criterionId: string;
+    decision: HumanArbitrationDecision;
+    reason: string;
+    now?: string;
+  }): Promise<{arbitration: HumanArbitration; gate: ReturnType<typeof resolveReviewGate>}> {
+    let result: {arbitration: HumanArbitration; gate: ReturnType<typeof resolveReviewGate>} | undefined;
+    await this.update(runId, async (manifest) => {
+      if (manifest.version !== 4) {
+        throw new Error('Human arbitration requires a Team Run v4 manifest; rerun the review for current evidence.');
+      }
+      const active = activeStructuredReview(manifest);
+      if (!active) throw new Error('Team Run has no structured verdict available for arbitration.');
+      const currentGate = resolveReviewGate({...active, arbitrations: manifest.arbitrations});
+      if (manifest.status !== 'needs_review' || currentGate.status !== 'needs_review') {
+        throw new Error('Human arbitration is only available while the bound Team Run is in needs_review.');
+      }
+      const criterion = active.contract.criteria.find((item) => item.id === input.criterionId);
+      if (!criterion) {
+        throw new Error(`Unknown review criterion: ${input.criterionId}`);
+      }
+      if (!criterion.required) throw new Error('Human arbitration is only valid for required review criteria.');
+      if (!currentGate.unresolvedCriteria.includes(criterion.id)) {
+        throw new Error(`Review criterion is not awaiting human arbitration: ${criterion.id}`);
+      }
+      if (input.decision === 'accept' && active.verdict.evidence.some((evidence) =>
+        evidence.kind === 'deterministic' && evidence.status === 'failed')) {
+        throw new Error('Human arbitration cannot accept a criterion while deterministic evidence is failed.');
+      }
+      const arbitration = createHumanArbitration({
+        criterionId: input.criterionId,
+        contractSha256: active.contract.sha256,
+        artifactSha256: active.artifactSha256,
+        decision: input.decision,
+        reason: input.reason,
+        ...(input.now ? {now: input.now} : {}),
+      });
+      const arbitrations = [...manifest.arbitrations, arbitration].slice(-128);
+      const gate = resolveReviewGate({...active, arbitrations});
+      result = {arbitration, gate};
+      const writer = manifest.writer?.verdict && manifest.writer.independence &&
+        manifest.writer.contract.sha256 === active.contract.sha256 &&
+        manifest.writer.patch.sha256 === active.artifactSha256
+        ? {...manifest.writer, outcome: gate.status}
+        : manifest.writer;
+      return {
+        ...manifest,
+        arbitrations,
+        status: gate.status,
+        ...(writer ? {writer} : {}),
+      };
+    });
+    if (!result) throw new Error('Human arbitration was not persisted.');
+    return result;
   }
 
   async load(runId: string, verify = true): Promise<TeamRunManifest> {
@@ -304,8 +441,8 @@ export class TeamRunStore {
       for (const artifact of [
         ...manifest.agents.map((agent) => agent.report),
         ...manifest.messages.map((message) => message.content),
-        ...(manifest.version === 3 ? manifest.reviews.map((review) => review.artifact) : []),
-        ...((manifest.version === 2 || manifest.version === 3) && manifest.writer
+        ...((manifest.version === 3 || manifest.version === 4) ? manifest.reviews.map((review) => review.artifact) : []),
+        ...((manifest.version === 2 || manifest.version === 3 || manifest.version === 4) && manifest.writer
           ? [manifest.writer.patch, ...(manifest.writer.review ? [manifest.writer.review] : [])]
           : []),
       ]) await this.verifyArtifact(runId, artifact);
@@ -460,32 +597,130 @@ export class TeamRunStore {
 }
 
 function assertStructuredManifestIntegrity(manifest: TeamRunManifest): void {
-  if (manifest.version !== 3) return;
+  if (manifest.version !== 3 && manifest.version !== 4) return;
   if (manifest.contract && (!reviewContractIntegrityValid(manifest.contract) ||
     manifest.reviews.some((review) => !reviewVerdictBindingValid(
       manifest.contract as ReviewContract,
       review.artifact.sha256,
       review.verdict,
-    )))) {
-    throw new Error('Team run structured review integrity check failed.');
-  }
+    )))) throw new Error('Team run structured review integrity check failed.');
   if (manifest.reviews.length && !manifest.contract) {
     throw new Error('Team run structured reviews are missing their contract.');
   }
-  if (manifest.writer && (!reviewContractIntegrityValid(manifest.writer.contract) ||
-    (manifest.writer.verdict && !reviewVerdictBindingValid(
-      manifest.writer.contract,
-      manifest.writer.patch.sha256,
-      manifest.writer.verdict,
-    )) || (manifest.writer.outcome === 'accepted' &&
-      (!manifest.writer.verdict || !reviewVerdictAccepted(
+  if (manifest.version === 3) {
+    if (manifest.writer && (!reviewContractIntegrityValid(manifest.writer.contract) ||
+      (manifest.writer.verdict && !reviewVerdictBindingValid(
         manifest.writer.contract,
         manifest.writer.patch.sha256,
         manifest.writer.verdict,
-      ))) || (manifest.writer.integration?.status === 'integrated' &&
-      manifest.writer.outcome !== 'accepted'))) {
-    throw new Error('Team run writer verdict integrity check failed.');
+      )) || (manifest.writer.outcome === 'accepted' &&
+        (!manifest.writer.verdict || !reviewVerdictAccepted(
+          manifest.writer.contract,
+          manifest.writer.patch.sha256,
+          manifest.writer.verdict,
+        ))) || (manifest.writer.integration?.status === 'integrated' &&
+        manifest.writer.outcome !== 'accepted'))) {
+      throw new Error('Team run writer verdict integrity check failed.');
+    }
+    return;
   }
+  if (manifest.reviews.some((review) =>
+    !reviewIndependenceIntegrityValid(review.independence, reviewContractHighRisk(manifest.contract as ReviewContract)) ||
+    !reviewCriterionConflictsIntegrityValid(
+      manifest.contract as ReviewContract,
+      review.verdict,
+      review.criterionConflicts,
+    ))) {
+    throw new Error('Team run structured review independence or conflict integrity check failed.');
+  }
+  const bindings = manifest.reviews.map((review) => ({
+    contract: manifest.contract as ReviewContract,
+    artifactSha256: review.artifact.sha256,
+    verdict: review.verdict,
+    independence: review.independence,
+    conflicts: review.criterionConflicts,
+  }));
+  if (manifest.arbitrations.some((arbitration) => !humanArbitrationIntegrityValid(arbitration))) {
+    throw new Error('Team run human arbitration integrity check failed.');
+  }
+  if (manifest.writer) {
+    const writer = manifest.writer;
+    const writerGate = writer.verdict && writer.independence
+      ? resolveReviewGate({
+          contract: writer.contract,
+          artifactSha256: writer.patch.sha256,
+          verdict: writer.verdict,
+          independence: writer.independence,
+          conflicts: writer.criterionConflicts,
+          arbitrations: manifest.arbitrations,
+        })
+      : undefined;
+    if (!reviewContractIntegrityValid(writer.contract) ||
+      (writer.verdict && (!writer.independence || !reviewVerdictBindingValid(
+        writer.contract,
+        writer.patch.sha256,
+        writer.verdict,
+      ) || !reviewIndependenceIntegrityValid(writer.independence, reviewContractHighRisk(writer.contract)) ||
+      !reviewCriterionConflictsIntegrityValid(writer.contract, writer.verdict, writer.criterionConflicts))) ||
+      (!writer.verdict && (writer.independence || writer.criterionConflicts.length > 0)) ||
+      ((writer.outcome === 'accepted' || writer.outcome === 'needs_review') && !writerGate) ||
+      (writerGate && writer.outcome !== writerGate.status) ||
+      (writer.integration?.status === 'integrated' && writerGate?.status !== 'accepted')) {
+      throw new Error('Team run writer verdict integrity check failed.');
+    }
+    if (writer.verdict && writer.independence) bindings.push({
+      contract: writer.contract,
+      artifactSha256: writer.patch.sha256,
+      verdict: writer.verdict,
+      independence: writer.independence,
+      conflicts: writer.criterionConflicts,
+    });
+  }
+  const active = activeStructuredReview(manifest);
+  const activeGate = active ? resolveReviewGate({...active, arbitrations: manifest.arbitrations}) : undefined;
+  if ((manifest.status === 'needs_review' && activeGate?.status !== 'needs_review') ||
+    (manifest.status === 'accepted' && activeGate?.status !== 'accepted')) {
+    throw new Error('Team run status is inconsistent with its active structured review gate.');
+  }
+  const arbitrationBindings = new Set<string>();
+  for (const arbitration of manifest.arbitrations) {
+    const binding = bindings.find((item) =>
+      item.contract.sha256 === arbitration.contractSha256 && item.artifactSha256 === arbitration.artifactSha256);
+    const arbitrationKey = `${arbitration.contractSha256}:${arbitration.artifactSha256}:${arbitration.criterionId}`;
+    if (!humanArbitrationIntegrityValid(arbitration) || !binding ||
+      !binding.contract.criteria.some((criterion) => criterion.id === arbitration.criterionId && criterion.required) ||
+      arbitrationBindings.has(arbitrationKey)) {
+      throw new Error('Team run human arbitration integrity check failed.');
+    }
+    arbitrationBindings.add(arbitrationKey);
+  }
+}
+
+function activeStructuredReview(manifest: Extract<TeamRunManifest, {version: 4}>): {
+  contract: ReviewContract;
+  artifactSha256: string;
+  verdict: ReviewVerdict;
+  independence: ReviewIndependence;
+  conflicts: ReviewCriterionConflict[];
+} | undefined {
+  if (manifest.writer?.verdict && manifest.writer.independence) {
+    return {
+      contract: manifest.writer.contract,
+      artifactSha256: manifest.writer.patch.sha256,
+      verdict: manifest.writer.verdict,
+      independence: manifest.writer.independence,
+      conflicts: manifest.writer.criterionConflicts,
+    };
+  }
+  const latest = manifest.reviews.at(-1);
+  if (!latest || !manifest.contract) return undefined;
+  return {
+    contract: manifest.contract,
+    artifactSha256: latest.artifact.sha256,
+    verdict: latest.verdict,
+    independence: latest.independence,
+    conflicts: latest.criterionConflicts,
+  };
 }
 
 function boundedArtifactText(content: string, maxBytes: number, truncate: boolean): string {

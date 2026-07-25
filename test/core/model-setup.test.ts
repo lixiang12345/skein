@@ -44,6 +44,41 @@ describe('shared connection setup', () => {
     expect(Object.keys(merged.connections ?? {})).toEqual(['local', 'relay']);
   });
 
+  it('keeps inference and model-directory authentication headers explicit', () => {
+    expect(createAgentConnectionSetup({
+      name: 'native-messages',
+      provider: 'compatible',
+      protocol: 'anthropic-messages',
+      baseUrl: 'https://relay.example',
+      modelsBaseUrl: 'https://relay.example/v1',
+      auth: 'env',
+      authHeader: 'x-api-key',
+      modelsAuthHeader: 'bearer',
+      apiKeyEnv: 'RELAY_KEY',
+      defaultModel: 'anthropic/claude',
+    }).connections['native-messages']).toMatchObject({
+      auth: {type: 'env', name: 'RELAY_KEY', header: 'x-api-key'},
+      modelsAuthHeader: 'bearer',
+    });
+  });
+
+  it('supports an authenticated inference endpoint with a public model directory', () => {
+    expect(createAgentConnectionSetup({
+      name: 'public-catalog',
+      provider: 'compatible',
+      baseUrl: 'https://relay.example/v1',
+      modelsBaseUrl: 'https://catalog.example/v1',
+      auth: 'env',
+      authHeader: 'bearer',
+      modelsAuthHeader: 'none',
+      apiKeyEnv: 'RELAY_KEY',
+      defaultModel: 'relay-coder',
+    }).connections['public-catalog']).toMatchObject({
+      auth: {type: 'env', name: 'RELAY_KEY', header: 'bearer'},
+      modelsAuthHeader: 'none',
+    });
+  });
+
   it('rejects unsafe or incomplete setup values', () => {
     expect(() => createAgentConnectionSetup({
       name: 'Team Relay', provider: 'compatible', baseUrl: 'https://relay.example/v1', defaultModel: 'coder',
@@ -60,6 +95,9 @@ describe('shared connection setup', () => {
     expect(() => createAgentConnectionSetup({
       name: 'relay', provider: 'compatible', baseUrl: 'https://relay.example/v1', auth: 'none', apiKeyEnv: 'TEAM_KEY', defaultModel: 'coder',
     })).toThrow('cannot include');
+    expect(() => createAgentConnectionSetup({
+      name: 'relay', provider: 'compatible', baseUrl: 'https://relay.example/v1', auth: 'none', authHeader: 'x-api-key', defaultModel: 'coder',
+    })).toThrow('credential header');
     expect(() => createAgentConnectionSetup({
       name: 'relay', provider: 'compatible', baseUrl: 'https://user:secret@relay.example/v1?key=value', auth: 'none', defaultModel: 'coder',
     })).toThrow('cannot contain credentials');

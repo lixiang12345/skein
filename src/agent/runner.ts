@@ -17,7 +17,9 @@ import {ToolArtifactStore} from '../session/tool-artifacts.js';
 import {
   createDefaultToolRegistry,
   evaluatePermission,
+  liveHumanApprovalCategories,
   permissionKey,
+  requiresLiveHumanApproval,
   ToolRegistry,
   WorkspaceAccess,
 } from '../tools/index.js';
@@ -205,6 +207,7 @@ export class AgentRunner {
     const toolRecovery = new ToolRecoveryController();
     let activeRunContract: TaskContract | undefined = this.session.taskContract;
     let mutationTracking: 'complete' | 'unknown' = 'complete';
+    let requiresHumanReview = false;
     let completionRecoveryAttempted = false;
     const recordExecution = (call: ToolCall, result: ToolResult): void => {
       const changedFiles = result.metadata?.changedFiles;
@@ -214,6 +217,7 @@ export class AgentRunner {
         }
       }
       if (result.metadata?.changeTracking === 'unresolved') mutationTracking = 'unknown';
+      if (result.metadata?.needsReview === true) requiresHumanReview = true;
       const evidence = captureVerification(
         call,
         result,
@@ -250,9 +254,12 @@ export class AgentRunner {
       return completion;
     };
     const finishRun = async (reason: string, completion = completionReport()): Promise<Session> => {
+      const finalReason = requiresHumanReview && ['completed', 'unverified', 'verification_failed', 'max_turns'].includes(reason)
+        ? 'needs_review'
+        : reason;
       this.session.lastRun = {
         ...completion,
-        reason,
+        reason: finalReason,
         finishedAt: new Date().toISOString(),
       };
       await this.persist();
@@ -260,7 +267,7 @@ export class AgentRunner {
       if (finalContract && finalContract.state !== 'satisfied') {
         await emit({type: 'contract', contract: finalContract});
       }
-      await emit({type: 'done', reason, completion});
+      await emit({type: 'done', reason: finalReason, completion});
       return this.session;
     };
     try {
@@ -745,17 +752,40 @@ export class AgentRunner {
       await emit({type: 'tool_result', result});
       return result;
     }
-    for (const category of categories) {
-      const allowed = await this.authorize(call, category, options, emit);
-      if (!allowed) {
+    const humanApproval = requiresLiveHumanApproval(tool.definition, call, categories);
+    if (humanApproval) {
+      categories = liveHumanApprovalCategories(tool.definition, call, categories);
+      const authorization = await this.authorizeLiveHuman(call, categories, options, emit);
+      if (authorization !== 'allow') {
         const receipt = recovery.recordFailure(call, 'permission_denied');
-        const result = await this.protectToolResult(
-          this.withEvidenceReceipt(call,
-            failedResult(call, `Permission denied for ${category} operation.`, receipt)),
-        );
-        this.recordToolResult(result, category);
+        const denied = failedResult(call, authorization === 'needs_review'
+          ? 'Live human approval is required; the action was not run and remains in needs_review.'
+          : 'Live human approval was denied; the high-risk action was not run.', receipt);
+        const result = await this.protectToolResult(this.withEvidenceReceipt(call, {
+          ...denied,
+          metadata: {
+            ...(denied.metadata ?? {}),
+            humanApproval: true,
+            needsReview: authorization === 'needs_review',
+          },
+        }));
+        this.recordToolResult(result, categories[0] ?? tool.definition.category);
         await emit({type: 'tool_result', result});
         return result;
+      }
+    } else {
+      for (const category of categories) {
+        const allowed = await this.authorize(call, category, options, emit);
+        if (!allowed) {
+          const receipt = recovery.recordFailure(call, 'permission_denied');
+          const result = await this.protectToolResult(
+            this.withEvidenceReceipt(call,
+              failedResult(call, `Permission denied for ${category} operation.`, receipt)),
+          );
+          this.recordToolResult(result, category);
+          await emit({type: 'tool_result', result});
+          return result;
+        }
       }
     }
     // Persist approvals before a subprocess or mutation starts so an abrupt
@@ -1010,6 +1040,53 @@ export class AgentRunner {
     } catch {
       this.recordPermission(call, category, 'deny', 'Permission request failed.');
       return false;
+    }
+  }
+
+  private async authorizeLiveHuman(
+    call: ToolCall,
+    categories: ToolCategory[],
+    options: RunOptions,
+    emit: (event: AgentEvent) => Promise<void>,
+  ): Promise<'allow' | 'deny' | 'needs_review'> {
+    if (options.askMode === true) {
+      for (const category of categories) {
+        this.recordPermission(call, category, 'deny', 'Ask mode permits read-only tools.');
+      }
+      return 'deny';
+    }
+    for (const category of categories) {
+      const decision = evaluatePermission(this.config.permissions, call, category);
+      if (decision.outcome === 'deny') {
+        this.recordPermission(call, category, 'deny', decision.reason);
+        return 'deny';
+      }
+    }
+    const category = categories.find((item) => item !== 'read') ?? categories[0] ?? 'write';
+    const reason = 'High-risk action requires a live human approval; config allow, --yes, model review, and session grants are not admissible.';
+    const displayCall = redactToolCallForDisplay(
+      call,
+      this.tools.get(call.name)?.definition.sensitiveFields ?? [],
+    );
+    await emit({type: 'permission', call: displayCall, category, reason});
+    if (!options.requestHumanApproval) {
+      for (const item of categories) {
+        this.recordPermission(call, item, 'deny', 'No live human approval handler was available; action needs review.');
+      }
+      return 'needs_review';
+    }
+    try {
+      const allowed = await options.requestHumanApproval(displayCall, category, reason);
+      for (const item of categories) {
+        this.recordPermission(call, item, allowed ? 'allow' : 'deny',
+          allowed ? 'Approved once by a live human.' : 'Denied by a live human.');
+      }
+      return allowed ? 'allow' : 'deny';
+    } catch {
+      for (const item of categories) {
+        this.recordPermission(call, item, 'deny', 'Live human approval request failed; action needs review.');
+      }
+      return 'needs_review';
     }
   }
 

@@ -12,12 +12,14 @@ export const HEADLESS_EXIT_CODES = {
   cancelled: 6,
   maxTurns: 7,
   tokenBudget: 8,
+  needsReview: 9,
 } as const;
 
 export type HeadlessStatus =
   | 'completed'
   | 'verified'
   | 'needs_input'
+  | 'needs_review'
   | 'unverified'
   | 'verification_failed'
   | 'blocked'
@@ -44,6 +46,9 @@ export function resolveHeadlessOutcome(input: {
   }
   if (input.reason === 'needs_input') {
     return outcome('needs_input', HEADLESS_EXIT_CODES.needsInput, input.reason);
+  }
+  if (input.reason === 'needs_review') {
+    return outcome('needs_review', HEADLESS_EXIT_CODES.needsReview, input.reason);
   }
   if (input.reason === 'blocked' || input.completion?.acceptance?.state === 'blocked') {
     return outcome('blocked', HEADLESS_EXIT_CODES.blocked, input.reason ?? 'blocked');

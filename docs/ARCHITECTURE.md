@@ -238,6 +238,46 @@ the durable table and can archive a conflicting older fact. Rejected or expired
 candidates never enter retrieval. This write → manage → read loop keeps memory
 useful without silently accumulating guesses.
 
+## Relay transport and model catalog
+
+New primary connections target third-party compatible relays only. A named
+connection binds one explicit transport: `openai-responses` (the default),
+`openai-chat`, or `anthropic-messages`. Skein never infers transport from a URL
+or model name and never retries an inference request through another protocol,
+because doing so can duplicate work and billing.
+
+The inference `baseUrl` and OpenAI-shaped `modelsBaseUrl` are separate. This
+models gateways where OpenAI and Anthropic SDKs append different paths as well
+as gateways that publish every protocol below one root. Inference authentication
+is `bearer`, `x-api-key`, or connection-wide `none`; catalog authentication is
+independently `bearer`, `x-api-key`, or `none`. Explicit catalog `none` skips
+both credential resolution and credential headers, preventing an inference key
+from crossing into a public or separately hosted catalog. Omission preserves
+the prior behavior of inheriting inference authentication.
+
+## Evidence review and arbitration
+
+Team Run v4 separates three authorities:
+
+1. Deterministic oracles bind content-addressed receipts to Contract criteria.
+2. A blind Reviewer judges only bounded anonymous artifacts and admissible
+   evidence, with Author/Reviewer route and model-family correlation audited
+   outside its prompt.
+3. A live human may resolve only an open criterion bound to the current
+   Contract and artifact SHA.
+
+Oracle failures cannot be overridden. Oracle passes take precedence when a
+Reviewer disagrees, while the disagreement remains judge-calibration evidence.
+Unknowns, unresolved model conflicts, and insufficient high-risk independence
+produce `needs_review`; JSON/JSONL exits with status 9 instead of accepting or
+retrying indefinitely. Artifact or Contract drift invalidates old verdicts and
+human decisions.
+
+Human arbitration is distinct from permission approval. Writer integration,
+Git push, npm publish, deployments, migrations, destructive commands, and
+external mutations require a live-human approval path. Model votes, config
+allow rules, `--yes`, and ordinary session grants cannot mint that identity.
+
 ## Security boundaries
 
 - File tools resolve and validate paths against configured workspace roots.

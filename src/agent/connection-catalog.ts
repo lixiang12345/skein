@@ -3,6 +3,8 @@ import type {
   AgentConnectionConfig,
   ConnectionAuth,
   ConnectionCatalogRuntime,
+  ConnectionApiKeyHeader,
+  ConnectionModelAuth,
   ConnectionProtocol,
   ConnectionRuntimeInfo,
   ConnectionSource,
@@ -18,6 +20,7 @@ export interface ConnectionProfile {
   protocol: ConnectionProtocol;
   baseUrl?: string;
   modelsBaseUrl?: string;
+  modelsAuthHeader?: ConnectionModelAuth;
   defaultModel?: string;
   auth: ConnectionAuth;
   source: ConnectionSource;
@@ -90,6 +93,11 @@ export function parseEnvironmentConnections(
     const baseUrl = optionalUrl(environment[`${prefix}BASE_URL`], `${prefix}BASE_URL`);
     const modelsBaseUrl = optionalUrl(environment[`${prefix}MODELS_BASE_URL`], `${prefix}MODELS_BASE_URL`);
     const apiKeyEnv = optionalEnvironmentName(environment[`${prefix}API_KEY_ENV`], `${prefix}API_KEY_ENV`);
+    const authHeader = optionalApiKeyHeader(environment[`${prefix}AUTH_HEADER`], `${prefix}AUTH_HEADER`);
+    const modelsAuthHeader = optionalModelAuth(
+      environment[`${prefix}MODELS_AUTH_HEADER`],
+      `${prefix}MODELS_AUTH_HEADER`,
+    );
     const authValue = environment[`${prefix}AUTH`]?.trim().toLowerCase();
     if (authValue && authValue !== 'env' && authValue !== 'none') {
       throw new Error(`${prefix}AUTH must be env or none.`);
@@ -97,8 +105,14 @@ export function parseEnvironmentConnections(
     if (authValue === 'none' && apiKeyEnv) {
       throw new Error(`${prefix}AUTH=none cannot be combined with ${prefix}API_KEY_ENV.`);
     }
+    if (authValue === 'none' && (authHeader || (modelsAuthHeader && modelsAuthHeader !== 'none'))) {
+      throw new Error(`${prefix}AUTH=none cannot be combined with credential header settings.`);
+    }
     if (authValue === 'env' && !apiKeyEnv) {
       throw new Error(`${prefix}AUTH=env requires ${prefix}API_KEY_ENV.`);
+    }
+    if ((authHeader || (modelsAuthHeader && modelsAuthHeader !== 'none')) && !apiKeyEnv) {
+      throw new Error(`${prefix}AUTH_HEADER settings require ${prefix}API_KEY_ENV.`);
     }
     const label = environment[`${prefix}LABEL`]?.trim();
     const defaultModel = environment[`${prefix}MODEL`]?.trim();
@@ -108,10 +122,11 @@ export function parseEnvironmentConnections(
       ...(label ? {label} : {}),
       ...(baseUrl ? {baseUrl} : {}),
       ...(modelsBaseUrl ? {modelsBaseUrl} : {}),
+      ...(modelsAuthHeader ? {modelsAuthHeader} : {}),
       ...(defaultModel ? {defaultModel} : {}),
       ...(authValue === 'none'
         ? {auth: {type: 'none'}}
-        : apiKeyEnv ? {auth: {type: 'env', name: apiKeyEnv}} : {}),
+        : apiKeyEnv ? {auth: {type: 'env', name: apiKeyEnv, ...(authHeader ? {header: authHeader} : {})}} : {}),
     };
     return normalizeProfile(id, config, 'environment', environment);
   });
@@ -159,6 +174,7 @@ export function resolveConnectionModel(
     ...(current.temperature !== undefined ? {temperature: current.temperature} : {}),
     ...(current.maxTokens !== undefined ? {maxTokens: current.maxTokens} : {}),
     ...(profile.baseUrl ? {baseUrl: profile.baseUrl} : {}),
+    ...(profile.auth.type === 'env' && profile.auth.header ? {apiKeyHeader: profile.auth.header} : {}),
     ...(apiKey ? {apiKey} : {}),
   };
   return {model, activeConnection: connectionRuntimeInfo(profile, environment)};
@@ -192,6 +208,10 @@ export function connectionRuntimeInfo(
     modelsEndpoint: redactConnectionEndpoint(profile.modelsBaseUrl ?? profile.baseUrl),
     ...(profile.defaultModel ? {defaultModel: profile.defaultModel} : {}),
     authType: profile.auth.type,
+    ...(profile.auth.type === 'env' ? {authHeader: profile.auth.header ?? 'bearer'} : {}),
+    ...(profile.modelsAuthHeader || profile.auth.type === 'env' ? {
+      modelsAuthHeader: profile.modelsAuthHeader ?? (profile.auth.type === 'env' ? profile.auth.header : undefined) ?? 'bearer',
+    } : {}),
     authStatus,
     complete: issues.length === 0,
     issues,
@@ -216,6 +236,10 @@ export function legacyConnectionRuntimeInfo(model: ModelConfig): ConnectionRunti
     modelsEndpoint: redactConnectionEndpoint(model.baseUrl),
     defaultModel: model.model,
     authType: authExpected ? 'env' : 'none',
+    ...(authExpected ? {
+      authHeader: model.apiKeyHeader ?? (model.provider === 'anthropic' ? 'x-api-key' : 'bearer'),
+      modelsAuthHeader: model.apiKeyHeader ?? (model.provider === 'anthropic' ? 'x-api-key' : 'bearer'),
+    } : {}),
     authStatus: model.apiKey ? 'configured' : authExpected ? 'missing' : 'none',
     complete: issues.length === 0,
     issues,
@@ -223,7 +247,7 @@ export function legacyConnectionRuntimeInfo(model: ModelConfig): ConnectionRunti
 }
 
 export function connectionCredentialReference(profile: ConnectionProfile): string {
-  if (profile.auth.type === 'env') return `env:${profile.auth.name}`;
+  if (profile.auth.type === 'env') return `env:${profile.auth.name}/${profile.auth.header ?? 'bearer'}`;
   return 'none';
 }
 
@@ -254,6 +278,9 @@ export function connectionIssues(
   if (profile.auth.type === 'env' && !environment[profile.auth.name]) {
     issues.push(`credential environment ${profile.auth.name} is not set`);
   }
+  if (profile.modelsAuthHeader && profile.modelsAuthHeader !== 'none' && profile.auth.type !== 'env') {
+    issues.push('models authentication header requires environment authentication');
+  }
   if (!profile.explicitAuth && profile.provider !== 'compatible' && profile.baseUrl && !isOfficialProviderEndpoint(profile.provider, profile.baseUrl)) {
     issues.push('custom provider endpoint requires explicit connection auth');
   }
@@ -277,6 +304,7 @@ function normalizeProfile(
     protocol: connection.protocol ?? defaultProtocol(connection.provider),
     ...(connection.baseUrl ? {baseUrl: connection.baseUrl} : {}),
     ...(connection.modelsBaseUrl ? {modelsBaseUrl: connection.modelsBaseUrl} : {}),
+    ...(connection.modelsAuthHeader ? {modelsAuthHeader: connection.modelsAuthHeader} : {}),
     ...(connection.defaultModel ? {defaultModel: connection.defaultModel} : {}),
     auth,
     source,
@@ -332,6 +360,24 @@ function optionalEnvironmentName(value: string | undefined, name: string): strin
   const normalized = value.trim();
   if (!/^[A-Z][A-Z0-9_]{0,127}$/u.test(normalized)) {
     throw new Error(`${name} must name an uppercase environment variable.`);
+  }
+  return normalized;
+}
+
+function optionalApiKeyHeader(value: string | undefined, name: string): ConnectionApiKeyHeader | undefined {
+  if (!value?.trim()) return undefined;
+  const normalized = value.trim().toLocaleLowerCase();
+  if (normalized !== 'bearer' && normalized !== 'x-api-key') {
+    throw new Error(`${name} must be bearer or x-api-key.`);
+  }
+  return normalized;
+}
+
+function optionalModelAuth(value: string | undefined, name: string): ConnectionModelAuth | undefined {
+  if (!value?.trim()) return undefined;
+  const normalized = value.trim().toLocaleLowerCase();
+  if (normalized !== 'bearer' && normalized !== 'x-api-key' && normalized !== 'none') {
+    throw new Error(`${name} must be bearer, x-api-key, or none.`);
   }
   return normalized;
 }

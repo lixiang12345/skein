@@ -61,7 +61,11 @@ const capabilityRouteReferenceSchema = z.union([
   z.enum(['@parent', '@default']),
 ]);
 const connectionAuthSchema = z.discriminatedUnion('type', [
-  z.object({type: z.literal('env'), name: z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/)}).strict(),
+  z.object({
+    type: z.literal('env'),
+    name: z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/),
+    header: z.enum(['bearer', 'x-api-key']).optional(),
+  }).strict(),
   z.object({type: z.literal('none')}).strict(),
 ]);
 const connectionUrlSchema = z.string().url().refine((value) => {
@@ -76,6 +80,7 @@ const agentConnectionSchema = z.object({
   protocol: z.enum(['openai-responses', 'openai-chat', 'anthropic-messages', 'gemini']).optional(),
   baseUrl: connectionUrlSchema.optional(),
   modelsBaseUrl: connectionUrlSchema.optional(),
+  modelsAuthHeader: z.enum(['bearer', 'x-api-key', 'none']).optional(),
   defaultModel: z.string().min(1).max(256).optional(),
   auth: connectionAuthSchema.optional(),
   apiKeyEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/).optional(),
@@ -629,6 +634,10 @@ function validateAgentConnections(agents: AgentTeamConfig | undefined): void {
     if (connection.protocol === 'anthropic-messages' && !connection.modelsBaseUrl) {
       throw new Error(`Agent connection ${name} requires modelsBaseUrl for Anthropic transport.`);
     }
+    if (connection.modelsAuthHeader && connection.modelsAuthHeader !== 'none' &&
+        connection.auth?.type !== 'env' && !connection.apiKeyEnv) {
+      throw new Error(`Agent connection ${name} cannot set modelsAuthHeader without environment authentication.`);
+    }
   }
   for (const [profile, route] of Object.entries(agents?.routes ?? {})) {
     if (route.connection && !agents?.connections?.[route.connection]) {
@@ -866,8 +875,12 @@ export function configSummary(config: MosaicConfig): Record<string, unknown> {
         defaultModel: connection.defaultModel,
         endpoint: redactEndpoint(connection.baseUrl),
         modelsEndpoint: redactEndpoint(connection.modelsBaseUrl ?? connection.baseUrl),
+        authHeader: connection.auth?.type === 'env' ? connection.auth.header ?? 'bearer' : undefined,
+        modelsAuthHeader: connection.modelsAuthHeader ?? (connection.auth?.type === 'env' || connection.apiKeyEnv
+          ? (connection.auth?.type === 'env' ? connection.auth.header : undefined) ?? 'bearer'
+          : undefined),
         credentials: connection.auth?.type === 'env'
-          ? `env:${connection.auth.name}`
+          ? `env:${connection.auth.name}/${connection.auth.header ?? 'bearer'}`
           : connection.auth?.type ?? (connection.apiKeyEnv ? `env:${connection.apiKeyEnv}` : 'provider default environment'),
       }])),
       routes: Object.fromEntries(Object.entries(config.agents.routes ?? {}).map(([profile, route]) => [profile, {

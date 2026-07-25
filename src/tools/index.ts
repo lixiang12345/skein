@@ -39,7 +39,7 @@ export function createDefaultToolRegistry(
 
 export {ToolRegistry} from './registry.js';
 export {WorkspaceAccess} from './workspace.js';
-export {evaluatePermission, commandForCall, permissionKey, permissionTarget} from './permissions.js';
+export {evaluatePermission, commandForCall, liveHumanApprovalCategories, permissionKey, permissionTarget, requiresLiveHumanApproval} from './permissions.js';
 export type {
   AgentTool,
   ToolExecution,

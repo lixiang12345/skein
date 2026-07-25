@@ -58,6 +58,55 @@ describe('model connection discovery and selection', () => {
     )).toMatchObject({kind: 'selected', profile: {protocol: 'anthropic-messages'}});
   });
 
+  it('keeps inference and model-directory credential headers explicit in environment profiles', () => {
+    const environment = {
+      SKEIN_CONNECTIONS: 'native',
+      SKEIN_CONNECTION_NATIVE_PROTOCOL: 'anthropic-messages',
+      SKEIN_CONNECTION_NATIVE_BASE_URL: 'https://relay.example',
+      SKEIN_CONNECTION_NATIVE_MODELS_BASE_URL: 'https://relay.example/v1',
+      SKEIN_CONNECTION_NATIVE_AUTH: 'env',
+      SKEIN_CONNECTION_NATIVE_API_KEY_ENV: 'RELAY_KEY',
+      SKEIN_CONNECTION_NATIVE_AUTH_HEADER: 'x-api-key',
+      SKEIN_CONNECTION_NATIVE_MODELS_AUTH_HEADER: 'bearer',
+      RELAY_KEY: 'not-persisted',
+    };
+    const profile = discoverConnectionCatalog(defaultConfig('/tmp'), environment).profiles[0]!;
+    expect(profile).toMatchObject({
+      auth: {type: 'env', name: 'RELAY_KEY', header: 'x-api-key'},
+      modelsAuthHeader: 'bearer',
+    });
+    expect(resolveConnectionModel(defaultConfig('/tmp').model, profile, {}, environment).model)
+      .toMatchObject({apiKeyHeader: 'x-api-key'});
+    expect(connectionRuntimeInfo(profile, environment)).toMatchObject({
+      authHeader: 'x-api-key', modelsAuthHeader: 'bearer', complete: true,
+    });
+    expect(() => parseEnvironmentConnections({
+      ...environment,
+      SKEIN_CONNECTION_NATIVE_AUTH_HEADER: 'cookie',
+    })).toThrow('must be bearer or x-api-key');
+  });
+
+  it('keeps public model-directory authentication independent from inference credentials', () => {
+    const environment = {
+      SKEIN_CONNECTIONS: 'public-catalog',
+      SKEIN_CONNECTION_PUBLIC_CATALOG_BASE_URL: 'https://relay.example/v1',
+      SKEIN_CONNECTION_PUBLIC_CATALOG_MODELS_BASE_URL: 'https://catalog.example/v1',
+      SKEIN_CONNECTION_PUBLIC_CATALOG_AUTH: 'env',
+      SKEIN_CONNECTION_PUBLIC_CATALOG_API_KEY_ENV: 'RELAY_KEY',
+      SKEIN_CONNECTION_PUBLIC_CATALOG_MODELS_AUTH_HEADER: 'none',
+      RELAY_KEY: 'not-persisted',
+    };
+    const profile = discoverConnectionCatalog(defaultConfig('/tmp'), environment).profiles[0]!;
+    expect(profile.modelsAuthHeader).toBe('none');
+    expect(connectionRuntimeInfo(profile, environment)).toMatchObject({
+      authHeader: 'bearer', modelsAuthHeader: 'none', complete: true,
+    });
+    expect(() => parseEnvironmentConnections({
+      ...environment,
+      SKEIN_CONNECTION_PUBLIC_CATALOG_MODELS_AUTH_HEADER: 'cookie',
+    })).toThrow('must be bearer, x-api-key, or none');
+  });
+
   it('reports multiple complete connections in stable id order', () => {
     const environment = {
       SKEIN_CONNECTIONS: 'zeta,alpha',

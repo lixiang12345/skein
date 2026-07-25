@@ -30,8 +30,14 @@ export async function listConnectionModels(
   }
   const baseUrl = connection.modelsBaseUrl ?? connection.baseUrl ?? 'https://api.openai.com/v1';
   const endpoint = baseUrl.endsWith('/models') ? baseUrl : `${baseUrl.replace(/\/+$/u, '')}/models`;
-  const apiKey = connectionApiKey(connection, environment);
-  const cacheKey = catalogFingerprint(endpoint, connection.auth?.type ?? (apiKey ? 'legacy-env' : 'none'), apiKey);
+  const apiKeyHeader = connection.modelsAuthHeader ??
+    (connection.auth?.type === 'env' ? connection.auth.header : undefined) ?? 'bearer';
+  const apiKey = apiKeyHeader === 'none' ? undefined : connectionApiKey(connection, environment);
+  const cacheKey = catalogFingerprint(
+    endpoint,
+    `${connection.auth?.type ?? (apiKey ? 'legacy-env' : 'none')}:${apiKeyHeader}`,
+    apiKey,
+  );
   const cached = modelCatalogCache.get(cacheKey);
   const now = Date.now();
   if (cached && cached.expiresAt > now) {
@@ -42,7 +48,9 @@ export async function listConnectionModels(
     redirect: 'error',
     headers: {
       accept: 'application/json',
-      ...(apiKey ? {authorization: `Bearer ${apiKey}`} : {}),
+      ...(apiKey ? apiKeyHeader === 'x-api-key'
+        ? {'x-api-key': apiKey}
+        : {authorization: `Bearer ${apiKey}`} : {}),
       ...(cached?.etag ? {'if-none-match': cached.etag} : {}),
     },
     signal: AbortSignal.timeout(15_000),

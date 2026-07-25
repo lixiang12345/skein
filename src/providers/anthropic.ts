@@ -6,6 +6,7 @@ import type {
   ToolDefinition,
 } from '../types.js';
 import {
+  apiKeyHeaders,
   joinUrl,
   parseErrorResponse,
   parseServerSentEvents,
@@ -243,10 +244,11 @@ function anthropicMessagesEndpoint(base: string): string {
 }
 
 function anthropicAuthHeaders(config: ModelConfig, apiKey: string | undefined): Record<string, string> {
-  if (!apiKey) return {};
-  return config.provider === 'compatible'
-    ? {authorization: `Bearer ${apiKey}`}
-    : {'x-api-key': apiKey};
+  return apiKeyHeaders(
+    apiKey,
+    config.apiKeyHeader,
+    config.provider === 'compatible' ? 'bearer' : 'x-api-key',
+  );
 }
 
 function normalizeAnthropicResponse(data: AnthropicResponse): ModelResponse {
