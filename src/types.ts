@@ -259,7 +259,14 @@ export interface ContextScoreBreakdown {
   phrase: number;
   graph: number;
   recency: number;
+  diagnostic: number;
   total: number;
+}
+
+/** A bounded, session-local path signal from a failed verification process. */
+export interface ContextDiagnosticUpdate {
+  commandKey: string;
+  paths: string[];
 }
 
 export interface ContextHitProvenance {

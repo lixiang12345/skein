@@ -53,6 +53,7 @@ import {
   buildRunCompletion,
   captureVerification,
   completionRecoveryDirective,
+  verificationDiagnosticPaths,
   type CapturedVerification,
 } from './completion-gate.js';
 import {
@@ -166,6 +167,7 @@ export class AgentRunner {
       throw new Error('User input is too large; pass a focused request or attach files with @path.');
     }
     this.running = true;
+    this.contextEngine.resetDiagnostics?.();
     const emit = async (event: AgentEvent): Promise<void> => {
       await options.onEvent?.(event);
     };
@@ -192,7 +194,13 @@ export class AgentRunner {
         this.changeSequence,
         this.config.agent.verifyCommands,
       );
-      if (evidence) verificationEvidence.push(evidence);
+      if (evidence) {
+        verificationEvidence.push(evidence);
+        this.contextEngine.recordDiagnostics?.({
+          commandKey: evidence.commandKey,
+          paths: verificationDiagnosticPaths(result, this.workspace.roots),
+        });
+      }
     };
     const completionReport = (): RunCompletion => {
       const completion = buildRunCompletion(

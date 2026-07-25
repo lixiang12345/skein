@@ -1032,6 +1032,47 @@ describe('AgentRunner', () => {
     expect(session.lastRun).toMatchObject({status: 'verification_failed', reason: 'verification_failed'});
   });
 
+  it('passes failed configured verification locations to the current-run context provider', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-runner-diagnostics-'));
+    roots.push(root);
+    const command = 'node -e "console.error(\'diagnostic.ts:1:1: error forced\'); process.exit(1)"';
+    const provider = new QueueProvider([
+      {
+        content: '',
+        toolCalls: [{id: 'write-diagnostic', name: 'write_file', arguments: {
+          path: 'diagnostic.ts', content: 'export const diagnostic = true;\n',
+        }}],
+      },
+      {
+        content: '',
+        toolCalls: [{id: 'failed-configured-verification', name: 'shell', arguments: {command}}],
+      },
+      {content: 'The verification failed.', toolCalls: []},
+    ]);
+    const runnerConfig = config(root);
+    runnerConfig.agent.verifyCommands = [command];
+    runnerConfig.permissions = {
+      ...runnerConfig.permissions,
+      shell: 'allow', write: 'allow', network: 'allow',
+    };
+    const updates: Array<{commandKey: string; paths: string[]}> = [];
+    let resets = 0;
+    const diagnosticContext: ContextProvider = {
+      ...context,
+      resetDiagnostics() { resets += 1; },
+      recordDiagnostics(update) { updates.push(update); },
+    };
+    const runner = new AgentRunner({config: runnerConfig, provider, contextEngine: diagnosticContext});
+
+    const session = await runner.run('create and verify diagnostic evidence');
+
+    expect(resets).toBe(1);
+    expect(session.lastRun).toMatchObject({status: 'verification_failed'});
+    expect(updates).toEqual([expect.objectContaining({
+      paths: [join(root, 'diagnostic.ts')],
+    })]);
+  });
+
   it('accepts one verification after a multi-file edit batch', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-completion-multifile-'));
     roots.push(root);

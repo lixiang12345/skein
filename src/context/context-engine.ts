@@ -1,4 +1,11 @@
-import type {ContextDegradation, ContextHit, ContextPackOptions, MosaicConfig, PackedContext} from '../types.js';
+import type {
+  ContextDegradation,
+  ContextDiagnosticUpdate,
+  ContextHit,
+  ContextPackOptions,
+  MosaicConfig,
+  PackedContext,
+} from '../types.js';
 import {workspaceAliasPath} from '../utils/path.js';
 import type {ContextRefreshResult} from '../tools/types.js';
 import {emptyPackedContext, selectContextBudget} from './budget.js';
@@ -88,6 +95,14 @@ export class ContextEngine {
     this.local.invalidate(paths);
   }
 
+  recordDiagnostics(update: ContextDiagnosticUpdate): void {
+    this.local.recordDiagnostics(update);
+  }
+
+  resetDiagnostics(): void {
+    this.local.resetDiagnostics();
+  }
+
   async flushDirty(): Promise<ContextRefreshResult> {
     try {
       const result = await this.local.flushDirty();
@@ -144,7 +159,7 @@ export function formatContextHits(hits: ContextHit[], roots: string[]): string {
     const symbol = hit.symbol ? ` ${hit.symbol}` : '';
     const score = hit.provenance?.score;
     const breakdown = score
-      ? ` bm25=${score.bm25.toFixed(2)} path=${score.path.toFixed(2)} symbol=${score.symbol.toFixed(2)} graph=${score.graph.toFixed(2)} recency=${score.recency.toFixed(6)}`
+      ? ` bm25=${score.bm25.toFixed(2)} path=${score.path.toFixed(2)} symbol=${score.symbol.toFixed(2)} graph=${score.graph.toFixed(2)} recency=${score.recency.toFixed(6)} diagnostic=${score.diagnostic.toFixed(3)}`
       : '';
     const hash = hit.provenance?.contentHash.slice(0, 12);
     return `[${hit.source} ${hit.score.toFixed(3)}${breakdown}${hash ? ` hash=${hash}` : ''}]${symbol} ${path}:${hit.startLine}-${hit.endLine}`;

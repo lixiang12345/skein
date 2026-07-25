@@ -76,6 +76,21 @@ describe('adaptive context budget', () => {
     expect(packed.estimatedTokens).toBeLessThanOrEqual(150);
     expect(packed.hits[1]?.endLine).toBeLessThanOrEqual(20);
   });
+
+  it('keeps a diverse file mix after two non-overlapping spans from one file', () => {
+    const hits = [
+      hit('/workspace/a.ts', 1, 10, 'first useful span', 4),
+      hit('/workspace/a.ts', 30, 40, 'second useful span', 3),
+      hit('/workspace/a.ts', 60, 70, 'third useful span', 2),
+      hit('/workspace/b.ts', 1, 10, 'other useful span', 1),
+    ];
+    const packed = packContextHits(hits, ['/workspace'], 500, 'local');
+
+    expect(packed.hits.map((hit) => hit.path)).toEqual([
+      '/workspace/a.ts', '/workspace/a.ts', '/workspace/b.ts',
+    ]);
+    expect(packed).toMatchObject({candidateHits: 4, selectedHits: 3, duplicateHits: 1});
+  });
 });
 
 function fullConfig(): MosaicConfig {

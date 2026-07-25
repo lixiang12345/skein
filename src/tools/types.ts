@@ -1,4 +1,11 @@
-import type {AgentEvent, MosaicConfig, Session, ToolCategory, ToolDefinition} from '../types.js';
+import type {
+  AgentEvent,
+  ContextDiagnosticUpdate,
+  MosaicConfig,
+  Session,
+  ToolCategory,
+  ToolDefinition,
+} from '../types.js';
 import type {
   ContextDegradation,
   ContextHit,
@@ -16,6 +23,10 @@ export interface ContextProvider {
   invalidate?(paths: string[]): void;
   /** Make dirty paths queryable before the next retrieval boundary. */
   flushDirty?(): Promise<ContextRefreshResult>;
+  /** Replace current-run diagnostics for one verification command. */
+  recordDiagnostics?(update: ContextDiagnosticUpdate): void;
+  /** Drop diagnostics retained from a previous agent run. */
+  resetDiagnostics?(): void;
   /** Last retrieval degradation, when the provider can expose it without I/O. */
   lastDegradation?(): ContextDegradation | undefined;
   /** Content-free function fingerprints bound to the current index generation. */

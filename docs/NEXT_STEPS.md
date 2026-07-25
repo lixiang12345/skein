@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.19`.
+- Current repository version: `0.3.21`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -41,8 +41,8 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.19.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.19.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.21.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.21.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
@@ -54,7 +54,7 @@ short-height case. The current full-suite count is recorded from the latest
 
 ## Recommended Order
 
-### P0-C: Local Context Engine v2 foundations
+### P0-C: Local Context Engine v2 foundations (complete in 0.3.21)
 
 Version `0.3.19` moves the persisted local index to schema v3 and records
 TypeScript compiler AST definitions, calls, and relative import facts beside
@@ -76,9 +76,19 @@ expanded run failed its preselected useful-token threshold at `0.348`; the
 implementation reached `0.729` while Recall@5/10/20 and MRR remained `1.0`,
 stale-hit rate stayed `0`, warm p95 was below 10 ms, and incremental indexing
 reused every fixture file. Git-recency is now a bounded, isolated tie-break
-with exact HEAD-bound cache invalidation and non-Git degradation. Diagnostics
-ranking, broader language AST adapters, and production-scale calibration remain
-follow-up slices.
+with exact HEAD-bound cache invalidation and non-Git degradation. Version
+`0.3.21` completes the milestone with current-run diagnostics ranking, Python
+absolute/relative module adjacency, and explicit diversity-packing coverage.
+Diagnostics require real nonzero, non-truncated process output; they expire on
+success or a new run, are never persisted, and cannot create a zero-relevance
+hit. Python and SQL intentionally retain bounded offline syntax adapters rather
+than claiming compiler-equivalent AST coverage.
+
+An isolated full Skein corpus calibration covered 206 files and 2,457 chunks:
+cold indexing took 558.826 ms, an unchanged incremental pass reused all 206
+files in 54.508 ms, and five representative queries took 77.205–88.359 ms with
+the intended module ranked first. This is a reproducible scale calibration for
+the repository, not a universal latency claim for every production workspace.
 
 ### P0-E: Token Economy measurement and bounded schema disclosure
 
@@ -245,8 +255,9 @@ Implementation progress:
 - Size/mtime/ctime reconciliation closes the direct-new-query zero-hit window;
   repeated empty or unchanged searches stop through the recovery circuit.
 - The v2 fixture is an enforced regression test, including a graph-only import
-  neighbor and a no-stale-hit gate. Remaining work is git-recency/diagnostics
-  signals, broader language AST adapters, and production-scale calibration.
+  neighbor and a no-stale-hit gate. Git recency, current-run diagnostics,
+  Python module adjacency, diversity packing, and repository-scale calibration
+  complete the P0-C acceptance scope in `0.3.21`.
 
 ### P1: Multi-Agent Scheduler And Team UX
 

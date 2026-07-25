@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import {isAbsolute, resolve} from 'node:path';
 import type {
   RunCompletion,
   SessionAuditEvent,
@@ -11,6 +12,7 @@ import type {
 } from '../types.js';
 import {eventsSinceContract} from './task-contract.js';
 import {commandForCall} from '../tools/permissions.js';
+import {isInside} from '../utils/path.js';
 
 export interface CapturedVerification extends VerificationEvidence {
   changeSequence: number;
@@ -41,6 +43,48 @@ export function captureVerification(
     changeSequence,
     commandKey: createHash('sha256').update(normalized).digest('hex'),
   };
+}
+
+export function verificationDiagnosticPaths(
+  result: ToolResult,
+  workspaceRoots: string[],
+): string[] {
+  if (result.ok || result.metadata?.sourceTruncated === true ||
+    typeof result.metadata?.exitCode !== 'number' || result.metadata.exitCode === 0) return [];
+  const roots = workspaceRoots.map((root) => resolve(root));
+  const cwd = typeof result.metadata.cwd === 'string' ? resolve(result.metadata.cwd) : undefined;
+  const bases = cwd ? [cwd, ...roots] : roots;
+  const candidates = new Set<string>();
+  const pathPattern = String.raw`((?:[./][^\s():]+|[^\s():]+)\.[A-Za-z0-9]{1,10})`;
+  const patterns = [
+    new RegExp(`${pathPattern}\\(\\d+,\\d+\\):\\s*(?:error|warning|fatal)\\b`, 'gimu'),
+    new RegExp(`${pathPattern}:\\d+:\\d+:\\s*(?:error|warning|fatal)\\b`, 'gimu'),
+    new RegExp(`^\\s*(?:FAIL|ERROR)\\s+${pathPattern}`, 'gimu'),
+  ];
+  // Shell receipts echo the submitted command. That input is not process
+  // evidence and can itself contain strings that resemble a source location.
+  const output = result.content.slice(0, 200_000)
+    .split(/\r?\n/u)
+    .filter((line) => !/^\s*Command:/u.test(line))
+    .join('\n');
+  for (const pattern of patterns) {
+    for (const match of output.matchAll(pattern)) {
+      const candidate = match[1];
+      if (!candidate) continue;
+      const path = resolveDiagnosticPath(candidate, bases, roots);
+      if (path) candidates.add(path);
+      if (candidates.size >= 16) return [...candidates];
+    }
+  }
+  return [...candidates];
+}
+
+function resolveDiagnosticPath(candidate: string, bases: string[], roots: string[]): string | undefined {
+  for (const base of bases) {
+    const path = isAbsolute(candidate) ? resolve(candidate) : resolve(base, candidate);
+    if (roots.some((root) => isInside(root, path))) return path;
+  }
+  return undefined;
 }
 
 export function buildRunCompletion(

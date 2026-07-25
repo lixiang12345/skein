@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.20",
+  "version": "0.3.21",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,6 +16,10 @@
   },
   "skein": {
     "releaseNotes": [
+      "Failed configured verification output yields bounded current-run diagnostic ranking without persisting paths",
+      "Diagnostic hints cannot create zero-relevance hits and are cleared on success or the next agent run",
+      "Python absolute and relative module imports now contribute deterministic offline graph adjacency",
+      "Context provenance exposes the diagnostic score alongside graph and isolated Git recency signals",
       "Local index v3 records TypeScript AST definitions, calls, and relative import adjacency for graph-assisted retrieval",
       "Context hits expose generation, content hash, matched terms, and bm25/path/symbol/phrase/graph score provenance",
       "Context benchmark v2 locks multilingual recall, MRR, useful-token, stale-hit, incremental-index, and warm-latency gates",

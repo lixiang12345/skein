@@ -4,7 +4,14 @@ import {basename, dirname, extname, isAbsolute, join, posix, relative, resolve, 
 import fg from 'fast-glob';
 import ts from 'typescript';
 import {z} from 'zod';
-import type {ContextHit, ContextHitProvenance, ContextScoreBreakdown, DuplicationBaseline, PackedContext} from '../types.js';
+import type {
+  ContextDiagnosticUpdate,
+  ContextHit,
+  ContextHitProvenance,
+  ContextScoreBreakdown,
+  DuplicationBaseline,
+  PackedContext,
+} from '../types.js';
 import {WorkspaceAccess} from '../tools/workspace.js';
 import {atomicWrite} from '../tools/write.js';
 import {assertNoSymlinkPath, ensureWorkspaceStorageDirectory} from '../utils/storage.js';
@@ -116,6 +123,7 @@ export interface LocalIndexStatus {
   queryCacheEntries: number;
   queryCacheHits: number;
   queryCacheMisses: number;
+  diagnosticHints: number;
   refreshState: 'current' | 'dirty' | 'refreshing' | 'degraded';
   dirtyPaths: number;
   refreshError?: string;
@@ -154,12 +162,16 @@ const MAX_QUERY_CACHE_ENTRIES = 64;
 const CHUNK_LINES = 100;
 const CHUNK_OVERLAP = 15;
 const MIN_STRUCTURAL_CHUNK_LINES = 12;
+const MAX_DIAGNOSTIC_SCORE = 0.05;
+const MAX_DIAGNOSTIC_HINTS_PER_COMMAND = 16;
 
 export class LocalContextIndex {
   private index?: LocalIndexFile;
   private readonly workspace: WorkspaceAccess;
   private readonly queryCache = new Map<string, ContextHit[]>();
   private readonly gitRecency: GitRecencyCollector;
+  private readonly diagnosticsByCommand = new Map<string, Set<string>>();
+  private readonly diagnosticScores = new Map<string, number>();
   private queryCacheHits = 0;
   private queryCacheMisses = 0;
   private fingerprintCache: DuplicationBaseline | undefined;
@@ -306,6 +318,25 @@ export class LocalContextIndex {
     if (this.dirtyPaths.size) this.refreshState = 'dirty';
   }
 
+  recordDiagnostics(update: ContextDiagnosticUpdate): void {
+    const paths = new Set<string>();
+    for (const candidate of update.paths.slice(0, MAX_DIAGNOSTIC_HINTS_PER_COMMAND)) {
+      const path = this.resolveDiagnosticPath(candidate);
+      if (path) paths.add(path);
+    }
+    if (paths.size) this.diagnosticsByCommand.set(update.commandKey, paths);
+    else this.diagnosticsByCommand.delete(update.commandKey);
+    this.refreshDiagnosticScores();
+    this.queryCache.clear();
+  }
+
+  resetDiagnostics(): void {
+    if (!this.diagnosticsByCommand.size) return;
+    this.diagnosticsByCommand.clear();
+    this.diagnosticScores.clear();
+    this.queryCache.clear();
+  }
+
   async flushDirty(): Promise<{generation?: string; paths: number}> {
     if (!this.dirtyPaths.size) {
       return {
@@ -396,6 +427,7 @@ export class LocalContextIndex {
       queryCacheEntries: this.queryCache.size,
       queryCacheHits: this.queryCacheHits,
       queryCacheMisses: this.queryCacheMisses,
+      diagnosticHints: this.diagnosticScores.size,
       refreshState: this.refreshState,
       dirtyPaths: this.dirtyPaths.size,
       ...(this.refreshError ? {refreshError: this.refreshError} : {}),
@@ -673,8 +705,9 @@ export class LocalContextIndex {
         );
         const graph = graphBoosts.get(chunk.absolutePath)?.score ?? 0;
         const recency = recencyScores.get(chunk.absolutePath) ?? 0;
-        const score = lexical.bm25 + lexical.path + lexical.symbol + lexical.phrase + graph + recency;
-        return {chunk, lexical, graph, recency, score};
+        const diagnostic = this.diagnosticScores.get(chunk.absolutePath) ?? 0;
+        const score = lexical.bm25 + lexical.path + lexical.symbol + lexical.phrase + graph + recency + diagnostic;
+        return {chunk, lexical, graph, recency, diagnostic, score};
       })
       // Recency is a tie-break only. It must never turn an otherwise
       // irrelevant file into a retrieval candidate.
@@ -685,7 +718,7 @@ export class LocalContextIndex {
       graph > 0 || hasSufficientQueryCoverage(lexical.matchedTerms, coverageTerms));
     return (covered.length ? covered : scored)
       .slice(0, topK)
-      .map(({chunk, lexical, graph, recency, score}) => {
+      .map(({chunk, lexical, graph, recency, diagnostic, score}) => {
         const file = filesByPath.get(chunk.absolutePath);
         const breakdown: ContextScoreBreakdown = {
           bm25: roundScore(lexical.bm25),
@@ -694,6 +727,7 @@ export class LocalContextIndex {
           phrase: roundScore(lexical.phrase),
           graph: roundScore(graph),
           recency: roundScore(recency),
+          diagnostic: roundScore(diagnostic),
           total: roundScore(score),
         };
         const provenance: ContextHitProvenance = {
@@ -709,7 +743,7 @@ export class LocalContextIndex {
           endLine: chunk.endLine,
           content: chunk.content,
           score,
-          source: 'local-bm25+path+symbol+graph+recency',
+          source: 'local-bm25+path+symbol+graph+recency+diagnostic',
           ...(chunk.symbol ? {symbol: chunk.symbol} : {}),
           provenance,
         };
@@ -775,6 +809,24 @@ export class LocalContextIndex {
       const oldest = this.queryCache.keys().next().value;
       if (oldest === undefined) break;
       this.queryCache.delete(oldest);
+    }
+  }
+
+  private resolveDiagnosticPath(candidate: string): string | undefined {
+    if (!candidate || candidate.includes('\u0000')) return undefined;
+    const absolute = isAbsolute(candidate) ? resolve(candidate) : undefined;
+    if (absolute && this.roots.some((root) => isWithinRoot(root, absolute))) return absolute;
+    for (const root of this.roots) {
+      const path = resolve(root, candidate);
+      if (isWithinRoot(root, path)) return path;
+    }
+    return undefined;
+  }
+
+  private refreshDiagnosticScores(): void {
+    this.diagnosticScores.clear();
+    for (const paths of this.diagnosticsByCommand.values()) {
+      for (const path of paths) this.diagnosticScores.set(path, MAX_DIAGNOSTIC_SCORE);
     }
   }
 }
@@ -875,7 +927,7 @@ export function packContextHits(
     const shownPath = workspaceAliasPath(hit.path, roots);
     const symbol = hit.symbol ? ` symbol="${escapeAttribute(hit.symbol)}"` : '';
     const provenance = hit.provenance
-      ? ` source="${escapeAttribute(hit.source)}" hash="${hit.provenance.contentHash.slice(0, 12)}" graph-score="${hit.provenance.score.graph.toFixed(3)}" recency-score="${hit.provenance.score.recency.toFixed(6)}"`
+      ? ` source="${escapeAttribute(hit.source)}" hash="${hit.provenance.contentHash.slice(0, 12)}" graph-score="${hit.provenance.score.graph.toFixed(3)}" recency-score="${hit.provenance.score.recency.toFixed(6)}" diagnostic-score="${hit.provenance.score.diagnostic.toFixed(3)}"`
       : '';
     return `<code path="${escapeAttribute(shownPath)}" lines="${hit.startLine}-${hit.endLine}" score="${hit.score.toFixed(3)}"${symbol}${provenance}>\n${hit.content}\n</code>`;
   }).join('\n\n');
@@ -1249,20 +1301,40 @@ function definitionMatchesQuery(definitionTerms: string[], queryTerms: string[])
 }
 
 function resolveImportTargets(importer: IndexedFile, specifier: string, files: IndexedFile[]): string[] {
-  if (!specifier.startsWith('.')) return [];
-  const base = posix.normalize(posix.join(posix.dirname(importer.path), specifier));
-  const extensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
-  const importedExtension = posix.extname(base);
-  const extensionless = extensions.includes(importedExtension)
-    ? base.slice(0, -importedExtension.length)
-    : base;
-  const candidates = new Set([
-    base,
-    ...extensions.map((extension) => `${extensionless}${extension}`),
-    ...extensions.map((extension) => posix.join(extensionless, `index${extension}`)),
-  ]);
+  const candidates = new Set<string>();
+  const extension = extname(importer.path).toLocaleLowerCase();
+  if (specifier.startsWith('.')) {
+    const base = posix.normalize(posix.join(posix.dirname(importer.path), specifier));
+    const extensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
+    const importedExtension = posix.extname(base);
+    const extensionless = extensions.includes(importedExtension)
+      ? base.slice(0, -importedExtension.length)
+      : base;
+    candidates.add(base);
+    for (const candidateExtension of extensions) {
+      candidates.add(`${extensionless}${candidateExtension}`);
+      candidates.add(posix.join(extensionless, `index${candidateExtension}`));
+    }
+  }
+  if (extension === '.py') {
+    const modulePath = resolvePythonModulePath(importer.path, specifier);
+    if (modulePath) {
+      candidates.add(`${modulePath}.py`);
+      candidates.add(posix.join(modulePath, '__init__.py'));
+    }
+  }
   return files.filter((file) => file.root === importer.root && candidates.has(file.path))
     .map((file) => file.absolutePath);
+}
+
+function resolvePythonModulePath(importerPath: string, specifier: string): string | undefined {
+  const match = specifier.match(/^(\.+)(.*)$/u);
+  if (!match) return specifier.split('.').filter(Boolean).join('/');
+  const [, dots, remainder] = match;
+  if (!dots || !remainder) return undefined;
+  let base = posix.dirname(importerPath);
+  for (let level = 1; level < dots.length; level += 1) base = posix.dirname(base);
+  return posix.normalize(posix.join(base, remainder.split('.').filter(Boolean).join('/')));
 }
 
 function scoreChunk(

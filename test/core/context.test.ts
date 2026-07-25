@@ -19,7 +19,7 @@ describe('local context engine', () => {
       const hits = await engine.search('verifySessionToken');
 
       expect(hits[0]).toMatchObject({path: join(root, 'src', 'auth.ts'), symbol: 'verifySessionToken'});
-      expect(hits[0]?.source).toBe('local-bm25+path+symbol+graph+recency');
+      expect(hits[0]?.source).toBe('local-bm25+path+symbol+graph+recency+diagnostic');
       const chinese = await engine.search('验证会话');
       expect(chinese.some((hit) => hit.path.endsWith('配置.py'))).toBe(true);
     } finally {
@@ -75,14 +75,16 @@ describe('local context engine', () => {
         contentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
         score: {
           bm25: expect.any(Number), graph: expect.any(Number), recency: expect.any(Number),
+          diagnostic: expect.any(Number),
           total: expect.any(Number),
         },
       });
       expect(caller?.provenance?.score.graph).toBeGreaterThan(0);
       expect(caller?.provenance?.matchedTerms).toEqual([]);
-      expect(caller?.source).toBe('local-bm25+path+symbol+graph+recency');
+      expect(caller?.source).toBe('local-bm25+path+symbol+graph+recency+diagnostic');
       expect(formatContextHits(hits, [root])).toContain('graph=');
       expect(formatContextHits(hits, [root])).toContain('recency=');
+      expect(formatContextHits(hits, [root])).toContain('diagnostic=');
       expect(formatContextHits(hits, [root])).toContain('hash=');
 
       if (definition?.provenance) definition.provenance.score.total = 0;
@@ -105,6 +107,40 @@ describe('local context engine', () => {
           score: expect.objectContaining({graph: expect.any(Number)}),
         })}),
       ]));
+    } finally {
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
+  it('links Python module imports to matching definitions with a bounded graph score', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-local-python-graph-'));
+    try {
+      await mkdir(join(root, 'app', 'security'), {recursive: true});
+      await writeFile(join(root, 'app', 'security', 'token.py'), [
+        'def resolve_credential_envelope(value):',
+        '    return value.startswith("credential_")',
+        '',
+      ].join('\n'));
+      await writeFile(join(root, 'app', 'middleware.py'), [
+        'from .security.token import resolve_credential_envelope as resolver',
+        '',
+        'def authorize_request(value):',
+        '    return resolver(value)',
+        '',
+      ].join('\n'));
+      const index = new LocalContextIndex([root]);
+
+      const hits = await index.search('resolve credential envelope', 10);
+
+      expect(hits).toEqual(expect.arrayContaining([
+        expect.objectContaining({path: join(root, 'app', 'security', 'token.py')}),
+        expect.objectContaining({
+          path: join(root, 'app', 'middleware.py'),
+          provenance: expect.objectContaining({score: expect.objectContaining({graph: expect.any(Number)})}),
+        }),
+      ]));
+      expect(hits.find((hit) => hit.path.endsWith('/middleware.py'))?.provenance?.score.graph)
+        .toBeGreaterThan(0);
     } finally {
       await rm(root, {recursive: true, force: true});
     }
@@ -167,8 +203,46 @@ describe('local context engine', () => {
       await runGit(root, ['add', 'recent.ts']);
       await commit(root, 'recent');
       const index = new LocalContextIndex([root]);
+      index.recordDiagnostics({commandKey: 'test', paths: [recent]});
 
       await expect(index.search('missingQueryTerm')).resolves.toEqual([]);
+    } finally {
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
+  it('ranks a current verification diagnostic without retaining it after that check clears', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-local-diagnostic-'));
+    try {
+      const ordinary = join(root, 'a-ordinary.ts');
+      const diagnostic = join(root, 'z-diagnostic.ts');
+      const content = 'export const diagnosticNeedle = true;\n';
+      await writeFile(ordinary, content);
+      await writeFile(diagnostic, content);
+      const index = new LocalContextIndex([root]);
+      await index.build();
+      index.recordDiagnostics({commandKey: 'typecheck', paths: [diagnostic]});
+
+      const ranked = await index.search('diagnosticNeedle', 10);
+      expect(ranked.map((hit) => hit.path)).toEqual([diagnostic, ordinary]);
+      expect(ranked[0]?.provenance?.score.diagnostic).toBe(0.05);
+      expect(index.status()).toMatchObject({diagnosticHints: 1});
+
+      index.recordDiagnostics({commandKey: 'typecheck', paths: []});
+      expect(index.status()).toMatchObject({diagnosticHints: 0, queryCacheEntries: 0});
+      const cleared = await index.search('diagnosticNeedle', 10);
+      expect(cleared).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          path: ordinary,
+          provenance: expect.objectContaining({score: expect.objectContaining({diagnostic: 0})}),
+        }),
+        expect.objectContaining({
+          path: diagnostic,
+          provenance: expect.objectContaining({score: expect.objectContaining({diagnostic: 0})}),
+        }),
+      ]));
+      index.resetDiagnostics();
+      expect(index.status()).toMatchObject({diagnosticHints: 0});
     } finally {
       await rm(root, {recursive: true, force: true});
     }

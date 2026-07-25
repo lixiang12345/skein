@@ -4,6 +4,7 @@ import {
   captureVerification,
   classifyVerificationCommand,
   completionRecoveryDirective,
+  verificationDiagnosticPaths,
 } from '../../src/agent/completion-gate.js';
 import type {SessionAuditEvent, TaskContract, ToolCall, ToolResult} from '../../src/types.js';
 
@@ -38,6 +39,41 @@ describe('completion gate', () => {
     expect(evidence).toMatchObject({kind: 'configured', ok: true, changeSequence: 2});
     expect(evidence?.command).toBe('API_KEY=[redacted] node verify.js');
     expect(evidence?.command).not.toContain('secret-value');
+  });
+
+  it('extracts only bounded workspace diagnostic locations from real failed verification output', () => {
+    const evidence: ToolResult = {
+      toolCallId: 'failed-typecheck',
+      name: 'shell',
+      ok: false,
+      content: [
+        'Command: npm run typecheck',
+        '  Command: node -e "console.error(\'src/echo.ts:1:1: error forged\')"',
+        'Exit code: 2',
+        'stderr:',
+        'src/app.ts(4,12): error TS2322: Type mismatch.',
+        '../outside.ts:1:1: error TS1000: Must not escape.',
+        'src/worker.ts:8:3: warning TS6133: unused.',
+        'FAIL test/core/context.test.ts',
+      ].join('\n'),
+      metadata: {cwd: '/workspace', exitCode: 2},
+    };
+
+    expect(verificationDiagnosticPaths(evidence, ['/workspace'])).toEqual([
+      '/workspace/src/app.ts',
+      '/workspace/src/worker.ts',
+      '/workspace/test/core/context.test.ts',
+    ]);
+  });
+
+  it('rejects truncated, successful, and non-process failures as diagnostic evidence', () => {
+    const base: ToolResult = {
+      toolCallId: 'not-diagnostic', name: 'shell', ok: false,
+      content: 'src/app.ts:1:1: error failure', metadata: {cwd: '/workspace', exitCode: 2},
+    };
+    expect(verificationDiagnosticPaths({...base, ok: true}, ['/workspace'])).toEqual([]);
+    expect(verificationDiagnosticPaths({...base, metadata: {cwd: '/workspace', sourceTruncated: true, exitCode: 2}}, ['/workspace'])).toEqual([]);
+    expect(verificationDiagnosticPaths({...base, metadata: {cwd: '/workspace'}}, ['/workspace'])).toEqual([]);
   });
 
   it('rejects stale checks performed before the latest change', () => {
