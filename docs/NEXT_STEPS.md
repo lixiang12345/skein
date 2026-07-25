@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.24`.
+- Current repository version: `0.3.25`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -41,8 +41,8 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.24.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.24.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.25.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.25.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
@@ -137,6 +137,18 @@ included in session totals and a separate content-free receipt. JSON/JSONL and
 the Context Inspector expose the resulting decision without retaining prompt or
 source text. Paid same-model task-success A/B remains required before closing
 P0-E or making a provider-billing savings claim.
+
+Version `0.3.25` separates one user-visible session into bounded internal
+context epochs and a hard lifetime token ceiling. Epoch rotation preserves the
+same session id and complete transcript while carrying content-free Contract,
+unresolved-failure, changed-file, and verification evidence; an identical
+successful tool call clears its recovered failure from future handoffs. The
+Intent Sufficiency Gate sends clear requests directly to execution, routes
+repository-inferable gaps to inspection, and persists one keyboard-answerable
+question only for genuine user-owned product choices. TUI queues pause during
+clarification and resume afterward; text, JSON, and JSONL expose the same
+`needs_input` state. Real same-model success/token A/B remains an external
+validation gate rather than an implied claim of this release.
 
 ### P0-D: Repository reuse and calibrated duplication enforcement
 
@@ -390,6 +402,18 @@ capability manifests, per-server trust review, activation telemetry, and an
 optional subprocess sandbox before any marketplace. Do not load arbitrary plugin
 JavaScript in-process; package reusable extensions as data-only Skills/workflows
 plus explicitly trusted MCP servers.
+
+### Delivered: bounded long-session continuity and intent sufficiency
+
+- Durable sessions now separate a 250k-token context epoch from a 1m-token
+  lifetime ceiling. Epoch handoffs retain Contract, failure, changed-file, and
+  verification receipts while preserving the complete transcript and session id.
+- The Context inspector and structured session summary expose epoch/lifetime
+  state, compaction receipts, and handoff evidence without prompt or source text.
+- Complex ambiguous public-API or UI choices pause as `needs_input`; simple
+  requests stay zero-question, repository facts route to inspection, and
+  permission approval remains independent. A numbered or custom answer resumes
+  the same logical run.
 
 ### P2: Memory Quality And User Control
 

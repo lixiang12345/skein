@@ -33,7 +33,8 @@ permissions:
 
 agent:
   maxTurns: 24
-  maxSessionTokens: 250000
+  maxEpochTokens: 250000
+  maxSessionTokens: 1000000
   autoVerify: true
   verifyCommands:
     - npm run typecheck

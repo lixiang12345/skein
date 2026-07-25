@@ -33,7 +33,7 @@ function config(root: string): MosaicConfig {
       allowCommands: [], denyCommands: [],
     },
     hooks: {},
-    agent: {maxTurns: 4, maxSessionTokens: 10_000, autoVerify: false, verifyCommands: [], checkpointBeforeWrite: true},
+    agent: {maxTurns: 4, maxSessionTokens: 100_000, autoVerify: false, verifyCommands: [], checkpointBeforeWrite: true},
     ui: {color: false, compact: true},
   };
 }
@@ -139,6 +139,53 @@ function addCompactionHistory(session: ReturnType<typeof createSession>): void {
 }
 
 describe('AgentRunner', () => {
+  it('rotates a context epoch without ending the durable session', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-runner-epoch-'));
+    roots.push(root);
+    const session = createSession({workspace: root, model: 'test-model', provider: 'compatible'});
+    session.contextEpochs![0]!.usage = {inputTokens: 5_000, outputTokens: 1_000};
+    session.usage = {inputTokens: 5_000, outputTokens: 1_000};
+    const provider = new QueueProvider([{content: 'Continued.', toolCalls: [], usage: {inputTokens: 5, outputTokens: 2}}]);
+    const runnerConfig = config(root);
+    runnerConfig.agent.maxEpochTokens = 5_000;
+    runnerConfig.agent.maxSessionTokens = 100_000;
+    const events: AgentEvent[] = [];
+    const runner = new AgentRunner({config: runnerConfig, provider, contextEngine: context, session, persistSession: false});
+
+    const result = await runner.run('continue this same session', {onEvent: (event) => { events.push(event); }});
+
+    expect(result.id).toBe(session.id);
+    expect(result.contextEpochs).toHaveLength(2);
+    expect(result.contextEpochs?.[0]).toMatchObject({finishedAt: expect.any(String), handoff: {reason: 'token_budget'}});
+    expect(result.contextEpochs?.[1]).toMatchObject({index: 2, usage: {inputTokens: 5, outputTokens: 2}});
+    expect(events).toEqual(expect.arrayContaining([expect.objectContaining({type: 'context_epoch', index: 2})]));
+  });
+
+  it('pauses a complex ambiguous API change and resumes after the user decision', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-runner-intent-'));
+    roots.push(root);
+    const request = `Refactor the public API and rename every exported entry across modules. ${'Update callers and tests safely. '.repeat(8)}`;
+    const provider = new QueueProvider([{content: 'Applied the compatibility decision.', toolCalls: [], usage: {inputTokens: 5, outputTokens: 2}}]);
+    const events: AgentEvent[] = [];
+    const runner = new AgentRunner({config: config(root), provider, contextEngine: context, persistSession: false});
+
+    const paused = await runner.run(request, {onEvent: (event) => { events.push(event); }});
+    expect(provider.calls).toHaveLength(0);
+    expect(paused.lastRun?.reason).toBe('needs_input');
+    expect(paused.pendingInput).toMatchObject({reason: 'public_api_compatibility_missing'});
+    const runId = paused.pendingInput?.runId;
+
+    const resumed = await runner.run('1', {maxTurns: 1, onEvent: (event) => { events.push(event); }});
+    expect(provider.calls).toHaveLength(1);
+    expect(resumed.pendingInput).toBeUndefined();
+    expect(resumed.intentAssessment).toMatchObject({route: 'direct_execute', reasons: ['clarification_resolved']});
+    expect(resumed.taskContract?.constraints.join('\n')).toContain('Preserve compatibility');
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({type: 'needs_input', pending: expect.objectContaining({runId})}),
+      expect.objectContaining({type: 'input_resolved', runId}),
+    ]));
+  });
+
   it('executes a tool, persists usage, and creates a checkpoint', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mosaic-runner-'));
     roots.push(root);

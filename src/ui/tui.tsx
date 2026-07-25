@@ -169,6 +169,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const controller = useRef<AbortController | undefined>(undefined);
   const processing = useRef(false);
   const queued = useRef<QueueItem[]>([]);
+  const clarificationBacklog = useRef<QueueItem[]>([]);
   const stopRequested = useRef(false);
   const startedInitial = useRef(false);
   const lastSubmitted = useRef<{value: string; at: number} | undefined>(undefined);
@@ -441,6 +442,26 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         break;
       case 'context_compacted':
         append({id: nextId(), kind: 'compaction', messages: event.omittedMessages, tokens: event.summaryTokens});
+        refreshSession();
+        break;
+      case 'context_epoch':
+        append({
+          id: nextId(),
+          kind: 'notice',
+          tone: 'info',
+          text: `Context epoch ${event.previousIndex} → ${event.index}${separator}${event.reason.replace('_', ' ')}${separator}${event.inputTokens + event.outputTokens} tokens preserved in the lifetime ledger.`,
+        });
+        refreshSession();
+        break;
+      case 'needs_input':
+        append({id: nextId(), kind: 'clarification', pending: event.pending});
+        refreshSession();
+        break;
+      case 'input_resolved':
+        append({id: nextId(), kind: 'notice', tone: 'success', text: `Clarification resolved${separator}${event.answer}`});
+        refreshSession();
+        break;
+      case 'intent':
         refreshSession();
         break;
       case 'usage':
@@ -1056,6 +1077,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     if (processing.current && isExitCommand(trimmed)) {
       stopRequested.current = true;
       queued.current = [];
+      clarificationBacklog.current = [];
       setQueue([]);
       controller.current?.abort();
       exit();
@@ -1146,6 +1168,31 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
           const snapshot = snapshotSession(nextSession);
           setSession(snapshot);
           setTasks(snapshot.tasks.map((task) => ({...task})));
+          if (snapshot.pendingInput) {
+            const deferred = queued.current.length;
+            clarificationBacklog.current.push(...queued.current);
+            queued.current = [];
+            setQueue([]);
+            if (deferred) append({
+              id: nextId(),
+              kind: 'notice',
+              tone: 'info',
+              text: `Paused ${deferred} queued follow-up${deferred === 1 ? '' : 's'} for clarification; they will resume after the answer.`,
+            });
+            break;
+          }
+          if (clarificationBacklog.current.length) {
+            const resumed = clarificationBacklog.current.length;
+            queued.current = [...clarificationBacklog.current, ...queued.current];
+            clarificationBacklog.current = [];
+            setQueue([...queued.current]);
+            append({
+              id: nextId(),
+              kind: 'notice',
+              tone: 'success',
+              text: `Clarification resolved; resuming ${resumed} queued follow-up${resumed === 1 ? '' : 's'}.`,
+            });
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           if (!abortController.signal.aborted && message !== lastEventError.current) {
@@ -1158,8 +1205,9 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
           }
         }
         if (abortController.signal.aborted || stopRequested.current) {
-          const discarded = queued.current.length;
+          const discarded = queued.current.length + clarificationBacklog.current.length;
           queued.current = [];
+          clarificationBacklog.current = [];
           setQueue([]);
           if (discarded) append({id: nextId(), kind: 'notice', text: `Discarded ${discarded} queued follow-up${discarded === 1 ? '' : 's'}.`});
           break;
@@ -1683,6 +1731,9 @@ function initialTimeline(session: Session, banner: BannerInfo, setupProblem?: st
       text: `Contract ${session.taskContract.state} | ${satisfied}/${required.length} accepted`,
     });
   }
+  if (session.pendingInput) {
+    items.push({id: `pending-input-${session.pendingInput.id}`, kind: 'clarification', pending: session.pendingInput});
+  }
   if (setupProblem && items.length <= 1) items.push({id: nextId(), kind: 'notice', tone: 'error', text: setupProblem});
   return items;
 }
@@ -1744,6 +1795,35 @@ function snapshotSession(source: Session): Session {
         openQuestions: [...source.workingMemory.openQuestions],
         relevantFiles: [...source.workingMemory.relevantFiles],
       },
+    } : {}),
+    ...(source.contextEpochs ? {
+      contextEpochs: source.contextEpochs.map((epoch) => ({
+        ...epoch,
+        usage: {...epoch.usage},
+        ...(epoch.handoff ? {
+          handoff: {
+            ...epoch.handoff,
+            ...(epoch.handoff.contract ? {
+              contract: {
+                ...epoch.handoff.contract,
+                required: epoch.handoff.contract.required.map((criterion) => ({
+                  ...criterion,
+                  evidenceRefs: [...criterion.evidenceRefs],
+                })),
+              },
+            } : {}),
+            unresolvedFailures: epoch.handoff.unresolvedFailures.map((failure) => ({...failure})),
+            changedFiles: [...epoch.handoff.changedFiles],
+            checks: epoch.handoff.checks.map((check) => ({...check})),
+          },
+        } : {}),
+      })),
+    } : {}),
+    ...(source.intentAssessment ? {
+      intentAssessment: {...source.intentAssessment, reasons: [...source.intentAssessment.reasons]},
+    } : {}),
+    ...(source.pendingInput ? {
+      pendingInput: {...source.pendingInput, options: source.pendingInput.options.map((option) => ({...option}))},
     } : {}),
     usage: {...source.usage},
   };
@@ -1811,7 +1891,7 @@ function permissionRows(width: number, hasCwd: boolean, compact: boolean): numbe
 function contextInspectorRows(session: Session, compact: boolean, width: number, minimal: boolean): number {
   if (minimal) return 2;
   const working = session.workingMemory;
-  const entries = 5 + (compact ? 0 : (working?.constraints.length ? 1 : 0) +
+  const entries = 6 + (compact ? 0 : (working?.constraints.length ? 1 : 0) +
     (working?.decisions.length ? 1 : 0) + (working?.openQuestions.length ? 1 : 0) +
     (working?.relevantFiles.length ? 1 : 0));
   return 2 + entries * (width < 52 ? 2 : 1);
@@ -1825,6 +1905,12 @@ function contextInspectorStatus(status: ReturnType<AgentRunner['getContextStatus
     summaryTokens: status.summaryTokens,
     toolTokens: status.toolTokens,
     compactedMessages: status.compactedMessages,
+    epochIndex: status.epochIndex,
+    epochCount: status.epochCount,
+    epochTokens: status.epochTokens,
+    epochBudget: status.epochBudget,
+    lifetimeTokens: status.lifetimeTokens,
+    lifetimeBudget: status.lifetimeBudget,
   };
 }
 

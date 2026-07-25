@@ -135,6 +135,9 @@ export interface MosaicConfig {
   hooks: HookConfig;
   agent: {
     maxTurns: number;
+    /** Per-epoch model budget. Reaching it creates a deterministic handoff. */
+    maxEpochTokens?: number;
+    /** Lifetime budget for the user-visible session across all epochs. */
     maxSessionTokens: number;
     autoVerify: boolean;
     verifyCommands: string[];
@@ -282,6 +285,88 @@ export interface ContextCompactionReceipt {
   inputSource: 'actual' | 'estimated' | 'none';
   outputSource: 'actual' | 'estimated' | 'none';
   narrative: 'present' | 'empty' | 'not-requested';
+}
+
+export type ContextEpochHandoffReason = 'token_budget' | 'context_pressure' | 'manual';
+
+/**
+ * Content-free checkpoint between bounded model-context epochs. Full messages,
+ * Task Contract state, and audit evidence remain authoritative elsewhere in
+ * the session; this receipt only proves what was checked at the boundary.
+ */
+export interface ContextEpochHandoff {
+  reason: ContextEpochHandoffReason;
+  createdAt: string;
+  compactionReceiptId?: string;
+  compactedThroughMessageId?: string;
+  contract?: {
+    state: TaskContractState;
+    required: Array<{
+      id: string;
+      status: TaskContractCriterionStatus;
+      evidenceRefs: string[];
+    }>;
+  };
+  unresolvedFailures: Array<{
+    signature: string;
+    class: ToolFailureClass;
+    circuitOpen: boolean;
+  }>;
+  changedFiles: string[];
+  checks: VerificationEvidence[];
+}
+
+export interface ContextEpoch {
+  id: string;
+  index: number;
+  startedAt: string;
+  finishedAt?: string;
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+  };
+  handoff?: ContextEpochHandoff;
+}
+
+export type IntentSufficiencyRoute =
+  | 'direct_execute'
+  | 'inspect_then_execute'
+  | 'needs_input'
+  | 'permission_required';
+
+export type IntentSufficiencyReason =
+  | 'simple_explicit_request'
+  | 'workspace_inference_available'
+  | 'explicit_user_choice_missing'
+  | 'public_api_compatibility_missing'
+  | 'runtime_permission_separate'
+  | 'clarification_resolved';
+
+export interface IntentAssessment {
+  version: 1;
+  route: IntentSufficiencyRoute;
+  reasons: IntentSufficiencyReason[];
+  assessedAt: string;
+  retrievalHits: number;
+}
+
+export interface PendingInputOption {
+  id: string;
+  label: string;
+  impact: string;
+  recommended: boolean;
+}
+
+/** User-facing clarification state. It never stores hidden model reasoning. */
+export interface PendingInput {
+  id: string;
+  runId: string;
+  createdAt: string;
+  originalRequest: string;
+  question: string;
+  options: PendingInputOption[];
+  reason: Extract<IntentSufficiencyReason,
+    'explicit_user_choice_missing' | 'public_api_compatibility_missing'>;
 }
 
 export interface ToolDefinition {
@@ -644,6 +729,10 @@ export interface Session {
   compactedThroughMessageId?: string;
   /** Recent content-free receipts for compaction decisions and model cost. */
   contextCompactionReceipts?: ContextCompactionReceipt[];
+  /** Bounded reasoning epochs within one durable, user-visible session. */
+  contextEpochs?: ContextEpoch[];
+  intentAssessment?: IntentAssessment;
+  pendingInput?: PendingInput;
   workingMemory?: WorkingMemory;
   contextSources?: ContextSource[];
   toolArtifacts?: ToolArtifactReference[];
@@ -679,6 +768,10 @@ export type AgentEvent =
   | {type: 'writer_lane'; id: string; status: WriterLaneStatus; detail: string; files?: string[]; checkpointId?: string}
   | {type: 'workflow'; name: string; step: string; status: TaskStatus}
   | {type: 'context_compacted'; omittedMessages: number; summaryTokens: number; status: ContextCompactionStatus; reason: ContextCompactionReason; receipt: ContextCompactionReceipt}
+  | {type: 'context_epoch'; index: number; previousIndex: number; reason: ContextEpochHandoffReason; inputTokens: number; outputTokens: number; handoff: ContextEpochHandoff}
+  | {type: 'intent'; assessment: IntentAssessment}
+  | {type: 'needs_input'; pending: PendingInput}
+  | {type: 'input_resolved'; pendingId: string; runId: string; answer: string}
   | {type: 'usage'; inputTokens: number; outputTokens: number; source?: TokenMeasurementSource; inputSource?: TokenMeasurementSource; outputSource?: TokenMeasurementSource; actual?: {inputTokens: number; outputTokens: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; reasoningTokens?: number}; estimated?: {inputTokens: number; outputTokens: number}; receipt?: TokenLedgerEntry}
   | {type: 'error'; error: Error}
   | {type: 'done'; reason: string; completion?: RunCompletion};

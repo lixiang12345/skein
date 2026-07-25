@@ -103,7 +103,7 @@ export class HeadlessReporter {
 
   private printText(event: AgentEvent): void {
     const {quiet, compact} = this.options;
-    if (quiet) return;
+    if (quiet && event.type !== 'needs_input') return;
     switch (event.type) {
       case 'thinking':
         if (!compact) process.stderr.write(this.paint.dim(`${this.glyphs.meta} reasoning ${this.glyphs.separator} turn ${event.turn}\n`));
@@ -172,6 +172,19 @@ export class HeadlessReporter {
           `${event.status === 'ready' || event.status === 'integrated' ? this.paint.green(this.glyphs.success) : this.paint.red(this.glyphs.error)} writer ${event.id.slice(0, 8)} ${this.glyphs.separator} ${event.status} ${this.glyphs.separator} ${event.detail}\n`,
         );
         break;
+      case 'needs_input':
+        process.stderr.write(this.paint.yellow(`${this.glyphs.meta} ${event.pending.question}\n`));
+        event.pending.options.forEach((option, index) => {
+          process.stderr.write(this.paint.dim(
+            `  ${index + 1}. ${option.label}${option.recommended ? ' (recommended)' : ''} ${this.glyphs.separator} ${option.impact}\n`,
+          ));
+        });
+        break;
+      case 'input_resolved':
+        process.stderr.write(this.paint.dim(
+          `${this.glyphs.meta} clarification resolved ${this.glyphs.separator} ${event.answer}\n`,
+        ));
+        break;
       case 'usage':
       case 'permission':
       case 'skill':
@@ -182,6 +195,8 @@ export class HeadlessReporter {
       case 'agent_done':
       case 'workflow':
       case 'context_compacted':
+      case 'context_epoch':
+      case 'intent':
         break;
       case 'done':
         this.printCompletion(event.completion);
@@ -269,6 +284,9 @@ function sessionSummary(session: Session): Record<string, unknown> {
     ...(session.contextCompactionReceipts?.length
       ? {contextCompactionReceipts: session.contextCompactionReceipts}
       : {}),
+    ...(session.contextEpochs?.length ? {contextEpochs: session.contextEpochs} : {}),
+    ...(session.intentAssessment ? {intentAssessment: session.intentAssessment} : {}),
+    ...(session.pendingInput ? {pendingInput: session.pendingInput} : {}),
     usage: session.usage,
   };
 }

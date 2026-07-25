@@ -345,6 +345,58 @@ describe('SkeinApp completion flows', () => {
     }
   });
 
+  it('pauses queued follow-ups for clarification and resumes them after the answer', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-clarification-queue-ui-'));
+    const session = testSession(root);
+    let finishFirst: (() => void) | undefined;
+    let finishQueued: (() => void) | undefined;
+    let firstOptions: {onEvent?: (event: AgentEvent) => void} | undefined;
+    const {runner, run} = mockRunner(root, session, [], {
+      run: async (input, options) => {
+        if (input === 'change the public API') {
+          firstOptions = options;
+          return new Promise<Session>((resolve) => {
+            finishFirst = () => {
+              session.pendingInput = pendingInput();
+              firstOptions?.onEvent?.({type: 'needs_input', pending: session.pendingInput});
+              resolve(session);
+            };
+          });
+        }
+        if (input === '1') delete session.pendingInput;
+        if (input === 'verify tests') {
+          return new Promise<Session>((resolve) => { finishQueued = () => resolve(session); });
+        }
+        return session;
+      },
+    });
+    const harness = await mountApp(runner, root);
+
+    try {
+      harness.stdin.write('change the public API\r');
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      harness.stdin.write('verify tests\r');
+      await vi.waitFor(() => expect(harness.output()).toContain('Queued follow-up 1.'));
+
+      finishFirst?.();
+      await vi.waitFor(() => expect(harness.output()).toContain('Paused 1 queued follow-up'));
+      expect(run).toHaveBeenCalledTimes(1);
+
+      harness.stdin.write('1\r');
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+      expect(run.mock.calls.map((call) => call[0])).toEqual([
+        'change the public API',
+        '1',
+        'verify tests',
+      ]);
+      await vi.waitFor(() => expect(harness.output()).toContain('resolved; resuming 1 queued follow-up.'));
+      finishQueued?.();
+    } finally {
+      await harness.cleanup();
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
   it('refreshes the visible short-term memory as a context event streams', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-context-ui-'));
     const session = testSession(root);
@@ -599,6 +651,21 @@ function userMessage(id: string, content: string): ChatMessage {
     role: 'user',
     content,
     createdAt: new Date().toISOString(),
+  };
+}
+
+function pendingInput(): NonNullable<Session['pendingInput']> {
+  return {
+    id: '00000000-0000-4000-8000-000000000040',
+    runId: '00000000-0000-4000-8000-000000000041',
+    createdAt: '2026-07-25T00:00:00.000Z',
+    originalRequest: 'change the public API',
+    question: 'Which compatibility policy?',
+    options: [
+      {id: 'compatible', label: 'Compatible', impact: 'Keep callers working.', recommended: true},
+      {id: 'breaking', label: 'Breaking', impact: 'Require migration.', recommended: false},
+    ],
+    reason: 'public_api_compatibility_missing',
   };
 }
 

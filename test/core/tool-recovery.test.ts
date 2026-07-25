@@ -2,11 +2,19 @@ import {describe, expect, it} from 'vitest';
 import {
   classifyToolFailure,
   formatFailureReceipt,
+  resolvableFailureSignatures,
   ToolRecoveryController,
 } from '../../src/agent/tool-recovery.js';
 import type {ToolCall, ToolResult} from '../../src/types.js';
 
 describe('tool recovery', () => {
+  it('emits the content-free signature a later identical success can resolve', () => {
+    const call = toolCall('same-call');
+    const failure = new ToolRecoveryController().recordFailure(call, 'command_exit');
+
+    expect(resolvableFailureSignatures(call)).toContain(failure.signature);
+  });
+
   it('opens the circuit after two identical failures and rejects the third call', () => {
     const controller = new ToolRecoveryController();
     const call = toolCall('one');

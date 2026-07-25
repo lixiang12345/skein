@@ -153,6 +153,7 @@ const partialConfigSchema = z.object({
   }).partial().optional(),
   agent: z.object({
     maxTurns: z.number().int().positive().optional(),
+    maxEpochTokens: z.number().int().positive().optional(),
     maxSessionTokens: z.number().int().positive().optional(),
     autoVerify: z.boolean().optional(),
     verifyCommands: z.array(z.string()).optional(),
@@ -244,7 +245,8 @@ export function defaultConfig(workspace = process.cwd()): MosaicConfig {
     hooks: {},
     agent: {
       maxTurns: 24,
-      maxSessionTokens: 250_000,
+      maxEpochTokens: 250_000,
+      maxSessionTokens: 1_000_000,
       autoVerify: true,
       verifyCommands: [],
       checkpointBeforeWrite: true,
@@ -679,6 +681,7 @@ export function configSummary(config: MosaicConfig): Record<string, unknown> {
     workspaceRoots: config.workspaceRoots,
     permissions: config.permissions,
     maxTurns: config.agent.maxTurns,
+    maxEpochTokens: config.agent.maxEpochTokens,
     maxSessionTokens: config.agent.maxSessionTokens,
     autoVerify: config.agent.autoVerify,
     skills: config.skills ? {

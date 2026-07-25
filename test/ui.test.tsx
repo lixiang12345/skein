@@ -527,6 +527,53 @@ describe('terminal presentation', () => {
     }
   });
 
+  it('shows epoch and lifetime usage as separate context facts', () => {
+    const output = renderToString(<ContextInspector
+      status={{
+        pressure: 0.4, messageCount: 4, activeTokens: 900, summaryTokens: 200,
+        toolTokens: 100, compactedMessages: 2, epochIndex: 3, epochCount: 3,
+        epochTokens: 125_000, epochBudget: 250_000,
+        lifetimeTokens: 410_000, lifetimeBudget: 1_000_000,
+      }}
+      working={undefined}
+      width={80}
+    />, {columns: 80});
+
+    expect(output).toContain('epoch');
+    expect(output).toContain('#3 125k/250k');
+    expect(output).toContain('lifetime 410k/1.0m');
+  });
+
+  it.each([20, 40, 80])('renders a clarification with bounded keyboard-answerable options at %i columns', (columns) => {
+    const output = renderToString(<Timeline width={columns} items={[{
+      id: 'clarification',
+      kind: 'clarification',
+      pending: {
+        id: '00000000-0000-4000-8000-000000000030',
+        runId: '00000000-0000-4000-8000-000000000031',
+        createdAt: '2026-07-25T00:00:00.000Z',
+        originalRequest: 'Change the UI.',
+        question: 'Modal or inline?',
+        options: [
+          {id: 'modal', label: 'Modal', impact: 'Use a blocking dialog.', recommended: true},
+          {id: 'inline', label: 'Inline', impact: 'Keep editing in context.', recommended: false},
+        ],
+        reason: 'explicit_user_choice_missing',
+      },
+    }]} />, {columns});
+
+    expect(output).toContain('Modal or inline?');
+    expect(output).toContain('1. Modal');
+    expect(output).toContain('2. Inline');
+    const linearized = output.replace(/\s+/gu, ' ');
+    expect(linearized).toContain('blocking dialog');
+    expect(linearized).toContain('editing in context');
+    for (const line of output.split('\n')) {
+      expect(displayWidth(line), `${columns}-column clarification overflowed: ${JSON.stringify(line)}`)
+        .toBeLessThanOrEqual(columns);
+    }
+  });
+
   it('keeps an empty transcript linear instead of drawing a large viewport card', () => {
     const output = renderToString(<Timeline items={[]} />);
     expect(output).toContain('Start with a request, @file, or /help.');

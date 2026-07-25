@@ -321,6 +321,38 @@ describe('HeadlessReporter', () => {
     expect(output).toMatchObject({ok: false, completion: {acceptance: {pending: 1}}});
   });
 
+  it('keeps needs-input actionable in quiet text and structured JSON', () => {
+    const pending = {
+      id: '00000000-0000-4000-8000-000000000020',
+      runId: '00000000-0000-4000-8000-000000000021',
+      createdAt: '2026-07-25T00:00:00.000Z',
+      originalRequest: 'Change the public API.',
+      question: 'Which compatibility policy?',
+      options: [
+        {id: 'compatible', label: 'Compatible', impact: 'Keep callers working.', recommended: true},
+        {id: 'breaking', label: 'Breaking', impact: 'Require migration.', recommended: false},
+      ],
+      reason: 'public_api_compatibility_missing' as const,
+    };
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const quiet = new HeadlessReporter({format: 'text', quiet: true, color: false});
+    quiet.onEvent({type: 'needs_input', pending});
+    expect(stderr.mock.calls.map(([chunk]) => String(chunk)).join('')).toContain('Which compatibility policy?');
+    stderr.mockRestore();
+
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const json = new HeadlessReporter({format: 'json', color: false});
+    json.onEvent({type: 'needs_input', pending});
+    json.onEvent({type: 'done', reason: 'needs_input', completion: {
+      status: 'no_changes', changedFiles: [], checks: [], detail: 'No workspace mutations were recorded.',
+    }});
+    json.finish({...session, pendingInput: pending});
+    const output = JSON.parse(stdout.mock.calls.map(([chunk]) => String(chunk)).join('')) as {
+      ok?: boolean; reason?: string; session?: {pendingInput?: {runId?: string}};
+    };
+    expect(output).toMatchObject({ok: false, reason: 'needs_input', session: {pendingInput: {runId: pending.runId}}});
+  });
+
   it('uses only ASCII chrome when the fallback glyph mode is enabled', () => {
     const previous = process.env.SKEIN_GLYPHS;
     process.env.SKEIN_GLYPHS = 'ascii';

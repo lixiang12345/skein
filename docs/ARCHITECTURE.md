@@ -36,20 +36,23 @@
 1. Resolve `@path` mentions inside configured workspace roots.
 2. Classify the task evidence surface and ask the local context engine for
    task-relevant spans under an adaptive budget capped by configuration.
-3. Combine product rules, project rules, retrieved spans, mentions, current plan,
+3. Run the Intent Sufficiency Gate. Clear requests execute; repository-derived
+   gaps route to inspection; only user-owned product choices create a persisted
+   `needs_input` state. Shell/Git/network approval remains a separate policy.
+4. Combine product rules, project rules, retrieved spans, mentions, current plan,
    and conversation history.
-4. Call the model with the tools allowed by the current mode.
-5. Evaluate every requested tool against workspace and permission policy.
-6. Create a checkpoint before the first mutation in a tool batch.
-7. Execute tools, emit events, and append their grounded results to the model
+5. Call the model with the tools allowed by the current mode.
+6. Evaluate every requested tool against workspace and permission policy.
+7. Create a checkpoint before the first mutation in a tool batch.
+8. Execute tools, emit events, and append their grounded results to the model
    conversation.
-8. Record a bounded, content-free token receipt for the model request and
+9. Record a bounded, content-free token receipt for the model request and
    persist actual provider counters separately from local estimates.
-9. Continue until the model returns a final response or the turn limit is hit.
-10. Before the first substantive write, run the warning-only repository reuse
+10. Continue until the model returns a final response or the turn limit is hit.
+11. Before the first substantive write, run the warning-only repository reuse
     gate. It binds current candidate/read evidence to the request, index
     generation, and change sequence without retaining source text.
-11. Capture content-free TS/JS function fingerprints from that pre-write index
+12. Capture content-free TS/JS function fingerprints from that pre-write index
     generation. After the write succeeds, compare only newly added or at least
     1.5x-expanded functions before refreshing changed index paths. Exact
     normalized hashes identify Type-1/2 clones; winnowed 10-token shingles and
@@ -57,14 +60,32 @@
     matrix calibrates threshold 0.55: unsuppressed Type-1/2 matches block the
     existing completion gate, while Type-3 remains warning-only. Type-4 semantic
     equivalence is explicitly outside this deterministic contract.
-12. Run configured verification commands after changes. The completion gate accepts
+13. Run configured verification commands after changes. The completion gate accepts
    only current successful test, typecheck, lint, build, check, or `git diff
    --check` evidence recorded after the last mutation. An early final response
    receives one bounded recovery turn; the runtime persists `verified`,
    `unverified`, or `verification_failed` instead of trusting completion claims
    in model text.
-13. Persist the outcome and expose the same status through the TUI, text, JSON,
+14. Persist the outcome and expose the same status through the TUI, text, JSON,
     and JSONL surfaces.
+
+## Long-session epoch ledger
+
+A user-visible session has two different token boundaries:
+
+- `agent.maxEpochTokens` (default 250,000) bounds one internal reasoning epoch.
+- `agent.maxSessionTokens` (default 1,000,000) is the hard lifetime ceiling
+  across every epoch and resume.
+
+Crossing the epoch boundary never clears lifetime usage or changes the session
+id. The runner optionally compacts only when predicted reuse has positive net
+savings, then persists a content-free handoff containing the Task Contract
+criterion states and evidence references, unresolved failure circuits, changed
+files, and last-run verification receipts. The next epoch starts with zero
+epoch usage while the transcript and lifetime ledger remain intact. Generated
+narrative is fallible; deterministic handoff facts and fresh tool evidence keep
+precedence. Epochs, pending clarification, and their public reason codes are
+backward-compatible optional session fields and contain no hidden reasoning.
 
 ## Interactive startup gate
 

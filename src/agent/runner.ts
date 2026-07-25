@@ -3,6 +3,12 @@ import {ContextEngine} from '../context/context-engine.js';
 import {activeMessages, clearOldToolResults, ContextManager} from '../context/manager.js';
 import {resolveMentions} from '../context/mentions.js';
 import {emptyPackedContext, selectContextBudget} from '../context/budget.js';
+import {
+  contextEpochTokens,
+  ensureContextEpoch,
+  recordContextEpochUsage,
+  rotateContextEpoch,
+} from '../context/epochs.js';
 import {createProvider, type ModelProvider} from '../providers/index.js';
 import {CheckpointStore} from '../checkpoint/store.js';
 import {HookRunner} from '../hooks/runner.js';
@@ -60,9 +66,11 @@ import {
   createDraftTaskContract,
   shouldUseTaskContract,
 } from './task-contract.js';
+import {assessIntentSufficiency, resolvePendingInput} from './intent-sufficiency.js';
 import {
   classifyToolFailure,
   formatFailureReceipt,
+  resolvableFailureSignatures,
   ToolRecoveryController,
 } from './tool-recovery.js';
 import {dynamicToolOutputBudget, protectToolOutput} from './tool-output.js';
@@ -161,16 +169,33 @@ export class AgentRunner {
 
   async run(input: string, options: RunOptions = {}): Promise<Session> {
     if (this.running) throw new Error('This AgentRunner is already processing a turn.');
-    const request = input.trim();
-    if (!request) throw new Error('User input cannot be empty.');
-    if (request.length > 120_000) {
+    const submittedRequest = input.trim();
+    if (!submittedRequest) throw new Error('User input cannot be empty.');
+    if (submittedRequest.length > 120_000) {
       throw new Error('User input is too large; pass a focused request or attach files with @path.');
     }
+    let request = submittedRequest;
     this.running = true;
     this.contextEngine.resetDiagnostics?.();
     const emit = async (event: AgentEvent): Promise<void> => {
       await options.onEvent?.(event);
     };
+    const pendingAtStart = this.session.pendingInput;
+    const resolvedInput = pendingAtStart
+      ? resolvePendingInput(pendingAtStart, submittedRequest)
+      : undefined;
+    if (pendingAtStart && resolvedInput) {
+      request = `${pendingAtStart.originalRequest}\n\n<user-clarification-decision source="explicit-user-input">\n${resolvedInput.decision}\n</user-clarification-decision>`;
+      delete this.session.pendingInput;
+      const constraint = `User clarification (${pendingAtStart.id}): ${resolvedInput.decision}`;
+      if (this.session.taskContract && !this.session.taskContract.constraints.includes(constraint)) {
+        this.session.taskContract.constraints.push(constraint);
+        if (this.session.taskContract.constraints.length > 64) {
+          this.session.taskContract.constraints.splice(0, this.session.taskContract.constraints.length - 64);
+        }
+        this.session.taskContract.updatedAt = new Date().toISOString();
+      }
+    }
     const changeSequenceAtStart = this.changeSequence;
     const runStartedAt = new Date().toISOString();
     const loadedProgressiveTools = new Set<string>();
@@ -240,11 +265,12 @@ export class AgentRunner {
     try {
       throwIfAborted(options.signal);
       await this.reconcileToolArtifacts();
+      ensureContextEpoch(this.session);
       if (this.session.messages.length === 0 && this.session.title === 'New session') {
         this.session.title = titleFromInput(request);
       }
       this.contextManager.startTurn(this.session, request);
-      const userMessage = message('user', request);
+      const userMessage = message('user', submittedRequest);
       this.activeReuseGate = {requestId: userMessage.id, request, attempted: false};
       this.session.messages.push(userMessage);
       await this.persist();
@@ -256,6 +282,11 @@ export class AgentRunner {
       const turnDirective = buildTurnDirective(request, {
         agents: Boolean(this.config.agents?.enabled),
       });
+      const contractEnabled = shouldUseTaskContract(
+        request,
+        turnDirective.intent,
+        this.session.taskContract,
+      );
       const packed = trivialTurn
         ? emptyPackedContext(selectContextBudget(request, this.config, {
           intent: turnDirective.intent,
@@ -263,6 +294,38 @@ export class AgentRunner {
         }))
         : await this.packContext(request, {intent: turnDirective.intent});
       if (!trivialTurn) await emit({type: 'context', packed});
+      if (contractEnabled && (!this.session.taskContract || this.session.taskContract.state === 'satisfied')) {
+        this.session.taskContract = createDraftTaskContract(request, this.session.audit?.at(-1)?.id);
+        await this.persist();
+        await emit({type: 'contract', contract: structuredClone(this.session.taskContract)});
+      }
+      let intentDirective: string;
+      if (pendingAtStart && resolvedInput) {
+        this.session.intentAssessment = {
+          version: 1,
+          route: 'direct_execute',
+          reasons: ['clarification_resolved'],
+          assessedAt: new Date().toISOString(),
+          retrievalHits: packed.hits.length,
+        };
+        intentDirective = 'The user resolved the recorded clarification. Continue the same logical run and apply that decision without asking again.';
+        await emit({type: 'input_resolved', pendingId: pendingAtStart.id, runId: pendingAtStart.runId, answer: resolvedInput.answer});
+        await emit({type: 'intent', assessment: this.session.intentAssessment});
+      } else {
+        const intent = assessIntentSufficiency(request, turnDirective.intent, {
+          retrievalHits: packed.hits.length,
+          complex: contractEnabled,
+        });
+        this.session.intentAssessment = intent.assessment;
+        intentDirective = intent.directive;
+        await emit({type: 'intent', assessment: intent.assessment});
+        if (intent.pending) {
+          this.session.pendingInput = intent.pending;
+          await this.persist();
+          await emit({type: 'needs_input', pending: intent.pending});
+          return finishRun('needs_input');
+        }
+      }
       const mentions = await this.packMentions(request);
       const retrievedContext = trivialTurn && !mentions.length ? '' : buildRetrievedContext(
           packed,
@@ -292,19 +355,10 @@ export class AgentRunner {
           scope: augmentation.memoryScope ?? 'session',
         });
       }
-      const contractEnabled = shouldUseTaskContract(
-        request,
-        turnDirective.intent,
-        this.session.taskContract,
-      );
-      if (contractEnabled && (!this.session.taskContract || this.session.taskContract.state === 'satisfied')) {
-        this.session.taskContract = createDraftTaskContract(request, this.session.audit?.at(-1)?.id);
-        await this.persist();
-        await emit({type: 'contract', contract: structuredClone(this.session.taskContract)});
-      }
       activeRunContract = contractEnabled ? this.session.taskContract : undefined;
       let verificationAttempted = false;
       const maxTurns = options.maxTurns ?? this.config.agent.maxTurns;
+      const epochTokenBudget = this.config.agent.maxEpochTokens ?? this.config.agent.maxSessionTokens;
 
       const contextBudget = Math.max(24_000, Math.min(100_000, this.config.context.maxTokens * 3));
       if (this.contextManager.shouldCompact(this.session, contextBudget)) {
@@ -333,11 +387,15 @@ export class AgentRunner {
           this.config.agent.maxSessionTokens) {
           return finishRun('token_budget');
         }
+        if (contextEpochTokens(this.session) >= epochTokenBudget) {
+          await this.rollContextEpoch('token_budget', options.signal, emit);
+        }
         this.applySteering();
         await emit({type: 'thinking', turn});
         const dynamicPrompt = [
             buildSessionStatePrompt(this.session),
             turnDirective.text,
+            `<intent-sufficiency route="${this.session.intentAssessment?.route ?? 'direct_execute'}">${intentDirective}</intent-sufficiency>`,
             this.contextManager.buildShortTermPrompt(this.session),
             pinnedContext,
             options.turnInstructions ?? '',
@@ -350,8 +408,10 @@ export class AgentRunner {
           activeMessages(this.session),
           contextBudget,
         );
-        const availableTokens = this.config.agent.maxSessionTokens -
+        const availableLifetimeTokens = this.config.agent.maxSessionTokens -
           (this.session.usage.inputTokens + this.session.usage.outputTokens);
+        const availableEpochTokens = epochTokenBudget - contextEpochTokens(this.session);
+        const availableTokens = Math.min(availableLifetimeTokens, availableEpochTokens);
         const visibleTools = visibleToolDefinitions(
           this.tools,
           options.askMode === true,
@@ -365,8 +425,14 @@ export class AgentRunner {
           loadedProgressiveTools,
         );
         const estimatedInputTokens = estimateMessages(messages) + estimateToolDefinitions(visibleTools);
-        if (availableTokens <= 0 || estimatedInputTokens >= availableTokens) {
+        if (estimatedInputTokens >= availableLifetimeTokens) {
           return finishRun('token_budget');
+        }
+        if (availableTokens <= 0 || estimatedInputTokens >= availableEpochTokens) {
+          if (contextEpochTokens(this.session) === 0) return finishRun('token_budget');
+          await this.rollContextEpoch('token_budget', options.signal, emit);
+          turn -= 1;
+          continue;
         }
         const maxOutputTokens = Math.max(1, Math.min(
           this.config.model.maxTokens ?? 8_192,
@@ -813,6 +879,13 @@ export class AgentRunner {
         metadata.failure = receipt;
       } else {
         recovery.recordSuccess(call);
+        const historicalFailures = new Set((this.session.audit ?? [])
+          .filter((event) => event.type === 'tool' && event.outcome === 'failure')
+          .map((event) => failureSignatureFromMetadata(event.metadata?.failure))
+          .filter((signature): signature is string => signature !== undefined));
+        const resolvedFailureSignatures = resolvableFailureSignatures(call)
+          .filter((signature) => historicalFailures.has(signature));
+        if (resolvedFailureSignatures.length) metadata.resolvedFailureSignatures = resolvedFailureSignatures;
       }
       const evidenceProgress = recovery.recordEvidence(call, {
         toolCallId: call.id,
@@ -1034,6 +1107,35 @@ export class AgentRunner {
     return result;
   }
 
+  private async rollContextEpoch(
+    reason: 'token_budget' | 'context_pressure' | 'manual',
+    signal: AbortSignal | undefined,
+    emit: (event: AgentEvent) => Promise<void>,
+  ): Promise<void> {
+    let receipt;
+    const contextBudget = Math.max(24_000, Math.min(100_000, this.config.context.maxTokens * 3));
+    if (this.contextManager.shouldCompact(this.session, contextBudget)) {
+      const compacted = await this.compactContext(
+        'Create a boundary handoff for the next bounded context epoch.',
+        signal,
+        'automatic',
+      );
+      receipt = compacted.receipt;
+      if (compacted.status === 'compacted') await emit({type: 'context_compacted', ...compacted});
+    }
+    const rotated = rotateContextEpoch(this.session, reason, receipt);
+    await this.persist();
+    await emit({
+      type: 'context_epoch',
+      index: rotated.current.index,
+      previousIndex: rotated.previous.index,
+      reason,
+      inputTokens: rotated.previous.usage.inputTokens,
+      outputTokens: rotated.previous.usage.outputTokens,
+      handoff: rotated.handoff,
+    });
+  }
+
   getContextStatus() {
     return this.contextManager.status(this.session);
   }
@@ -1071,9 +1173,15 @@ export class AgentRunner {
   private toolOutputBudget(): number {
     const contextWindowTokens = Math.max(24_000, Math.min(100_000, this.config.context.maxTokens * 3));
     const activeContextTokens = this.contextManager.status(this.session, contextWindowTokens).activeTokens;
-    const remainingSessionTokens = this.config.agent.maxSessionTokens -
+    const remainingLifetimeTokens = this.config.agent.maxSessionTokens -
       (this.session.usage.inputTokens + this.session.usage.outputTokens);
-    return dynamicToolOutputBudget(contextWindowTokens, activeContextTokens, remainingSessionTokens);
+    const epochBudget = this.config.agent.maxEpochTokens ?? this.config.agent.maxSessionTokens;
+    const remainingEpochTokens = epochBudget - contextEpochTokens(this.session);
+    return dynamicToolOutputBudget(
+      contextWindowTokens,
+      activeContextTokens,
+      Math.min(remainingLifetimeTokens, remainingEpochTokens),
+    );
   }
 
   private async protectToolResult(result: ToolResult): Promise<ToolResult> {
@@ -1293,6 +1401,7 @@ function recordTokenUsage(
   const outputTokens = outputActual ?? estimatedOutputTokens;
   session.usage.inputTokens += inputTokens;
   session.usage.outputTokens += outputTokens;
+  recordContextEpochUsage(session, inputTokens, outputTokens);
   if (inputActual !== undefined) {
     session.usage.actualInputTokens = (session.usage.actualInputTokens ?? 0) + inputActual;
   } else {
@@ -1393,6 +1502,12 @@ function failedResult(
     content: failure ? `${formatFailureReceipt(failure)}\n${content}` : content,
     ...(failure ? {metadata: {failure}} : {}),
   };
+}
+
+function failureSignatureFromMetadata(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') return;
+  const signature = (value as Record<string, unknown>).signature;
+  return typeof signature === 'string' && signature ? signature : undefined;
 }
 
 function visibleToolDefinitions(

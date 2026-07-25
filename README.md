@@ -96,7 +96,7 @@ To build, verify, and install a local package artifact from this checkout:
 
 ```bash
 npm run verify:package -- --output-dir artifacts/package
-npm install -g ./artifacts/package/skein-code-cli-0.3.24.tgz
+npm install -g ./artifacts/package/skein-code-cli-0.3.25.tgz
 ```
 
 To install the published package from npm:
@@ -366,7 +366,10 @@ permissions:
 
 agent:
   maxTurns: 24
-  maxSessionTokens: 250000
+  # Rotate deterministic context handoffs without changing the session id.
+  maxEpochTokens: 250000
+  # Hard lifetime cost/usage ceiling across every resumed epoch.
+  maxSessionTokens: 1000000
   autoVerify: true
   verifyCommands:
     - npm run typecheck
@@ -378,6 +381,20 @@ hooks:
   afterTool: []
   afterTurn: []
 ```
+
+`--epoch-token-budget` overrides the handoff boundary for one invocation;
+`--token-budget` remains the hard lifetime ceiling. Reaching an epoch boundary
+keeps the complete transcript and cumulative usage, validates Task Contract,
+failure, changed-file, and verification state, then continues in the same
+session with a bounded active window. The Context inspector shows both meters.
+
+For complex executable requests, Skein records an Intent Sufficiency receipt
+before model-driven mutation. Explicit requests proceed directly; repository
+facts are inspected rather than asked back to the user; a genuine product
+choice such as public-API compatibility pauses with one question and two or
+three concrete options. Headless JSON/JSONL emits `needs_input`, persists the
+question, performs no mutation, and exits with status 2. The next reply resumes
+the same logical run. Permission approval remains a separate runtime gate.
 
 See [examples/config.yaml](examples/config.yaml) for a ready-to-adapt file.
 Secrets should normally stay in environment variables instead of committed

@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.24",
+  "version": "0.3.25",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,6 +16,11 @@
   },
   "skein": {
     "releaseNotes": [
+      "Durable sessions now separate a 250k-token context epoch from a 1m-token lifetime ceiling without changing the session id or deleting transcript history",
+      "Content-free epoch handoffs preserve Task Contract criteria, unresolved failure circuits, changed files, and verification receipts across long runs",
+      "Intent Sufficiency routes clear requests to execution, repository-inferable gaps to inspection, and genuine product choices to one persisted clarification",
+      "TUI and headless output expose epoch, lifetime, and needs-input state; queued follow-ups pause and resume after keyboard clarification instead of becoming accidental answers",
+      "Successful identical tool calls clear matching historical failure signatures from later epoch handoffs",
       "Context compaction now rebuilds authoritative task, working-state, verification, permission, failure, and artifact facts outside generated narrative",
       "Automatic compaction runs only when three predicted prompt reuses produce positive net token savings while explicit compact commands remain available",
       "Compaction provider usage is included in session totals with separate content-free actual or estimated receipts",

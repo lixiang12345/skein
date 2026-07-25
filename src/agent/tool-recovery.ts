@@ -19,6 +19,8 @@ const RETRY_BUDGET: Record<ToolFailureClass, number> = {
   contract_required: 2,
 };
 
+const FAILURE_CLASSES = Object.keys(RETRY_BUDGET) as ToolFailureClass[];
+
 const REPAIR_HINT: Record<ToolFailureClass, string> = {
   schema_input: 'Correct the arguments to match the tool schema.',
   unknown_tool: 'Choose a tool exposed for this turn.',
@@ -158,6 +160,15 @@ export function classifyToolFailure(
 
 export function formatFailureReceipt(receipt: ToolFailureReceipt): string {
   return `Failure: ${receipt.class}; attempt ${receipt.attempt}; ${receipt.remaining} retries remain; circuit ${receipt.circuitOpen ? 'open' : 'closed'}. Repair: ${receipt.repairHint}`;
+}
+
+/**
+ * Content-free signatures a successful call can resolve. Recording only a
+ * matching historical signature lets durable handoffs distinguish recovered
+ * failures from circuits that still need attention without persisting args.
+ */
+export function resolvableFailureSignatures(call: ToolCall): string[] {
+  return FAILURE_CLASSES.map((failureClass) => failureSignature(call, failureClass));
 }
 
 function isRetryable(failureClass: ToolFailureClass): boolean {

@@ -114,7 +114,8 @@ program
   .option('--model <model>', 'model identifier')
   .option('--base-url <url>', 'OpenAI-compatible or provider base URL')
   .option('--max-turns <n>', 'maximum agent turns')
-  .option('--token-budget <n>', 'maximum cumulative session tokens')
+  .option('--epoch-token-budget <n>', 'maximum tokens before an internal context handoff')
+  .option('--token-budget <n>', 'maximum lifetime tokens across the resumed session')
   .option('--resume [session]', 'resume a session by id or prefix')
   .option('-c, --continue', 'resume the latest session')
   .option('--no-color', 'disable color output')
@@ -962,6 +963,7 @@ interface RootOptions {
   model?: string;
   baseUrl?: string;
   maxTurns?: string;
+  epochTokenBudget?: string;
   tokenBudget?: string;
   resume?: string | boolean;
   continue?: boolean;
@@ -1003,6 +1005,7 @@ interface RuntimeConfigOptions {
   model?: string;
   baseUrl?: string;
   maxTokens?: string;
+  epochTokenBudget?: string;
   tokenBudget?: string;
   color?: boolean;
   checkpoint?: boolean;
@@ -1103,6 +1106,7 @@ async function runChat(prompts: string[], options: RootOptions): Promise<void> {
       requestPermission,
     });
     for (const queued of options.queue) {
+      if (session.pendingInput) break;
       session = await runner.run(queued, {
         askMode: options.ask === true || options.plan === true,
         ...(options.plan ? {turnInstructions: PLAN_MODE_INSTRUCTIONS} : {}),
@@ -1112,6 +1116,7 @@ async function runChat(prompts: string[], options: RootOptions): Promise<void> {
       });
     }
     reporter.finish(session);
+    if (session.pendingInput) process.exitCode = 2;
   } catch (error) {
     reporter.fail(error);
     process.exitCode = 1;
@@ -1284,6 +1289,9 @@ async function runtimeConfig(
     agent: {
       ...loaded.agent,
       ...(options.checkpoint === false ? {checkpointBeforeWrite: false} : {}),
+      ...(options.epochTokenBudget
+        ? {maxEpochTokens: positiveInt(options.epochTokenBudget, loaded.agent.maxEpochTokens ?? loaded.agent.maxSessionTokens)}
+        : {}),
       ...(options.tokenBudget
         ? {maxSessionTokens: positiveInt(options.tokenBudget, loaded.agent.maxSessionTokens)}
         : {}),
@@ -1461,6 +1469,7 @@ function runtimeOptions(options: RuntimeConfigOptions): RuntimeConfigOptions {
   const provider = options.provider ?? root.provider;
   const model = options.model ?? root.model;
   const baseUrl = options.baseUrl ?? root.baseUrl;
+  const epochTokenBudget = options.epochTokenBudget ?? root.epochTokenBudget;
   const tokenBudget = options.tokenBudget ?? root.tokenBudget;
   return {
     addWorkspace: [...(root.addWorkspace ?? []), ...(options.addWorkspace ?? [])],
@@ -1469,6 +1478,7 @@ function runtimeOptions(options: RuntimeConfigOptions): RuntimeConfigOptions {
     ...(model ? {model} : {}),
     ...(baseUrl ? {baseUrl} : {}),
     ...(options.maxTokens ? {maxTokens: options.maxTokens} : {}),
+    ...(epochTokenBudget ? {epochTokenBudget} : {}),
     ...(tokenBudget ? {tokenBudget} : {}),
     ...(root.color !== undefined ? {color: root.color} : {}),
     ...(root.checkpoint !== undefined ? {checkpoint: root.checkpoint} : {}),

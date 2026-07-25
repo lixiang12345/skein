@@ -13,6 +13,7 @@ import type {
   WorkingMemory,
 } from '../types.js';
 import {estimateTokens} from '../utils/tokens.js';
+import {activeContextEpoch} from './epochs.js';
 
 export interface ContextStatus {
   activeTokens: number;
@@ -21,6 +22,12 @@ export interface ContextStatus {
   messageCount: number;
   compactedMessages: number;
   pressure: number;
+  epochIndex: number;
+  epochCount: number;
+  epochTokens: number;
+  epochBudget: number;
+  lifetimeTokens: number;
+  lifetimeBudget: number;
 }
 
 export interface CompactionResult {
@@ -87,6 +94,8 @@ export class ContextManager {
       ? Math.max(0, session.messages.findIndex((message) =>
         message.id === session.compactedThroughMessageId) + 1)
       : 0;
+    const epoch = activeContextEpoch(session);
+    const epochBudget = this.config.agent.maxEpochTokens ?? this.config.agent.maxSessionTokens;
     return {
       activeTokens,
       summaryTokens,
@@ -94,6 +103,12 @@ export class ContextManager {
       messageCount: active.length,
       compactedMessages,
       pressure: Math.min(1, (activeTokens + summaryTokens) / contextLimit),
+      epochIndex: epoch.index,
+      epochCount: epoch.index,
+      epochTokens: epoch.usage.inputTokens + epoch.usage.outputTokens,
+      epochBudget,
+      lifetimeTokens: session.usage.inputTokens + session.usage.outputTokens,
+      lifetimeBudget: this.config.agent.maxSessionTokens,
     };
   }
 
@@ -316,6 +331,7 @@ function buildCompactionFactsEnvelope(session: Session, throughMessageId?: strin
   const memory = session.workingMemory;
   const contract = session.taskContract;
   const lastRun = session.lastRun;
+  const epoch = activeContextEpoch(session);
   const directives = olderUserDirectives(session, throughMessageId ?? session.compactedThroughMessageId);
   const permissions = recentPermissionFacts(session.audit ?? []);
   const failures = recentFailureFacts(session.audit ?? []);
@@ -363,6 +379,11 @@ ${factList(memory?.relevantFiles ?? [])}
 
 Session changed files:
 ${factList(session.changedFiles)}
+
+Context epoch ledger:
+- Current epoch: ${epoch.index}
+- Current epoch usage: input=${epoch.usage.inputTokens}; output=${epoch.usage.outputTokens}
+- Lifetime usage: input=${session.usage.inputTokens}; output=${session.usage.outputTokens}
 
 Last-run verification and residual state:
 ${lastRunLines}

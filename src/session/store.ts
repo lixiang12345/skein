@@ -252,6 +252,71 @@ const contextCompactionReceiptSchema = z.object({
   narrative: z.enum(['present', 'empty', 'not-requested']),
 }).strict();
 
+const contextEpochSchema = z.object({
+  id: z.string().uuid(),
+  index: z.number().int().positive(),
+  startedAt: z.string().datetime(),
+  finishedAt: z.string().datetime().optional(),
+  usage: z.object({
+    inputTokens: z.number().int().nonnegative(),
+    outputTokens: z.number().int().nonnegative(),
+  }).strict(),
+  handoff: z.object({
+    reason: z.enum(['token_budget', 'context_pressure', 'manual']),
+    createdAt: z.string().datetime(),
+    compactionReceiptId: z.string().uuid().optional(),
+    compactedThroughMessageId: z.string().optional(),
+    contract: z.object({
+      state: z.enum(['draft', 'active', 'satisfied', 'blocked']),
+      required: z.array(z.object({
+        id: z.string().min(1).max(128),
+        status: z.enum(['pending', 'satisfied', 'blocked']),
+        evidenceRefs: z.array(z.string().min(1).max(256)).max(64),
+      }).strict()).max(64),
+    }).strict().optional(),
+    unresolvedFailures: z.array(z.object({
+      signature: z.string().min(1).max(256),
+      class: z.enum([
+        'schema_input', 'unknown_tool', 'permission_denied', 'command_exit', 'timeout',
+        'cancelled', 'hook', 'execution', 'no_progress', 'contract_required',
+      ]),
+      circuitOpen: z.boolean(),
+    }).strict()).max(16),
+    changedFiles: z.array(z.string().max(4_096)).max(256),
+    checks: z.array(verificationEvidenceSchema).max(64),
+  }).strict().optional(),
+}).strict();
+
+const intentAssessmentSchema = z.object({
+  version: z.literal(1),
+  route: z.enum(['direct_execute', 'inspect_then_execute', 'needs_input', 'permission_required']),
+  reasons: z.array(z.enum([
+    'simple_explicit_request',
+    'workspace_inference_available',
+    'explicit_user_choice_missing',
+    'public_api_compatibility_missing',
+    'runtime_permission_separate',
+    'clarification_resolved',
+  ])).min(1).max(8),
+  assessedAt: z.string().datetime(),
+  retrievalHits: z.number().int().nonnegative(),
+}).strict();
+
+const pendingInputSchema = z.object({
+  id: z.string().uuid(),
+  runId: z.string().uuid(),
+  createdAt: z.string().datetime(),
+  originalRequest: z.string().min(1).max(120_000),
+  question: z.string().min(1).max(2_000),
+  options: z.array(z.object({
+    id: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u),
+    label: z.string().min(1).max(160),
+    impact: z.string().min(1).max(500),
+    recommended: z.boolean(),
+  }).strict()).min(2).max(3),
+  reason: z.enum(['explicit_user_choice_missing', 'public_api_compatibility_missing']),
+}).strict();
+
 const sessionSchema = z.object({
   id: sessionIdSchema,
   title: z.string(),
@@ -268,6 +333,9 @@ const sessionSchema = z.object({
   contextCompactions: z.number().int().nonnegative().optional(),
   compactedThroughMessageId: z.string().optional(),
   contextCompactionReceipts: z.array(contextCompactionReceiptSchema).max(64).optional(),
+  contextEpochs: z.array(contextEpochSchema).max(64).optional(),
+  intentAssessment: intentAssessmentSchema.optional(),
+  pendingInput: pendingInputSchema.optional(),
   workingMemory: workingMemorySchema.optional(),
   contextSources: z.array(contextSourceSchema).max(64).optional(),
   toolArtifacts: z.array(toolArtifactSchema).max(200).optional(),
@@ -587,6 +655,12 @@ export function createSession(
     tasks: [],
     changedFiles: [],
     audit: [],
+    contextEpochs: [{
+      id: randomUUID(),
+      index: 1,
+      startedAt: now,
+      usage: {inputTokens: 0, outputTokens: 0},
+    }],
     usage: {inputTokens: 0, outputTokens: 0},
   };
 }

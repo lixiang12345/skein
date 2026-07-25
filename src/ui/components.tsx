@@ -1,7 +1,7 @@
 import React from 'react';
 import {Box, Text} from 'ink';
 import {basename} from 'node:path';
-import type {AgentPhase, ContextBudgetTier, ContextDegradation, ContextSource, MosaicConfig, PromptTokenBreakdown, SessionTask, ToolCall, ToolCategory, WorkingMemory} from '../types.js';
+import type {AgentPhase, ContextBudgetTier, ContextDegradation, ContextSource, MosaicConfig, PendingInput, PromptTokenBreakdown, SessionTask, ToolCall, ToolCategory, WorkingMemory} from '../types.js';
 import {PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
 import {commandForCall} from '../tools/permissions.js';
 import {commandSuggestions, type CommandSuggestion} from './commands.js';
@@ -27,6 +27,7 @@ export type TimelineItem =
   | {id: string; kind: 'agent-message'; from: string; to: string; text: string}
   | {id: string; kind: 'workflow'; name: string; step: string; status: SessionTask['status']}
   | {id: string; kind: 'compaction'; messages: number; tokens: number}
+  | {id: string; kind: 'clarification'; pending: PendingInput}
   | {id: string; kind: 'list'; title: string; entries: ListEntry[]}
   | {id: string; kind: 'context-inspector'; status: ContextInspectorStatus; working?: WorkingMemory; summary?: string; sources?: ContextSource[]}
   | {id: string; kind: 'theme'; name: string}
@@ -55,6 +56,12 @@ export interface ContextInspectorStatus {
   summaryTokens: number;
   toolTokens: number;
   compactedMessages: number;
+  epochIndex?: number;
+  epochCount?: number;
+  epochTokens?: number;
+  epochBudget?: number;
+  lifetimeTokens?: number;
+  lifetimeBudget?: number;
 }
 
 export interface WorkspacePanelStatus {
@@ -434,6 +441,39 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
               label="context compacted"
               detail={`${item.messages} messages ${glyphs.arrow} ${formatTokens(item.tokens)} tokens`}
             />
+          );
+        }
+        if (item.kind === 'clarification') {
+          const rowWidth = safeWidth(width);
+          const chinese = /[\u3400-\u9fff]/u.test(item.pending.question);
+          return (
+            <Box key={item.id} flexDirection="column" paddingLeft={2} marginBottom={1}>
+              <Text bold color={theme.warning}>{sanitizeTerminalText(item.pending.question)}</Text>
+              {item.pending.options.map((option, optionIndex) => {
+                const label = `${optionIndex + 1}. ${sanitizeInlineTerminalText(option.label)}${option.recommended ? (chinese ? '（推荐）' : ' (recommended)') : ''}`;
+                const impact = sanitizeInlineTerminalText(option.impact);
+                if (rowWidth < 48) {
+                  return (
+                    <Box key={option.id} flexDirection="column">
+                      <Text color={option.recommended ? theme.textStrong : theme.muted}>
+                        {truncateDisplay(label, Math.max(1, rowWidth - 2))}
+                      </Text>
+                      <Text color={theme.dim}>
+                        {truncateDisplay(`${glyphs.branchLast} ${impact}`, Math.max(1, (rowWidth - 2) * 2))}
+                      </Text>
+                    </Box>
+                  );
+                }
+                return (
+                  <Text key={option.id} color={option.recommended ? theme.textStrong : theme.muted}>
+                    {truncateDisplay(`${label} ${glyphs.separator} ${impact}`, Math.max(1, rowWidth - 2))}
+                  </Text>
+                );
+              })}
+              <Text color={theme.dim}>{chinese
+                ? '回复编号、选项名称，或简短说明你的决定。'
+                : 'Reply with a number, option label, or a short custom decision.'}</Text>
+            </Box>
           );
         }
         if (item.kind === 'list') return <ListPanel key={item.id} title={item.title} entries={item.entries} width={width} glyphMode={glyphMode} />;
@@ -1271,6 +1311,14 @@ export function ContextInspector({status, working, summary, width, memory, conne
     {label: 'summary', detail: hasCompactedContext ? `~${formatTokens(status.summaryTokens)} tokens ${glyphs.separator} ${status.compactedMessages} compacted${summary ? '' : ` ${glyphs.separator} facts`}` : 'not created'},
     {label: 'long-term', detail: memory ?? `retrieved by relevance ${glyphs.separator} untrusted context`},
   ];
+  if (status.epochIndex !== undefined && status.epochCount !== undefined &&
+    status.epochTokens !== undefined && status.epochBudget !== undefined &&
+    status.lifetimeTokens !== undefined && status.lifetimeBudget !== undefined) {
+    entries.splice(1, 0, {
+      label: 'epoch',
+      detail: `#${status.epochIndex} ${formatTokens(status.epochTokens)}/${formatTokens(status.epochBudget)} ${glyphs.separator} lifetime ${formatTokens(status.lifetimeTokens)}/${formatTokens(status.lifetimeBudget)}`,
+    });
+  }
   if (!compact && working?.constraints.length) entries.push({label: `constraints ${working.constraints.length}`, detail: working.constraints.slice(0, 2).join(` ${glyphs.separator} `)});
   if (!compact && working?.decisions.length) entries.push({label: `decisions ${working.decisions.length}`, detail: working.decisions.slice(0, 2).join(` ${glyphs.separator} `)});
   if (!compact && working?.openQuestions.length) entries.push({label: `open ${working.openQuestions.length}`, detail: working.openQuestions.slice(0, 2).join(` ${glyphs.separator} `), tone: 'warning'});
@@ -1312,7 +1360,7 @@ export function ContextInspector({status, working, summary, width, memory, conne
         <Text bold color={pressureColor}>{formatPercent(status.pressure)}</Text>
         {showMeter ? <><Text> </Text><MeterBar segments={segments} total={meterTotal} width={meterWidth} glyphs={glyphs} /></> : null}
       </Box>
-      <ListPanel title="" hideTitle entries={entries} width={width} glyphMode={glyphMode} />
+      <ListPanel title="" hideTitle entries={entries} width={Math.max(1, rowWidth - 2)} glyphMode={glyphMode} />
     </Box>
   );
 }

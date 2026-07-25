@@ -34,6 +34,37 @@ describe('sessions and checkpoints', () => {
     expect((await store.list())[0]?.title).toBe('Fix queue');
   });
 
+  it('round-trips context epochs and pending clarification without hidden reasoning', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-session-epoch-intent-'));
+    roots.push(root);
+    const store = new SessionStore(root);
+    const session = createSession({workspace: root, model: 'test', provider: 'compatible'});
+    session.contextEpochs![0]!.usage = {inputTokens: 250_000, outputTokens: 1};
+    session.intentAssessment = {
+      version: 1, route: 'needs_input', reasons: ['public_api_compatibility_missing'],
+      assessedAt: '2026-07-25T00:00:00.000Z', retrievalHits: 3,
+    };
+    session.pendingInput = {
+      id: '00000000-0000-4000-8000-000000000010',
+      runId: '00000000-0000-4000-8000-000000000011',
+      createdAt: '2026-07-25T00:00:00.000Z',
+      originalRequest: 'Change the public API.',
+      question: 'Which compatibility policy?',
+      options: [
+        {id: 'compatible', label: 'Compatible', impact: 'Keep callers working.', recommended: true},
+        {id: 'breaking', label: 'Breaking', impact: 'Require caller migration.', recommended: false},
+      ],
+      reason: 'public_api_compatibility_missing',
+    };
+
+    await store.save(session);
+    const loaded = await store.load(session.id);
+
+    expect(loaded.contextEpochs).toEqual(session.contextEpochs);
+    expect(loaded.pendingInput).toEqual(session.pendingInput);
+    expect(JSON.stringify(loaded.intentAssessment)).not.toMatch(/reasoning|chain.of.thought/iu);
+  });
+
   it('round-trips normalized provider usage in session totals and token receipts', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-session-provider-usage-'));
     roots.push(root);
