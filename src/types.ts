@@ -236,6 +236,8 @@ export interface ToolDefinition {
   description: string;
   category: ToolCategory;
   inputSchema: Record<string, unknown>;
+  /** Extension tools may be disclosed progressively when the catalog is large. */
+  progressive?: boolean;
 }
 
 export interface ContextHit {

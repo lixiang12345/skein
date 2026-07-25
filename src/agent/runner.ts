@@ -171,6 +171,7 @@ export class AgentRunner {
     };
     const changeSequenceAtStart = this.changeSequence;
     const runStartedAt = new Date().toISOString();
+    const loadedProgressiveTools = new Set<string>();
     const runChangedFiles = new Set<string>();
     const verificationEvidence: CapturedVerification[] = [];
     const toolRecovery = new ToolRecoveryController();
@@ -349,6 +350,8 @@ export class AgentRunner {
             this.session.audit ?? [],
             this.session.duplicationSuppressions ?? [],
           ).size > 0,
+          request,
+          loadedProgressiveTools,
         );
         const estimatedInputTokens = estimateMessages(messages) + estimateToolDefinitions(visibleTools);
         if (availableTokens <= 0 || estimatedInputTokens >= availableTokens) {
@@ -413,7 +416,11 @@ export class AgentRunner {
           },
           inputSource: actualInputTokens === undefined ? 'estimated' : 'actual',
           outputSource: actualOutputTokens === undefined ? 'estimated' : 'actual',
-          tools: {loaded: visibleTools.map((tool) => tool.name), deferredCount: 0},
+          tools: {
+            loaded: visibleTools.map((tool) => tool.name),
+            deferredCount: Math.max(0, this.tools.definitions().filter((tool) => tool.progressive).length -
+              visibleTools.filter((tool) => tool.progressive).length),
+          },
           retrieval: tokenRetrievalReceipt(packed),
         });
         await emit({
@@ -1338,13 +1345,37 @@ function visibleToolDefinitions(
   contractEnabled: boolean,
   artifactReadAvailable: boolean,
   duplicationAvailable: boolean,
+  request: string,
+  loadedProgressiveTools: Set<string>,
 ): ReturnType<ToolRegistry['definitions']> {
-  return tools.definitions().filter((tool) =>
+  const eligible = tools.definitions().filter((tool) =>
     (!askMode || tool.category === 'read') &&
     (contractEnabled || tool.name !== 'task_contract') &&
     (artifactReadAvailable || tool.name !== 'read_tool_artifact') &&
     (duplicationAvailable || tool.name !== 'duplication_audit'),
   );
+  const progressive = eligible.filter((tool) => tool.progressive);
+  if (progressive.length <= 8) return eligible;
+  for (const tool of selectProgressiveTools(progressive, request, 8)) {
+    loadedProgressiveTools.add(tool.name);
+  }
+  return eligible.filter((tool) => !tool.progressive || loadedProgressiveTools.has(tool.name));
+}
+
+function selectProgressiveTools(
+  tools: ReturnType<ToolRegistry['definitions']>,
+  request: string,
+  limit: number,
+): ReturnType<ToolRegistry['definitions']> {
+  const terms = new Set(request.toLocaleLowerCase().match(/[\p{L}\p{N}_-]{2,}/gu) ?? []);
+  return tools.map((tool) => {
+    const searchable = `${tool.name.replaceAll('_', ' ')} ${tool.description}`.toLocaleLowerCase();
+    let score = 0;
+    for (const term of terms) if (searchable.includes(term)) score += term.length;
+    return {tool, score};
+  }).sort((left, right) => right.score - left.score || left.tool.name.localeCompare(right.tool.name))
+    .slice(0, limit)
+    .map(({tool}) => tool);
 }
 
 function formatToolError(error: unknown): string {

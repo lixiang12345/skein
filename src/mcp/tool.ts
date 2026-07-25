@@ -39,6 +39,7 @@ export function createMcpToolAdapter(options: McpToolAdapterOptions): AgentTool 
       // hints from that server and must not lower the local permission level.
       category: 'network',
       inputSchema,
+      progressive: true,
     },
     permissionCategories: () => ['network'],
     async execute(arguments_, context): Promise<ToolExecution> {

@@ -1,0 +1,59 @@
+[
+  {
+    "id": "focused-path",
+    "query": "Explain src/parser.ts",
+    "intent": "explain",
+    "requiredEvidenceTokens": 1200,
+    "toolOutputTokens": 400,
+    "expectedTier": "focused"
+  },
+  {
+    "id": "ordinary-debug",
+    "query": "Fix the parser regression",
+    "intent": "debug",
+    "requiredEvidenceTokens": 3200,
+    "toolOutputTokens": 1200,
+    "expectedTier": "standard"
+  },
+  {
+    "id": "cross-module-root-cause",
+    "query": "Audit all usages across modules and fix the shared root cause",
+    "intent": "review",
+    "requiredEvidenceTokens": 7000,
+    "toolOutputTokens": 2400,
+    "expectedTier": "broad"
+  },
+  {
+    "id": "repository-migration",
+    "query": "Perform a comprehensive repository-wide architecture migration, then update all modules and all call sites",
+    "intent": "refactor",
+    "requiredEvidenceTokens": 11000,
+    "toolOutputTokens": 5000,
+    "expectedTier": "maximum"
+  },
+  {
+    "id": "large-failure-log",
+    "query": "Fix the failing integration test in test/integration/session.test.ts",
+    "intent": "debug",
+    "requiredEvidenceTokens": 1800,
+    "toolOutputTokens": 20000,
+    "expectedTier": "standard"
+  },
+  {
+    "id": "cjk-review",
+    "query": "审查 src/session/store.ts 的会话恢复逻辑",
+    "intent": "review",
+    "requiredEvidenceTokens": 1800,
+    "toolOutputTokens": 1200,
+    "expectedTier": "focused"
+  },
+  {
+    "id": "no-hit-stop",
+    "query": "Find the missing remote-only helper",
+    "intent": "debug",
+    "requiredEvidenceTokens": 0,
+    "toolOutputTokens": 300,
+    "expectedTier": "standard",
+    "repeatedEmptySearches": 3
+  }
+]

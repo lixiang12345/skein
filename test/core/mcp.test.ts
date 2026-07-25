@@ -49,6 +49,7 @@ describe('MCP validation and tool adapters', () => {
     });
 
     expect(tool.definition.category).toBe('network');
+    expect(tool.definition.progressive).toBe(true);
     expect(tool.permissionCategories?.({query: 'mcp'})).toEqual(['network']);
     const execution = await tool.execute({query: 'mcp'}, {
       signal,

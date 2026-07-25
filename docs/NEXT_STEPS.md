@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.16`.
+- Current repository version: `0.3.18`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -41,8 +41,8 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.16.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.16.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.18.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.18.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
@@ -53,6 +53,24 @@ short-height case. The current full-suite count is recorded from the latest
 `npm run check` in the release evidence.
 
 ## Recommended Order
+
+### P0-E: Token Economy measurement and bounded schema disclosure
+
+Version `0.3.18` adds the repository-owned `token-economy-benchmark-v1`
+deterministic replay. Its seven retrieval, large-output, CJK, and repeated
+zero-hit fixtures compare the legacy ceilings with the adaptive budget and
+firewall policies while requiring complete evidence and recovery coverage.
+The replay reports a 36.7% estimated-input reduction; this is a deterministic
+budget measurement, not a provider billing or task-success claim.
+
+MCP tool definitions are now marked for progressive disclosure. Catalogs of
+eight or fewer eligible tools remain fully visible; larger catalogs disclose a
+deterministically ranked maximum of eight schemas. Selected schemas retain
+their registry order and remain loaded for the current run, and Token Ledger
+receipts record the deferred count. MCP tools remain `network` operations and
+hidden tool calls remain rejected by the existing boundary. This release does
+not defer MCP connection or remote `listTools` discovery and does not claim the
+provider-cache or Context Compaction 2.0 follow-up work is complete.
 
 ### P0-D: Repository reuse and calibrated duplication enforcement
 
