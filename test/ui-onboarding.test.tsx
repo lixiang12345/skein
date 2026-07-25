@@ -20,6 +20,18 @@ function missingConfig() {
   return config;
 }
 
+function configuredDraft(overrides: Partial<OnboardingState['draft']> = {}): OnboardingState['draft'] {
+  return {
+    relayProtocol: 'openai-responses',
+    baseUrl: 'https://relay.example/v1',
+    modelsBaseUrl: '',
+    model: 'relay-coder',
+    auth: 'none',
+    apiKeyEnv: '',
+    ...overrides,
+  };
+}
+
 describe('first-run onboarding state machine', () => {
   it('runs only when the resolved interactive model configuration is incomplete', () => {
     const official = missingConfig();
@@ -32,61 +44,125 @@ describe('first-run onboarding state machine', () => {
     })).toBe(false);
   });
 
-  it('builds an explicit Anthropic-compatible relay without protocol guessing', () => {
+  it('builds an explicit Anthropic relay with a separate model catalog and no secret value', () => {
     let state = createOnboardingState(missingConfig());
-    state = onboardingReducer(state, {type: 'MOVE', delta: 1, count: 2});
-    state = onboardingReducer(state, {type: 'SELECT'}); // relay
-    state = onboardingReducer(state, {type: 'MOVE', delta: 1, count: 2});
-    state = onboardingReducer(state, {type: 'SELECT'}); // Anthropic-compatible
-    state = onboardingReducer(state, {type: 'SUBMIT_INPUT', field: 'baseUrl', value: 'https://relay.example/v1/'});
+    state = onboardingReducer(state, {type: 'MOVE', delta: 1, count: 3});
+    state = onboardingReducer(state, {type: 'MOVE', delta: 1, count: 3});
+    state = onboardingReducer(state, {type: 'SELECT'}); // Anthropic Messages
+    state = onboardingReducer(state, {type: 'SUBMIT_INPUT', field: 'baseUrl', value: 'https://relay.example/anthropic/'});
+    state = onboardingReducer(state, {type: 'SUBMIT_INPUT', field: 'modelsBaseUrl', value: 'https://relay.example/v1/'});
     state = onboardingReducer(state, {type: 'SUBMIT_INPUT', field: 'model', value: 'claude-relay-model'});
-    state = onboardingReducer(state, {type: 'SUBMIT_INPUT', field: 'apiKey', value: 'relay-secret'});
+    state = onboardingReducer(state, {type: 'MOVE', delta: 1, count: 2});
+    state = onboardingReducer(state, {type: 'SELECT'}); // no auth
 
     expect(state.step).toBe('confirm');
     expect(buildOnboardingConfig(state)).toEqual({
-      model: {
-        provider: 'anthropic',
-        model: 'claude-relay-model',
-        baseUrl: 'https://relay.example/v1',
-        apiKey: 'relay-secret',
+      agents: {
+        defaultConnection: 'primary-relay',
+        defaultModel: 'claude-relay-model',
+        connections: {
+          'primary-relay': {
+            provider: 'compatible',
+            protocol: 'anthropic-messages',
+            baseUrl: 'https://relay.example/anthropic',
+            modelsBaseUrl: 'https://relay.example/v1',
+            defaultModel: 'claude-relay-model',
+            auth: {type: 'none'},
+          },
+        },
       },
     });
   });
 
-  it('allows a keyless loopback OpenAI-compatible server but requires keys remotely', () => {
-    const base: OnboardingState = {
-      step: 'api-key',
-      history: ['method', 'relay-protocol', 'endpoint', 'model'],
-      selected: 0,
-      draft: {
-        method: 'relay',
-        provider: 'compatible',
-        relayProtocol: 'openai-compatible',
-        baseUrl: 'http://127.0.0.1:11434/v1',
-        model: 'qwen-coder',
-        apiKey: '',
-      },
-      error: undefined,
-    };
-    const local = onboardingReducer(base, {type: 'SUBMIT_INPUT', field: 'apiKey', value: ''});
-    expect(local.step).toBe('confirm');
-    expect(buildOnboardingConfig(local)).toEqual({
-      model: {provider: 'compatible', model: 'qwen-coder', baseUrl: 'http://127.0.0.1:11434/v1'},
-    });
-
-    const remote = {...base, draft: {...base.draft, baseUrl: 'https://relay.example/v1'}};
-    const rejected = onboardingReducer(remote, {type: 'SUBMIT_INPUT', field: 'apiKey', value: ''});
-    expect(rejected.step).toBe('api-key');
-    expect(rejected.error).toContain('API key');
-  });
-
-  it('supports back navigation without exposing a dead-end CLI login choice', () => {
+  it('defaults to Responses and supports explicit keyless relay authentication', () => {
     let state = createOnboardingState(missingConfig());
+    state = onboardingReducer(state, {type: 'SELECT'});
+    state = onboardingReducer(state, {type: 'SUBMIT_INPUT', field: 'baseUrl', value: 'http://127.0.0.1:11434/v1'});
+    state = onboardingReducer(state, {type: 'SUBMIT_INPUT', field: 'modelsBaseUrl', value: ''});
+    state = onboardingReducer(state, {type: 'SUBMIT_INPUT', field: 'model', value: 'qwen-coder'});
     state = onboardingReducer(state, {type: 'MOVE', delta: 1, count: 2});
     state = onboardingReducer(state, {type: 'SELECT'});
-    expect(state.step).toBe('relay-protocol');
+
+    expect(state.step).toBe('confirm');
+    expect(buildOnboardingConfig(state)).toMatchObject({
+      agents: {
+        defaultConnection: 'primary-relay',
+        connections: {'primary-relay': {
+          provider: 'compatible', protocol: 'openai-responses', auth: {type: 'none'},
+        }},
+      },
+    });
+  });
+
+  it('requires an existing environment credential by name without reading it into state', () => {
+    const previous = process.env.RELAY_API_KEY;
+    process.env.RELAY_API_KEY = 'secret-never-copied';
+    try {
+      const state: OnboardingState = {
+        step: 'api-key-env',
+        history: ['relay-protocol', 'endpoint', 'models-endpoint', 'model', 'auth'],
+        selected: 0,
+        draft: configuredDraft({auth: 'env', apiKeyEnv: ''}),
+        error: undefined,
+      };
+      const submitted = onboardingReducer(state, {type: 'SUBMIT_INPUT', field: 'apiKeyEnv', value: 'RELAY_API_KEY'});
+      expect(submitted.step).toBe('confirm');
+      expect(submitted.draft.apiKeyEnv).toBe('RELAY_API_KEY');
+      expect(JSON.stringify(submitted)).not.toContain('secret-never-copied');
+    } finally {
+      if (previous === undefined) delete process.env.RELAY_API_KEY;
+      else process.env.RELAY_API_KEY = previous;
+    }
+  });
+
+  it('keeps required model-catalog and missing credential failures in place with actionable errors', () => {
+    const catalogState: OnboardingState = {
+      step: 'models-endpoint',
+      history: ['relay-protocol', 'endpoint'],
+      selected: 0,
+      draft: configuredDraft({relayProtocol: 'anthropic-messages', modelsBaseUrl: ''}),
+      error: undefined,
+    };
+    const missingCatalog = onboardingReducer(catalogState, {
+      type: 'SUBMIT_INPUT', field: 'modelsBaseUrl', value: '',
+    });
+    expect(missingCatalog.step).toBe('models-endpoint');
+    expect(missingCatalog.error).toContain('requires an OpenAI-style models base URL');
+
+    delete process.env.MISSING_RELAY_KEY;
+    const credentialState: OnboardingState = {
+      step: 'api-key-env',
+      history: ['relay-protocol', 'endpoint', 'models-endpoint', 'model', 'auth'],
+      selected: 0,
+      draft: configuredDraft({auth: 'env', apiKeyEnv: ''}),
+      error: undefined,
+    };
+    const missingCredential = onboardingReducer(credentialState, {
+      type: 'SUBMIT_INPUT', field: 'apiKeyEnv', value: 'MISSING_RELAY_KEY',
+    });
+    expect(missingCredential.step).toBe('api-key-env');
+    expect(missingCredential.error).toContain('Export it, then restart Skein');
+  });
+
+  it('returns save failures to review without losing the configured draft', () => {
+    const state: OnboardingState = {
+      step: 'saving',
+      history: ['relay-protocol', 'endpoint', 'models-endpoint', 'model', 'auth', 'confirm'],
+      selected: 0,
+      draft: configuredDraft(),
+      error: undefined,
+    };
+    const failed = onboardingReducer(state, {type: 'SAVE_ERROR'});
+    expect(failed).toMatchObject({step: 'confirm', draft: state.draft});
+    expect(failed.error).toContain('Could not save');
+  });
+
+  it('supports back navigation within the relay-only flow', () => {
+    let state = createOnboardingState(missingConfig());
+    state = onboardingReducer(state, {type: 'SELECT'});
+    expect(state.step).toBe('endpoint');
     state = onboardingReducer(state, {type: 'BACK'});
-    expect(state.step).toBe('method');
+    expect(state.step).toBe('relay-protocol');
   });
 });
 
@@ -105,6 +181,7 @@ describe('relay URL validation', () => {
     'https://user:pass@relay.example/v1',
     'https://relay.example/v1?key=secret',
     'https://relay.example/v1#fragment',
+    'https://relay.example/v1/responses',
     'https://relay.example/v1/chat/completions',
     'https://relay.example/v1/messages',
   ])('rejects unsafe or final endpoint URL %s', (value) => {
@@ -113,38 +190,39 @@ describe('relay URL validation', () => {
 });
 
 describe('onboarding presentation', () => {
-  it('distinguishes primary-agent API credentials from signed-in coding CLI subscriptions', () => {
+  it('offers only explicit third-party relay transports and recommends Responses', () => {
     const output = renderToString(
       <OnboardingScreen state={createOnboardingState(missingConfig())} dispatch={() => undefined} width={80} />,
       {columns: 80},
     );
-    expect(output).toContain('subscription logins are not API keys');
-    expect(output).toContain('signed-in coding CLIs are separate');
-    expect(output).toContain('delegated tools');
+    expect(output).toContain('third-party relays only');
+    expect(output).toContain('OpenAI Responses');
+    expect(output).toContain('Recommended');
+    expect(output).toContain('Anthropic Messages');
+    expect(output).not.toContain('Provider API key');
+    expect(output).not.toContain('Official');
   });
 
-  it('masks credentials and stays within a narrow terminal', () => {
-    const state: OnboardingState = {
-      step: 'api-key',
-      history: ['method', 'official-provider', 'model'],
-      selected: 0,
-      draft: {
-        method: 'official',
-        provider: 'openai',
-        relayProtocol: undefined,
-        baseUrl: '',
-        model: 'gpt-5',
-        apiKey: 'super-secret-value',
-      },
-      error: undefined,
-    };
-    const output = renderToString(
-      <OnboardingScreen state={state} dispatch={() => undefined} width={36} />,
-      {columns: 36},
-    );
-    expect(output).not.toContain('super-secret-value');
-    expect(output).toMatch(/[•*]{4}/u);
-    for (const line of output.split('\n')) expect(displayWidth(line)).toBeLessThanOrEqual(36);
+  it('shows only the credential variable name and stays within a narrow terminal', () => {
+    process.env.RELAY_API_KEY = 'super-secret-value';
+    try {
+      const state: OnboardingState = {
+        step: 'api-key-env',
+        history: ['relay-protocol', 'endpoint', 'models-endpoint', 'model', 'auth'],
+        selected: 0,
+        draft: configuredDraft({auth: 'env', apiKeyEnv: 'RELAY_API_KEY'}),
+        error: undefined,
+      };
+      const output = renderToString(
+        <OnboardingScreen state={state} dispatch={() => undefined} width={36} />,
+        {columns: 36},
+      );
+      expect(output).toContain('RELAY_API_KEY');
+      expect(output).not.toContain('super-secret-value');
+      for (const line of output.split('\n')) expect(displayWidth(line)).toBeLessThanOrEqual(36);
+    } finally {
+      delete process.env.RELAY_API_KEY;
+    }
   });
 
   it('collapses nonessential copy for short terminal heights', () => {
@@ -154,13 +232,12 @@ describe('onboarding presentation', () => {
       {columns: 40},
     );
     expect(output.split('\n').length).toBeLessThanOrEqual(14);
-    expect(output).toContain('SETUP 1/4');
-    expect(output).toContain('Provider API key');
-    expect(output).toContain('Compatible endpoint');
-    expect(output).not.toContain('signed in to a CLI');
+    expect(output).toContain('SETUP 1/5');
+    expect(output).toContain('OpenAI Responses');
+    expect(output).toContain('Anthropic Messages');
   });
 
-  it.each([20, 32, 40, 80])('keeps the connection menu inside %i columns', (width) => {
+  it.each([20, 32, 40, 80])('keeps the transport menu inside %i columns', (width) => {
     const state = createOnboardingState(missingConfig());
     const output = renderToString(
       <OnboardingScreen state={state} dispatch={() => undefined} width={width} />,
@@ -168,48 +245,39 @@ describe('onboarding presentation', () => {
     );
 
     expect(output).toContain('SKEIN');
-    expect(output).toContain('CONNECTION');
+    expect(output).toContain('TRANSPORT');
     for (const line of output.split('\n')) {
       expect(displayWidth(line), `${width}-column onboarding row overflowed: ${JSON.stringify(line)}`)
         .toBeLessThanOrEqual(width);
     }
   });
 
-  it.each([20, 32, 40, 80])('keeps credentials and review inside %i columns', (width) => {
-    const apiKey: OnboardingState = {
-      step: 'api-key',
-      history: ['method', 'official-provider', 'model'],
+  it.each([20, 32, 40, 80])('keeps credential references and review inside %i columns', (width) => {
+    const credential: OnboardingState = {
+      step: 'api-key-env',
+      history: ['relay-protocol', 'endpoint', 'models-endpoint', 'model', 'auth'],
       selected: 0,
-      draft: {
-        method: 'official',
-        provider: 'openai',
-        relayProtocol: undefined,
-        baseUrl: '',
-        model: 'gpt-5',
-        apiKey: 'a-secret-longer-than-the-narrow-input',
-      },
+      draft: configuredDraft({auth: 'env', apiKeyEnv: 'A_LONG_RELAY_API_KEY_VARIABLE'}),
       error: undefined,
     };
-    const confirm = {...apiKey, step: 'confirm' as const};
+    const confirm = {...credential, step: 'confirm' as const};
 
-    for (const state of [apiKey, confirm]) {
+    for (const state of [credential, confirm]) {
       const output = renderToString(
         <OnboardingScreen state={state} dispatch={() => undefined} width={width} />,
         {columns: width},
       );
-      expect(output).not.toContain(apiKey.draft.apiKey);
       for (const line of output.split('\n')) {
         expect(displayWidth(line), `${width}-column onboarding row overflowed: ${JSON.stringify(line)}`)
           .toBeLessThanOrEqual(width);
       }
     }
 
-    const keyOutput = renderToString(
-      <OnboardingScreen state={apiKey} dispatch={() => undefined} width={width} />,
+    const credentialOutput = renderToString(
+      <OnboardingScreen state={credential} dispatch={() => undefined} width={width} />,
       {columns: width},
     );
-    expect(keyOutput.match(/[•*]+/u)?.[0]).toBeTruthy();
-    expect(keyOutput).toContain('Enter');
-    expect(keyOutput.split('\n').filter((line) => /[╭╰]/u.test(line))).toHaveLength(2);
+    expect(credentialOutput).toContain('Enter');
+    expect(credentialOutput.split('\n').filter((line) => /[╭╰]/u.test(line))).toHaveLength(2);
   });
 });

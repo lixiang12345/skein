@@ -1,5 +1,13 @@
 export type ProviderName = 'openai' | 'anthropic' | 'gemini' | 'compatible';
 
+export type ConnectionProtocol = 'openai-responses' | 'openai-chat' | 'anthropic-messages' | 'gemini';
+
+export type ConnectionAuth =
+  | {type: 'env'; name: string}
+  | {type: 'none'};
+
+export type ConnectionSource = 'cli' | 'user' | 'environment' | 'legacy';
+
 export type PermissionLevel = 'allow' | 'ask' | 'deny';
 
 /** Interactive grant scope. Session grants live only on the active runner. */
@@ -37,6 +45,8 @@ export interface CapabilityManifest {
 export interface ModelConfig {
   provider: ProviderName;
   model: string;
+  /** Runtime transport selected by a named relay connection. */
+  protocol?: ConnectionProtocol;
   apiKey?: string;
   baseUrl?: string;
   temperature?: number;
@@ -109,8 +119,34 @@ export interface AgentTeamConfig {
 
 export interface AgentConnectionConfig {
   provider: ProviderName;
+  label?: string;
+  protocol?: ConnectionProtocol;
   baseUrl?: string;
+  modelsBaseUrl?: string;
+  defaultModel?: string;
+  auth?: ConnectionAuth;
+  /** Legacy environment reference retained for existing user configuration. */
   apiKeyEnv?: string;
+}
+
+export interface ConnectionRuntimeInfo {
+  id: string;
+  label?: string;
+  provider: ProviderName;
+  protocol: ConnectionProtocol;
+  source: ConnectionSource;
+  endpoint: string;
+  modelsEndpoint: string;
+  defaultModel?: string;
+  authType: ConnectionAuth['type'];
+  authStatus: 'configured' | 'missing' | 'none';
+  complete: boolean;
+  issues: string[];
+}
+
+export interface ConnectionCatalogRuntime {
+  defaultConnection?: string;
+  profiles: ConnectionRuntimeInfo[];
 }
 
 export interface AgentModelRoute {
@@ -201,6 +237,9 @@ export interface MosaicConfig {
   memory?: MemoryConfig;
   agents?: AgentTeamConfig;
   mcp?: McpConfig;
+  /** Runtime-only redacted connection discovery and selection facts. */
+  connectionCatalog?: ConnectionCatalogRuntime;
+  activeConnection?: ConnectionRuntimeInfo;
 }
 
 export interface ToolCall {
@@ -225,6 +264,15 @@ export interface ChatMessage {
   toolCalls?: ToolCall[];
   toolCallId?: string;
   name?: string;
+  /** Provider-owned replay state required by stateless transports. */
+  providerMetadata?: ProviderMetadata;
+}
+
+export interface ProviderMetadata {
+  responses?: {
+    /** Exact response output items replayed before matching tool outputs. */
+    outputItems: Record<string, unknown>[];
+  };
 }
 
 export interface ModelResponse {
@@ -238,6 +286,7 @@ export interface ModelResponse {
     reasoningTokens?: number;
   };
   stopReason?: string;
+  providerMetadata?: ProviderMetadata;
 }
 
 export type TokenMeasurementSource = 'actual' | 'estimated' | 'mixed' | 'unknown';

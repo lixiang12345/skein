@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.29",
+  "version": "0.3.30",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,6 +16,13 @@
   },
   "skein": {
     "releaseNotes": [
+      "Named primary connections now target third-party compatible relays only, use explicit env or none authentication, and resolve one complete profile automatically while requiring an explicit choice for ambiguity",
+      "OpenAI Responses is the recommended new transport with POST /responses, store false, typed SSE, normalized tools and usage, and bounded exact output-item replay for stateless reasoning continuation",
+      "OpenAI Chat Completions and Anthropic Messages remain explicit relay transports without cross-protocol retries; inference and OpenAI-style model catalog base URLs are configured independently",
+      "Relay model discovery now uses a bounded 15-minute ETag cache isolated by endpoint and credential fingerprints, invalidates authentication failures, and never stores or echoes credential values",
+      "First-run and agents setup flows are relay-only, save only credential environment-variable names, and expose redacted connection state consistently across TUI, text, JSON, JSONL, doctor, and config output",
+      "Provider diagnostics redact secrets, authorization headers, URL credentials, and query strings while Responses replay state is capped at 128 items and 4 MiB in memory and persisted sessions",
+      "External delegated CLIs now receive a minimal runtime-owned environment instead of inheriting provider, Skein, relay, or NODE_OPTIONS secrets",
       "TERM=dumb and screen-reader sessions now use deterministic ASCII, monochrome, reduced-motion, non-incremental rendering without losing keyboard input",
       "SKEIN_SCREEN_READER=1 enables Ink accessibility output with semantic timeline, permission, and composer roles plus clean phase boundaries",
       "PTY release gates now replay eight terminal scenarios through a headless emulator and reject final-frame overflow, stale panels, announcement joins, and missing status",

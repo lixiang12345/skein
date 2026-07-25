@@ -20,6 +20,15 @@ import {AgentRunner} from './agent/index.js';
 import {AgentProfileCatalog, listConnectionModels, TeamRunStore} from './agent/index.js';
 import {resolveAgentModelRoute} from './agent/model-route.js';
 import {createAgentConnectionSetup, mergeAgentSetup} from './agent/model-setup.js';
+import {
+  connectionCredentialReference,
+  connectionRuntimeCatalog,
+  discoverConnectionCatalog,
+  legacyConnectionRuntimeInfo,
+  planConnectionSelection,
+  resolveConnectionModel,
+  type ConnectionProfile,
+} from './agent/connection-catalog.js';
 import {discoverWorkspaceRules} from './agent/rules.js';
 import {createProvider} from './providers/index.js';
 import {SessionStore, ToolArtifactStore, type SessionSummary} from './session/index.js';
@@ -110,6 +119,7 @@ program
   .option('-w, --workspace <path>', 'primary workspace root', process.cwd())
   .option('--add-workspace <path>', 'additional workspace root', collect, [])
   .option('--config <path>', 'explicit config file')
+  .option('--connection <name>', 'named model connection')
   .option('--provider <provider>', 'model provider')
   .option('--model <model>', 'model identifier')
   .option('--base-url <url>', 'OpenAI-compatible or provider base URL')
@@ -591,8 +601,11 @@ agentsCommand
   .description('Configure one shared model connection and team defaults')
   .option('-w, --workspace <path>', 'workspace used to resolve current defaults')
   .option('--name <name>', 'connection name')
-  .option('--provider <provider>', 'openai, anthropic, gemini, or compatible')
-  .option('--base-url <url>', 'provider or relay base URL')
+  .option('--provider <provider>', 'relay provider; only compatible is supported')
+  .option('--protocol <protocol>', 'openai-responses, openai-chat, or anthropic-messages')
+  .option('--base-url <url>', 'relay inference base URL')
+  .option('--models-base-url <url>', 'separate OpenAI-compatible base URL for GET /models')
+  .option('--auth <type>', 'connection authentication: env or none')
   .option('--api-key-env <name>', 'environment variable containing the credential')
   .option('--model <model>', 'default model identifier')
   .option('--yes', 'use supplied or existing defaults without prompting')
@@ -609,18 +622,23 @@ agentsCommand
   .action(async (options: ConfigOptions) => {
     const workspace = workspaceOption(options.workspace);
     const config = await runtimeConfig(workspace, runtimeOptions(options));
-    const connections = Object.entries(config.agents?.connections ?? {}).map(([name, connection]) => ({
-      name,
+    const catalog = discoverConnectionCatalog(config);
+    const connections = catalog.profiles.map((connection) => ({
+      name: connection.id,
       provider: connection.provider,
+      protocol: connection.protocol,
+      source: connection.source,
       endpoint: redactEndpoint(connection.baseUrl),
-      credentials: connection.apiKeyEnv ? `env:${connection.apiKeyEnv}` : 'provider default environment',
-      routes: Object.values(config.agents?.routes ?? {}).filter((route) => route.connection === name).length,
-      default: config.agents?.defaultConnection === name,
+      modelsEndpoint: redactEndpoint(connection.modelsBaseUrl ?? connection.baseUrl),
+      credentials: connectionCredentialReference(connection),
+      routes: Object.values(config.agents?.routes ?? {}).filter((route) => route.connection === connection.id).length,
+      default: catalog.defaultConnection === connection.id,
+      complete: connectionRuntimeCatalog({profiles: [connection]}).profiles[0]?.complete ?? false,
     }));
     if (options.json) printObject(connections, true);
     else if (!connections.length) process.stdout.write('No named model connections configured.\n');
     else for (const connection of connections) {
-      process.stdout.write(`${connection.name.padEnd(16)} ${connection.provider.padEnd(10)} ${connection.credentials.padEnd(28)} ${connection.routes} explicit${connection.default ? ' + team default' : ''}  ${connection.endpoint}\n`);
+      process.stdout.write(`${connection.name.padEnd(16)} ${connection.protocol.padEnd(20)} ${connection.credentials.padEnd(28)} ${connection.source.padEnd(11)} ${connection.complete ? 'ready' : 'incomplete'}${connection.default ? ' + default' : ''}  inference=${connection.endpoint} models=${connection.modelsEndpoint}\n`);
     }
   });
 agentsCommand
@@ -632,7 +650,7 @@ agentsCommand
   .action(async (connectionName: string, options: ConfigOptions) => {
     const workspace = workspaceOption(options.workspace);
     const config = await runtimeConfig(workspace, runtimeOptions(options));
-    const connection = config.agents?.connections?.[connectionName];
+    const connection = discoverConnectionCatalog(config).profiles.find(({id}) => id === connectionName);
     if (!connection) throw new Error(`Unknown model connection: ${connectionName}`);
     const models = await listConnectionModels(connection);
     if (options.json) printObject(models, true);
@@ -1087,6 +1105,7 @@ interface RootOptions {
   workspace: string;
   addWorkspace: string[];
   config?: string;
+  connection?: string;
   provider?: string;
   model?: string;
   baseUrl?: string;
@@ -1115,7 +1134,10 @@ interface AgentSetupOptions {
   workspace?: string;
   name?: string;
   provider?: string;
+  protocol?: string;
   baseUrl?: string;
+  modelsBaseUrl?: string;
+  auth?: string;
   apiKeyEnv?: string;
   model?: string;
   yes?: boolean;
@@ -1129,6 +1151,8 @@ interface SessionCommandOptions {workspace?: string; json?: boolean}
 interface RuntimeConfigOptions {
   config?: string;
   addWorkspace?: string[];
+  connection?: string;
+  connectionSelection?: 'inspect' | 'required' | 'interactive';
   provider?: string;
   model?: string;
   baseUrl?: string;
@@ -1148,7 +1172,8 @@ async function runChat(prompts: string[], options: RootOptions): Promise<void> {
   const firstPrompt = [...prompts, stdinPrompt].filter(Boolean).join('\n\n').trim();
   if (shouldPrint && !firstPrompt) throw new Error('Provide a prompt argument or pipe input on stdin.');
   const workspace = resolve(options.workspace);
-  let config = await runtimeConfig(workspace, options);
+  const connectionSelection = shouldPrint ? 'required' as const : 'interactive' as const;
+  let config = await runtimeConfig(workspace, {...options, connectionSelection});
   let completedOnboarding = false;
   if (!shouldPrint && needsFirstRunOnboarding(config)) {
     // An explicit config is caller-owned and may intentionally be incomplete;
@@ -1158,7 +1183,7 @@ async function runChat(prompts: string[], options: RootOptions): Promise<void> {
       const onboarding = await runFirstRunOnboarding(config);
       if (onboarding.status === 'cancelled') return;
       completedOnboarding = true;
-      config = await runtimeConfig(workspace, options);
+      config = await runtimeConfig(workspace, {...options, connectionSelection});
     }
   }
   // Validate before SessionStore, provider, extensions, or AgentRunner creation.
@@ -1216,6 +1241,7 @@ async function runChat(prompts: string[], options: RootOptions): Promise<void> {
     quiet: options.quiet ?? false,
     compact: options.compact ?? false,
     color: (options.color ?? config.ui.color) && !process.env.NO_COLOR,
+    ...(config.activeConnection ? {connection: config.activeConnection} : {}),
   });
   const colorOutput = (options.color ?? config.ui.color) && !process.env.NO_COLOR;
   const requestPermission = options.yes
@@ -1344,21 +1370,27 @@ async function runAgentSetup(options: AgentSetupOptions): Promise<void> {
   const currentConnection = current.agents?.connections?.[currentName];
   let name = options.name ?? currentName;
   let provider = validateProvider(options.provider ?? currentConnection?.provider ?? 'compatible');
+  let protocol = validateConnectionProtocol(options.protocol ?? currentConnection?.protocol ?? 'openai-responses');
   let baseUrl = options.baseUrl ?? currentConnection?.baseUrl ?? '';
-  let apiKeyEnv = options.apiKeyEnv ?? currentConnection?.apiKeyEnv ?? providerEnvironment(provider);
+  let modelsBaseUrl = options.modelsBaseUrl ?? currentConnection?.modelsBaseUrl ?? '';
+  let auth = validateConnectionAuth(options.auth ?? currentConnection?.auth?.type ?? 'env');
+  const currentApiKeyEnv = currentConnection?.apiKeyEnv ??
+    (currentConnection?.auth?.type === 'env' ? currentConnection.auth.name : undefined);
+  let apiKeyEnv = options.apiKeyEnv ?? (auth === 'env' ? currentApiKeyEnv ?? providerEnvironment(provider) : '');
   let model = options.model ?? current.agents?.defaultModel ?? current.model.model;
 
   if (!options.yes && process.stdin.isTTY && process.stdout.isTTY) {
     const readline = createInterface({input, output});
     try {
       name = await question(readline, 'Connection name', name);
-      const previousProvider = provider;
-      provider = validateProvider(await question(readline, 'Provider', provider));
-      if (!options.apiKeyEnv && !currentConnection?.apiKeyEnv && apiKeyEnv === providerEnvironment(previousProvider)) {
-        apiKeyEnv = providerEnvironment(provider);
-      }
-      baseUrl = await question(readline, 'Base URL', baseUrl);
-      apiKeyEnv = await question(readline, 'Credential environment variable', apiKeyEnv || providerEnvironment(provider));
+      provider = validateProvider(await question(readline, 'Relay provider', provider));
+      protocol = validateConnectionProtocol(await question(readline, 'Inference protocol', protocol));
+      baseUrl = await question(readline, 'Inference base URL', baseUrl);
+      modelsBaseUrl = await question(readline, 'Models base URL (optional unless Anthropic)', modelsBaseUrl);
+      auth = validateConnectionAuth(await question(readline, 'Authentication (env or none)', auth));
+      apiKeyEnv = auth === 'env'
+        ? await question(readline, 'Credential environment variable', apiKeyEnv || providerEnvironment(provider))
+        : '';
       model = await question(readline, 'Default model', model);
     } finally {
       readline.close();
@@ -1368,7 +1400,10 @@ async function runAgentSetup(options: AgentSetupOptions): Promise<void> {
   const setup = createAgentConnectionSetup({
     name,
     provider,
+    protocol,
     ...(baseUrl ? {baseUrl} : {}),
+    ...(modelsBaseUrl ? {modelsBaseUrl} : {}),
+    auth,
     ...(apiKeyEnv ? {apiKeyEnv} : {}),
     defaultModel: model,
   });
@@ -1378,7 +1413,10 @@ async function runAgentSetup(options: AgentSetupOptions): Promise<void> {
     path,
     connection: setup.defaultConnection,
     provider,
+    protocol,
     endpoint: redactEndpoint(baseUrl),
+    modelsEndpoint: redactEndpoint(modelsBaseUrl || baseUrl),
+    auth,
     apiKeyEnv: apiKeyEnv || null,
     credentialConfigured,
     defaultModel: setup.defaultModel,
@@ -1388,9 +1426,9 @@ async function runAgentSetup(options: AgentSetupOptions): Promise<void> {
     return;
   }
   process.stdout.write(`${chalk.green(cliGlyphs.success)} Saved shared connection ${setup.defaultConnection} to ${path}\n`);
-  process.stdout.write(`  Default: ${provider}/${setup.defaultModel} via ${redactEndpoint(baseUrl)}\n`);
-  process.stdout.write(`  Credential: ${apiKeyEnv ? `env:${apiKeyEnv} (${credentialConfigured ? 'configured' : 'not set'})` : 'provider default environment'}\n`);
-  process.stdout.write(`  Models: ${provider === 'compatible' || provider === 'openai' ? `${PRODUCT_COMMAND} agents models ${setup.defaultConnection}` : 'managed by the provider or official CLI'}\n`);
+  process.stdout.write(`  Default: ${protocol}/${setup.defaultModel} via ${redactEndpoint(baseUrl)}\n`);
+  process.stdout.write(`  Models: ${PRODUCT_COMMAND} agents models ${setup.defaultConnection} via ${redactEndpoint(modelsBaseUrl || baseUrl)}\n`);
+  process.stdout.write(`  Credential: ${auth === 'none' ? 'none' : `env:${apiKeyEnv} (${credentialConfigured ? 'configured' : 'not set'})`}\n`);
   process.stdout.write(`  Routes: ${PRODUCT_COMMAND} agents list\n`);
 }
 
@@ -1408,14 +1446,40 @@ async function runtimeConfig(
     ...(options.addWorkspace ?? []).map((root) => resolve(workspace, root)),
   ];
   const provider = options.provider ? validateProvider(options.provider) : loaded.model.provider;
+  const legacyModel = resolveRuntimeModel(loaded.model, {
+    provider,
+    ...(options.model ? {model: options.model} : {}),
+    ...(options.baseUrl ? {baseUrl: options.baseUrl} : {}),
+  });
+  const catalog = discoverConnectionCatalog(loaded);
+  let model = legacyModel;
+  let activeConnection = legacyConnectionRuntimeInfo(legacyModel);
+  if (options.provider || options.baseUrl) {
+    if (options.connection) throw new Error('--connection cannot be combined with --provider or --base-url.');
+    activeConnection = {...activeConnection, id: 'cli', source: 'cli'};
+  } else if (options.connectionSelection !== 'inspect' || options.connection) {
+    let selection = planConnectionSelection(catalog, process.env, options.connection);
+    if (selection.kind === 'ambiguous') {
+      if (options.connectionSelection === 'interactive') {
+        selection = {kind: 'selected', profile: await promptConnectionSelection(selection.profiles)};
+      } else if (options.connectionSelection === 'required') {
+        throw new Error(`Multiple complete model connections found: ${selection.profiles.map(({id}) => id).join(', ')}. Pass --connection <name>.`);
+      }
+    }
+    if (selection.kind === 'selected') {
+      const resolved = resolveConnectionModel(legacyModel, selection.profile, {
+        ...(options.model ? {model: options.model} : {}),
+      });
+      model = resolved.model;
+      activeConnection = resolved.activeConnection;
+    }
+  }
   return {
     ...loaded,
     workspaceRoots: [...new Set(roots)],
-    model: resolveRuntimeModel(loaded.model, {
-      provider,
-      ...(options.model ? {model: options.model} : {}),
-      ...(options.baseUrl ? {baseUrl: options.baseUrl} : {}),
-    }),
+    model,
+    connectionCatalog: connectionRuntimeCatalog(catalog),
+    activeConnection,
     context: loaded.context,
     agent: {
       ...loaded.agent,
@@ -1429,6 +1493,25 @@ async function runtimeConfig(
     },
     ui: {...loaded.ui, ...(options.color === false ? {color: false} : {})},
   };
+}
+
+async function promptConnectionSelection(profiles: ConnectionProfile[]): Promise<ConnectionProfile> {
+  process.stdout.write('Multiple model connections are ready:\n');
+  profiles.forEach((profile, index) => {
+    process.stdout.write(`  ${index + 1}. ${profile.id}  ${profile.provider}/${profile.defaultModel ?? defaultModelForProvider(profile.provider)}  ${redactEndpoint(profile.baseUrl)}\n`);
+  });
+  const readline = createInterface({input, output});
+  try {
+    const answer = (await question(readline, 'Select connection by number or name', '')).trim();
+    const numeric = Number(answer);
+    const selected = Number.isInteger(numeric) && numeric >= 1
+      ? profiles[numeric - 1]
+      : profiles.find(({id}) => id === answer);
+    if (!selected) throw new Error(`Unknown connection selection ${answer || '<empty>'}. Pass --connection <name> to choose explicitly.`);
+    return selected;
+  } finally {
+    readline.close();
+  }
 }
 
 async function loadSessionSelector(store: SessionStore, selector?: string): Promise<Session | undefined> {
@@ -1626,6 +1709,7 @@ function workspaceOption(value?: string): string {
 function runtimeOptions(options: RuntimeConfigOptions): RuntimeConfigOptions {
   const root = program.opts<RootOptions>();
   const config = options.config ?? root.config;
+  const connection = options.connection ?? root.connection;
   const provider = options.provider ?? root.provider;
   const model = options.model ?? root.model;
   const baseUrl = options.baseUrl ?? root.baseUrl;
@@ -1634,6 +1718,7 @@ function runtimeOptions(options: RuntimeConfigOptions): RuntimeConfigOptions {
   return {
     addWorkspace: [...(root.addWorkspace ?? []), ...(options.addWorkspace ?? [])],
     ...(config ? {config} : {}),
+    ...(connection ? {connection} : {}),
     ...(provider ? {provider} : {}),
     ...(model ? {model} : {}),
     ...(baseUrl ? {baseUrl} : {}),
@@ -1654,6 +1739,16 @@ function positiveInt(value: string | undefined, fallback: number): number {
 function validateProvider(value: string): ProviderName {
   if (value === 'openai' || value === 'anthropic' || value === 'gemini' || value === 'compatible') return value;
   throw new Error(`Unknown provider ${value}; use openai, anthropic, gemini, or compatible.`);
+}
+
+function validateConnectionProtocol(value: string): Exclude<import('./types.js').ConnectionProtocol, 'gemini'> {
+  if (value === 'openai-responses' || value === 'openai-chat' || value === 'anthropic-messages') return value;
+  throw new Error(`Unknown relay protocol ${value}; use openai-responses, openai-chat, or anthropic-messages.`);
+}
+
+function validateConnectionAuth(value: string): import('./types.js').ConnectionAuth['type'] {
+  if (value === 'env' || value === 'none') return value;
+  throw new Error(`Unknown connection authentication ${value}; use env or none.`);
 }
 
 function environmentName(provider: ProviderName): string {

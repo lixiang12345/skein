@@ -14,6 +14,7 @@ import {AgentProfileCatalog, type AgentProfile} from './profiles.js';
 import {runExternalAgent, type ExternalAgentRequest, type ExternalAgentResult} from './external-runtime.js';
 import {TeamRunStore, type TeamRunWriterRecord} from './team-store.js';
 import {resolveAgentModelRoute} from './model-route.js';
+import {isOfficialProviderEndpoint} from './connection-catalog.js';
 import {WriterLane, WriterLaneApplyError} from './writer-lane.js';
 
 export interface WriterAgentRequest {
@@ -1237,15 +1238,24 @@ function modelConfigFromRoute(
   if (!provider) throw new Error('Agent route requires a provider or a valid connection.');
   if (!route.model) throw new Error('Agent route requires a model or a team default model.');
   const baseUrl = route.baseUrl ?? connection?.baseUrl;
-  const apiKeyEnv = route.apiKeyEnv ?? connection?.apiKeyEnv;
+  const connectionAuth = connection?.auth;
+  const apiKeyEnv = route.apiKeyEnv ?? connection?.apiKeyEnv ?? (connectionAuth?.type === 'env' ? connectionAuth.name : undefined);
   const inheritedKey = provider === parent.provider && baseUrl === parent.baseUrl
     ? parent.apiKey
     : undefined;
-  const apiKey = apiKeyEnv
-    ? environment[apiKeyEnv]
-    : inheritedKey ?? defaultProviderApiKey(provider, environment);
+  if (!apiKeyEnv && connectionAuth?.type !== 'none' && !inheritedKey && provider !== 'compatible' &&
+      baseUrl && !isOfficialProviderEndpoint(provider, baseUrl)) {
+    throw new Error('Custom provider endpoints require explicit connection auth.');
+  }
+  const apiKey = connectionAuth?.type === 'none'
+    ? undefined
+    : apiKeyEnv
+      ? environment[apiKeyEnv]
+      : inheritedKey ?? defaultProviderApiKey(provider, environment);
+  if (apiKeyEnv && !apiKey) throw new Error(`Agent connection credential environment ${apiKeyEnv} is not set.`);
   return {
     provider,
+    ...(connection?.protocol ? {protocol: connection.protocol} : {}),
     model: route.model,
     ...(baseUrl ? {baseUrl} : {}),
     ...(apiKey ? {apiKey} : {}),

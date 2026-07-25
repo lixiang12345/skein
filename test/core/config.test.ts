@@ -160,7 +160,11 @@ describe('configuration defaults', () => {
     await writeFile(path, JSON.stringify({
       agents: {
         connections: {
-          relay: {provider: 'compatible', baseUrl: 'https://relay.example/v1', apiKeyEnv: 'RELAY_API_KEY'},
+          relay: {
+            provider: 'compatible', protocol: 'openai-responses', baseUrl: 'https://relay.example/v1',
+            modelsBaseUrl: 'https://relay.example/v1', defaultModel: 'openai/coder',
+            auth: {type: 'env', name: 'RELAY_API_KEY'},
+          },
         },
         routes: {
           backend: {connection: 'relay', model: 'openai/coder'},
@@ -172,13 +176,37 @@ describe('configuration defaults', () => {
     const config = await loadConfig(root, path);
     expect(config.agents?.connections?.relay).toEqual({
       provider: 'compatible',
+      protocol: 'openai-responses',
       baseUrl: 'https://relay.example/v1',
-      apiKeyEnv: 'RELAY_API_KEY',
+      modelsBaseUrl: 'https://relay.example/v1',
+      defaultModel: 'openai/coder',
+      auth: {type: 'env', name: 'RELAY_API_KEY'},
     });
     expect(config.agents?.routes?.backend).toMatchObject({connection: 'relay', model: 'openai/coder'});
     const summary = JSON.stringify(configSummary(config));
     expect(summary).toContain('env:RELAY_API_KEY');
     expect(summary).toContain('https://relay.example/v1');
+  });
+
+  it('rejects false official-login auth shapes and invalid relay transport combinations', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-relay-schema-'));
+    roots.push(root);
+    const path = join(root, 'config.json');
+
+    await writeFile(path, JSON.stringify({agents: {connections: {
+      relay: {provider: 'compatible', baseUrl: 'https://relay.example/v1', auth: {type: 'oauth', adapter: 'openai'}},
+    }}}));
+    await expect(loadConfig(root, path)).rejects.toThrow();
+
+    await writeFile(path, JSON.stringify({agents: {connections: {
+      relay: {provider: 'openai', protocol: 'openai-responses', baseUrl: 'https://relay.example/v1', auth: {type: 'none'}},
+    }}}));
+    await expect(loadConfig(root, path)).rejects.toThrow('must use provider compatible');
+
+    await writeFile(path, JSON.stringify({agents: {connections: {
+      relay: {provider: 'compatible', protocol: 'anthropic-messages', baseUrl: 'https://relay.example/anthropic', auth: {type: 'none'}},
+    }}}));
+    await expect(loadConfig(root, path)).rejects.toThrow('requires modelsBaseUrl');
   });
 
   it('loads and merges user-level JSON connection setup', async () => {

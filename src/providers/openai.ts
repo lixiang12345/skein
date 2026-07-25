@@ -103,7 +103,7 @@ export class OpenAIProvider implements ModelProvider {
       body: JSON.stringify(body),
       ...(signal ? {signal} : {}),
     });
-    if (!response.ok) return parseErrorResponse(response);
+    if (!response.ok) return parseErrorResponse(response, [apiKey]);
     const data = await response.json() as OpenAIResponse;
     return normalizeOpenAIResponse(data);
   }
@@ -160,7 +160,7 @@ export class OpenAIProvider implements ModelProvider {
         yield {type: 'result', response: fallback};
         return;
       }
-      return parseErrorResponse(response);
+      return parseErrorResponse(response, [apiKey]);
     }
     if (!response.headers.get('content-type')?.includes('text/event-stream')) {
       const data = await response.json() as OpenAIResponse;

@@ -76,6 +76,50 @@ describe('SkeinApp completion flows', () => {
     }
   });
 
+  it('shows redacted connection source, protocol, auth state, default, and active status', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-connections-ui-'));
+    const session = testSession(root);
+    const {runner} = mockRunner(root, session);
+    const config = defaultConfig(root);
+    config.model = {provider: 'compatible', model: 'coder', baseUrl: 'https://relay.example/v1', apiKey: 'runtime-secret'};
+    config.ui = {...config.ui, color: false, compact: true};
+    config.connectionCatalog = {
+      defaultConnection: 'work',
+      profiles: [
+        {
+          id: 'work', provider: 'compatible', protocol: 'openai-chat', source: 'environment',
+          endpoint: 'https://relay.example/v1?<redacted>', modelsEndpoint: 'https://relay.example/v1', defaultModel: 'coder',
+          authType: 'env', authStatus: 'configured', complete: true, issues: [],
+        },
+        {
+          id: 'backup', provider: 'openai', protocol: 'openai-chat', source: 'user',
+          endpoint: 'provider default', modelsEndpoint: 'provider default', authType: 'env', authStatus: 'missing', complete: false,
+          issues: ['credential environment BACKUP_KEY is not set'],
+        },
+      ],
+    };
+    config.activeConnection = config.connectionCatalog!.profiles[0]!;
+    const harness = await mountApp(runner, root, undefined, undefined, config);
+
+    try {
+      harness.stdin.write('/connections\r');
+      await vi.waitFor(() => expect(harness.output()).toContain('Model connections'));
+      const output = stripAnsi(harness.output());
+      expect(output).toContain('work compatible environme');
+      expect(output).toContain('openai-chat');
+      expect(output).toContain('env/configured');
+      expect(output).toContain('default');
+      expect(output).toContain('active');
+      expect(output).toContain('backup openai user');
+      expect(output).toContain('env/missing');
+      expect(output).not.toContain('runtime-secret');
+      expect(output).not.toContain('BACKUP_KEY');
+    } finally {
+      await harness.cleanup();
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
   it('switches between Ask and Build mode without restarting the TUI', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-mode-ui-'));
     const session = testSession(root);
@@ -692,6 +736,7 @@ async function mountApp(
   root: string,
   extensions?: ExtensionRuntime,
   workspaceReadiness?: import('../src/ui/workspace-preparation.js').WorkspaceReadiness,
+  providedConfig?: import('../src/types.js').MosaicConfig,
 ): Promise<{
   stdin: MockInput;
   instance: Instance;
@@ -703,7 +748,7 @@ async function mountApp(
   const stdout = mockOutput();
   const stderr = mockOutput();
   const base = defaultConfig(root);
-  const config = {
+  const config = providedConfig ?? {
     ...base,
     model: {provider: 'compatible' as const, model: 'test-model', baseUrl: 'http://localhost'},
     context: {...base.context},

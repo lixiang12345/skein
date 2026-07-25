@@ -18,9 +18,10 @@ export function resolveAgentModelRoute(
   if (!configured && !hasDefaults) return {source: 'parent'};
 
   const connection = configured?.connection ?? (configured?.provider ? undefined : team?.defaultConnection);
+  const connectionDefaultModel = connection ? team?.connections?.[connection]?.defaultModel : undefined;
   const route: AgentModelRoute = {
     ...configured,
-    model: configured?.model ?? team?.defaultModel ?? parent.model,
+    model: configured?.model ?? connectionDefaultModel ?? team?.defaultModel ?? parent.model,
     ...(connection ? {connection} : {}),
   };
   if (!route.connection && !route.provider) route.provider = parent.provider;

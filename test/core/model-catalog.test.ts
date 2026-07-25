@@ -1,8 +1,12 @@
 import {afterEach, describe, expect, it, vi} from 'vitest';
-import {listConnectionModels} from '../../src/agent/model-catalog.js';
+import {clearModelCatalogCache, listConnectionModels} from '../../src/agent/model-catalog.js';
 
 describe('model connection catalog', () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    clearModelCatalogCache();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
 
   it('lists and normalizes compatible endpoint models without persisting credentials', async () => {
     const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -16,13 +20,161 @@ describe('model connection catalog', () => {
     });
     vi.stubGlobal('fetch', fetch);
 
-    await expect(listConnectionModels({provider: 'compatible', baseUrl: 'https://relay.example/v1', apiKeyEnv: 'RELAY_KEY'}, {RELAY_KEY: 'relay-secret'})).resolves.toEqual([
+    await expect(listConnectionModels({
+      provider: 'compatible',
+      baseUrl: 'https://relay.example/v1',
+      auth: {type: 'env', name: 'RELAY_KEY'},
+    }, {RELAY_KEY: 'relay-secret'})).resolves.toEqual([
       {id: 'a-model', ownedBy: 'a'},
       {id: 'z-model', ownedBy: 'z', contextLength: 32_000},
     ]);
   });
 
+  it('omits authorization for an explicitly unauthenticated connection', async () => {
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.headers).toEqual({accept: 'application/json'});
+      return new Response(JSON.stringify({data: []}), {status: 200});
+    });
+    vi.stubGlobal('fetch', fetch);
+
+    await expect(listConnectionModels({
+      provider: 'compatible',
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      auth: {type: 'none'},
+    }, {OPENAI_API_KEY: 'unrelated-secret'})).resolves.toEqual([]);
+  });
+
+  it('does not inherit the official key for a custom OpenAI endpoint', async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+
+    await expect(listConnectionModels({
+      provider: 'openai',
+      baseUrl: 'https://relay.example/v1',
+    }, {OPENAI_API_KEY: 'official-secret'})).rejects.toThrow('require explicit connection auth');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not echo a remote error body that may contain credentials', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('token=remote-secret', {status: 401})));
+
+    const result = listConnectionModels({
+      provider: 'compatible',
+      baseUrl: 'https://relay.example/v1',
+      auth: {type: 'env', name: 'RELAY_KEY'},
+    }, {RELAY_KEY: 'local-secret'});
+    await expect(result).rejects.toThrow('Model discovery failed (401).');
+    await expect(result).rejects.not.toThrow(/remote-secret|local-secret/u);
+  });
+
   it('rejects unsupported native provider discovery instead of guessing an API shape', async () => {
     await expect(listConnectionModels({provider: 'anthropic'})).rejects.toThrow('currently supported');
+  });
+
+  it('caches model metadata for 15 minutes and revalidates expired ETags', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-26T00:00:00.000Z'));
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({data: [{id: 'cached-model'}]}), {
+        status: 200,
+        headers: {etag: '"catalog-v1"'},
+      }))
+      .mockImplementationOnce(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        expect(init?.headers).toMatchObject({'if-none-match': '"catalog-v1"'});
+        return new Response(null, {status: 304});
+      });
+    vi.stubGlobal('fetch', fetch);
+    const connection = {
+      provider: 'compatible' as const,
+      protocol: 'openai-responses' as const,
+      baseUrl: 'https://relay.example/v1',
+      auth: {type: 'env' as const, name: 'RELAY_KEY'},
+    };
+
+    await expect(listConnectionModels(connection, {RELAY_KEY: 'relay-secret'})).resolves.toEqual([{id: 'cached-model'}]);
+    await expect(listConnectionModels(connection, {RELAY_KEY: 'relay-secret'})).resolves.toEqual([{id: 'cached-model'}]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(new Date('2026-07-26T00:15:01.000Z'));
+    await expect(listConnectionModels(connection, {RELAY_KEY: 'relay-secret'})).resolves.toEqual([{id: 'cached-model'}]);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('isolates cache entries by endpoint and rotated credential without storing stale auth success', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-26T00:00:00.000Z'));
+    const fetch = vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify({
+      data: [{id: String(input).includes('other') ? 'other-model' : 'relay-model'}],
+    }), {status: 200}));
+    vi.stubGlobal('fetch', fetch);
+    const connection = {
+      provider: 'compatible' as const,
+      baseUrl: 'https://relay.example/v1',
+      auth: {type: 'env' as const, name: 'RELAY_KEY'},
+    };
+
+    await listConnectionModels(connection, {RELAY_KEY: 'first-secret'});
+    await listConnectionModels(connection, {RELAY_KEY: 'rotated-secret'});
+    await listConnectionModels({...connection, baseUrl: 'https://other.example/v1'}, {RELAY_KEY: 'rotated-secret'});
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('invalidates expired cache metadata on authentication failure and never serves it as success', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-26T00:00:00.000Z'));
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({data: [{id: 'old-model'}]}), {status: 200}))
+      .mockResolvedValueOnce(new Response('denied', {status: 401}))
+      .mockResolvedValueOnce(new Response(JSON.stringify({data: [{id: 'new-model'}]}), {status: 200}));
+    vi.stubGlobal('fetch', fetch);
+    const connection = {
+      provider: 'compatible' as const,
+      baseUrl: 'https://relay.example/v1',
+      auth: {type: 'env' as const, name: 'RELAY_KEY'},
+    };
+
+    await expect(listConnectionModels(connection, {RELAY_KEY: 'relay-secret'})).resolves.toEqual([{id: 'old-model'}]);
+    vi.setSystemTime(new Date('2026-07-26T00:15:01.000Z'));
+    await expect(listConnectionModels(connection, {RELAY_KEY: 'relay-secret'})).rejects.toThrow('Model discovery failed (401).');
+    await expect(listConnectionModels(connection, {RELAY_KEY: 'relay-secret'})).resolves.toEqual([{id: 'new-model'}]);
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('uses a separate OpenAI-style model directory for Anthropic transport', async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe('https://relay.example/openai/v1/models');
+      return new Response(JSON.stringify({models: [{model_id: 'claude-relay'}]}), {status: 200});
+    });
+    vi.stubGlobal('fetch', fetch);
+
+    await expect(listConnectionModels({
+      provider: 'compatible',
+      protocol: 'anthropic-messages',
+      baseUrl: 'https://relay.example/anthropic',
+      modelsBaseUrl: 'https://relay.example/openai/v1',
+      auth: {type: 'none'},
+    })).resolves.toEqual([{id: 'claude-relay'}]);
+  });
+
+  it('bounds process-local catalog metadata and evicts the least recently used endpoint', async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify({
+      data: [{id: String(input)}],
+    }), {status: 200}));
+    vi.stubGlobal('fetch', fetch);
+
+    for (let index = 0; index < 33; index += 1) {
+      await listConnectionModels({
+        provider: 'compatible',
+        baseUrl: `https://relay-${index}.example/v1`,
+        auth: {type: 'none'},
+      });
+    }
+    await listConnectionModels({
+      provider: 'compatible',
+      baseUrl: 'https://relay-0.example/v1',
+      auth: {type: 'none'},
+    });
+
+    expect(fetch).toHaveBeenCalledTimes(34);
   });
 });

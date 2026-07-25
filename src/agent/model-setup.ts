@@ -1,9 +1,12 @@
-import type {AgentConnectionConfig, AgentTeamConfig, ProviderName} from '../types.js';
+import type {AgentConnectionConfig, AgentTeamConfig, ConnectionAuth, ConnectionProtocol, ProviderName} from '../types.js';
 
 export interface AgentConnectionSetupInput {
   name: string;
   provider: ProviderName;
+  protocol?: ConnectionProtocol;
   baseUrl?: string;
+  modelsBaseUrl?: string;
+  auth?: ConnectionAuth['type'];
   apiKeyEnv?: string;
   defaultModel: string;
 }
@@ -23,24 +26,42 @@ export function createAgentConnectionSetup(input: AgentConnectionSetupInput): Ag
   if (!defaultModel || defaultModel.length > 256) {
     throw new Error('Default model must contain between 1 and 256 characters.');
   }
-  const baseUrl = input.baseUrl?.trim() || undefined;
-  if (input.provider === 'compatible' && !baseUrl) {
-    throw new Error('OpenAI-compatible connections require a base URL.');
+  if (input.provider !== 'compatible') {
+    throw new Error('Named primary connections support third-party compatible relays only.');
   }
-  if (baseUrl) {
-    let protocol: string;
+  const protocol = input.protocol ?? 'openai-responses';
+  if (protocol === 'gemini') throw new Error('Relay protocol must use openai-responses, openai-chat, or anthropic-messages.');
+  const baseUrl = input.baseUrl?.trim() || undefined;
+  if (!baseUrl) throw new Error('Compatible relay connections require an inference base URL.');
+  const modelsBaseUrl = input.modelsBaseUrl?.trim() || undefined;
+  if (protocol === 'anthropic-messages' && !modelsBaseUrl) {
+    throw new Error('Anthropic relay connections require a separate models base URL.');
+  }
+  for (const [label, value] of [['Connection base URL', baseUrl], ['Models base URL', modelsBaseUrl]] as const) {
+    if (!value) continue;
+    let url: URL;
     try {
-      protocol = new URL(baseUrl).protocol;
+      url = new URL(value);
     } catch {
-      throw new Error('Connection base URL must be a valid http or https URL.');
+      throw new Error(`${label} must be a valid http or https URL.`);
     }
-    if (protocol !== 'http:' && protocol !== 'https:') {
-      throw new Error('Connection base URL must use http or https.');
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      throw new Error(`${label} must use http or https.`);
+    }
+    if (url.username || url.password || url.search || url.hash) {
+      throw new Error(`${label} cannot contain credentials, query parameters, or fragments.`);
     }
   }
   const apiKeyEnv = input.apiKeyEnv?.trim() || undefined;
   if (apiKeyEnv && !/^[A-Z][A-Z0-9_]{0,127}$/.test(apiKeyEnv)) {
     throw new Error('Credential environment variable must use uppercase letters, numbers, and underscores.');
+  }
+  const auth = input.auth ?? (apiKeyEnv ? 'env' : 'none');
+  if (auth === 'env' && !apiKeyEnv) {
+    throw new Error('Environment authentication requires a credential environment variable.');
+  }
+  if (auth === 'none' && apiKeyEnv) {
+    throw new Error('Unauthenticated connections cannot include a credential environment variable.');
   }
   return {
     defaultConnection: name,
@@ -48,8 +69,11 @@ export function createAgentConnectionSetup(input: AgentConnectionSetupInput): Ag
     connections: {
       [name]: {
         provider: input.provider,
-        ...(baseUrl ? {baseUrl} : {}),
-        ...(apiKeyEnv ? {apiKeyEnv} : {}),
+        protocol,
+        defaultModel,
+        baseUrl,
+        ...(modelsBaseUrl ? {modelsBaseUrl} : {}),
+        auth: auth === 'env' ? {type: 'env', name: apiKeyEnv as string} : {type: 'none'},
       },
     },
   };

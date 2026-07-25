@@ -58,17 +58,57 @@ export function requireApiKey(config: ModelConfig): string {
   return config.apiKey;
 }
 
-export async function parseErrorResponse(response: Response): Promise<never> {
-  const details = await response.text();
+export async function parseErrorResponse(
+  response: Response,
+  secrets: Array<string | undefined> = [],
+): Promise<never> {
+  const rawDetails = await response.text();
+  const details = sanitizeProviderErrorText(rawDetails, secrets, 2_000);
   let message = `Model API request failed (${response.status})`;
   try {
-    const body = JSON.parse(details) as {error?: {message?: string} | string};
+    const body = JSON.parse(rawDetails) as {error?: {message?: string} | string};
     if (typeof body.error === 'string') message = body.error;
-    else if (body.error?.message) message = body.error.message;
+    else if (body.error && typeof body.error === 'object' && typeof body.error.message === 'string') {
+      message = body.error.message;
+    }
   } catch {
-    if (details.trim()) message = `${message}: ${details.slice(0, 300)}`;
+    if (rawDetails.trim()) message = `${message}: ${rawDetails}`;
   }
-  throw new ProviderError(message, response.status, details);
+  throw new ProviderError(
+    sanitizeProviderErrorText(message, secrets, 500),
+    response.status,
+    details,
+  );
+}
+
+/** Bounds and redacts untrusted provider diagnostics before they reach any UI or structured output. */
+export function sanitizeProviderErrorText(
+  input: string,
+  secrets: Array<string | undefined> = [],
+  maxLength = 500,
+): string {
+  let value = input
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu, '')
+    .replace(/\b(sk-[A-Za-z0-9_-]{12,}|AIza[0-9A-Za-z_-]{20,})\b/gu, '[redacted-secret]')
+    .replace(/\b(authorization\s*:\s*(?:bearer\s+|basic\s+)?)\S+/giu, '$1[redacted]')
+    .replace(/\b((?:api[_-]?key|access[_-]?token|authorization|cookie|password|client[_-]?secret)\s*[:=]\s*)(?:"[^"]+"|'[^']+'|\S+)/giu, '$1[redacted]')
+    .replace(/https?:\/\/[^\s"'<>]+/giu, (candidate) => redactDiagnosticUrl(candidate));
+  for (const secret of secrets) {
+    if (!secret) continue;
+    value = value.split(secret).join('[redacted-secret]');
+  }
+  const normalized = value.trim();
+  return normalized.length > maxLength ? `${normalized.slice(0, Math.max(0, maxLength - 1))}…` : normalized;
+}
+
+function redactDiagnosticUrl(candidate: string): string {
+  try {
+    const url = new URL(candidate);
+    const authentication = url.username || url.password ? '<redacted>@' : '';
+    return `${url.protocol}//${authentication}${url.host}${url.pathname}${url.search ? '?<redacted>' : ''}${url.hash ? '#<redacted>' : ''}`;
+  } catch {
+    return 'configured endpoint';
+  }
 }
 
 export function safeJsonArguments(value: unknown): Record<string, unknown> {

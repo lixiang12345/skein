@@ -16,8 +16,10 @@ describe('shared connection setup', () => {
       connections: {
         'team-relay': {
           provider: 'compatible',
+          protocol: 'openai-responses',
           baseUrl: 'https://relay.example/v1',
-          apiKeyEnv: 'TEAM_RELAY_API_KEY',
+          defaultModel: 'openai/coding-model',
+          auth: {type: 'env', name: 'TEAM_RELAY_API_KEY'},
         },
       },
     });
@@ -34,6 +36,7 @@ describe('shared connection setup', () => {
       name: 'relay',
       provider: 'compatible',
       baseUrl: 'https://relay.example/v1',
+      auth: 'none',
       defaultModel: 'coder',
     }));
     expect(merged.defaultConnection).toBe('relay');
@@ -51,5 +54,14 @@ describe('shared connection setup', () => {
     expect(() => createAgentConnectionSetup({
       name: 'relay', provider: 'compatible', baseUrl: 'https://relay.example/v1', apiKeyEnv: 'team_key', defaultModel: 'coder',
     })).toThrow('environment variable');
+    expect(() => createAgentConnectionSetup({
+      name: 'relay', provider: 'compatible', baseUrl: 'https://relay.example/v1', auth: 'env', defaultModel: 'coder',
+    })).toThrow('requires a credential environment variable');
+    expect(() => createAgentConnectionSetup({
+      name: 'relay', provider: 'compatible', baseUrl: 'https://relay.example/v1', auth: 'none', apiKeyEnv: 'TEAM_KEY', defaultModel: 'coder',
+    })).toThrow('cannot include');
+    expect(() => createAgentConnectionSetup({
+      name: 'relay', provider: 'compatible', baseUrl: 'https://user:secret@relay.example/v1?key=value', auth: 'none', defaultModel: 'coder',
+    })).toThrow('cannot contain credentials');
   });
 });

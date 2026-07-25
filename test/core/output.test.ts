@@ -441,6 +441,35 @@ describe('HeadlessReporter', () => {
     }
   });
 
+  it('reports the same redacted active connection in text, JSON, and JSONL finals', () => {
+    const connection = {
+      id: 'work', provider: 'compatible' as const, protocol: 'openai-responses' as const,
+      source: 'environment' as const, endpoint: 'https://relay.example/v1',
+      modelsEndpoint: 'https://relay.example/v1', authType: 'env' as const,
+      authStatus: 'configured' as const, complete: true, issues: [],
+    };
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    new HeadlessReporter({format: 'text', color: false, connection}).finish(session);
+    const textOutput = stderr.mock.calls.map(([chunk]) => String(chunk)).join('');
+    expect(textOutput).toContain('connection @work');
+    expect(textOutput).toContain('openai-responses');
+    expect(textOutput).toContain('environment');
+    expect(textOutput).toContain('env/configured');
+    expect(textOutput).toContain('inference https://relay.example/v1');
+    expect(textOutput).toContain('models https://relay.example/v1');
+    stderr.mockRestore();
+
+    for (const format of ['json', 'stream-json'] as const) {
+      const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+      new HeadlessReporter({format, color: false, connection}).finish(session);
+      const records = stdout.mock.calls.map(([chunk]) => String(chunk).trim()).filter(Boolean)
+        .map((line) => JSON.parse(line) as {connection?: typeof connection});
+      expect(records.at(-1)?.connection).toEqual(connection);
+      expect(JSON.stringify(records)).not.toContain('secret');
+      stdout.mockRestore();
+    }
+  });
+
   it('prints warning-only duplication status without downgrading verified completion', () => {
     const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const reporter = new HeadlessReporter({format: 'text', color: false});

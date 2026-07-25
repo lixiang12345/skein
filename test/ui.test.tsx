@@ -254,6 +254,34 @@ describe('terminal presentation', () => {
     expect(output).not.toContain('\n4-8');
   });
 
+  it.each([72, 80, 120])('labels the active named connection without overflowing at %i columns', (columns) => {
+    const output = renderToString(<Header config={{
+      ...config,
+      activeConnection: {
+        id: 'team-relay-with-a-long-name',
+        provider: 'compatible',
+        protocol: 'openai-chat',
+        source: 'environment',
+        endpoint: 'https://relay.example/v1',
+        modelsEndpoint: 'https://relay.example/v1',
+        defaultModel: 'a-long-coding-model',
+        authType: 'env',
+        authStatus: 'configured',
+        complete: true,
+        issues: [],
+      },
+      model: {provider: 'compatible', model: 'a-long-coding-model'},
+    }} askMode={false} width={columns} glyphMode="ascii" />, {columns});
+
+    const rows = output.trimEnd().split('\n');
+    expect(rows).toHaveLength(1);
+    if (columns >= 80) expect(output).toContain('@team-relay');
+    for (const row of rows) {
+      expect(displayWidth(row), `${columns}-column connection header overflowed: ${JSON.stringify(row)}`)
+        .toBeLessThanOrEqual(columns);
+    }
+  });
+
   it('reveals bounded tool output without allowing ANSI or control-sequence injection', () => {
     const output = renderToString(
       <Timeline showToolOutput items={[{

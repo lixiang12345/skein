@@ -1,5 +1,10 @@
 import {describe, expect, it} from 'vitest';
-import {externalAgentCommand, parseExternalAgentOutput, parseExternalAgentTelemetry} from '../../src/agent/external-runtime.js';
+import {
+  externalAgentCommand,
+  externalRuntimeEnvironment,
+  parseExternalAgentOutput,
+  parseExternalAgentTelemetry,
+} from '../../src/agent/external-runtime.js';
 
 describe('external agent runtimes', () => {
   it('builds explicit read-only commands without a shell', () => {
@@ -35,5 +40,28 @@ describe('external agent runtimes', () => {
       JSON.stringify({type: 'turn.completed', usage: {input_tokens: 1200, output_tokens: 300}}),
     ].join('\n'));
     expect(telemetry).toEqual({usage: {inputTokens: 1200, outputTokens: 300}, toolCalls: 1});
+  });
+
+  it('passes only runtime-owned configuration and a minimal process environment', () => {
+    const selected = externalRuntimeEnvironment('codex', '/trusted/bin', {
+      HOME: '/tmp/home',
+      LANG: 'en_US.UTF-8',
+      CODEX_HOME: '/tmp/codex',
+      OPENAI_API_KEY: 'openai-secret',
+      ANTHROPIC_API_KEY: 'anthropic-secret',
+      GEMINI_API_KEY: 'gemini-secret',
+      SKEIN_API_KEY: 'skein-secret',
+      SKEIN_CONNECTION_RELAY_API_KEY_ENV: 'RELAY_KEY',
+      RELAY_KEY: 'relay-secret',
+      NODE_OPTIONS: '--inspect',
+    });
+
+    expect(selected).toEqual({
+      PATH: '/trusted/bin',
+      HOME: '/tmp/home',
+      LANG: 'en_US.UTF-8',
+      CODEX_HOME: '/tmp/codex',
+    });
+    expect(JSON.stringify(selected)).not.toMatch(/openai-secret|anthropic-secret|gemini-secret|skein-secret|relay-secret/u);
   });
 });

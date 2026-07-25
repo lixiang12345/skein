@@ -259,7 +259,9 @@ describe('bounded orchestration', () => {
     cfg.agents = {
       ...cfg.agents!,
       defaultConnection: 'relay',
-      connections: {relay: {provider: 'compatible', baseUrl: 'https://relay.example/v1', apiKeyEnv: 'RELAY_API_KEY'}},
+      connections: {relay: {
+        provider: 'compatible', protocol: 'openai-responses', baseUrl: 'https://relay.example/v1', apiKeyEnv: 'RELAY_API_KEY',
+      }},
       routes: {backend: {model: 'openai/backend-model'}},
     };
     const profiles = new AgentProfileCatalog(root);
@@ -268,7 +270,7 @@ describe('bounded orchestration', () => {
       async pack() { return {text: '', hits: [], estimatedTokens: 0, engine: 'test', truncated: false}; },
       async search() { return []; },
     };
-    const routed: Array<{provider: string; model: string; baseUrl?: string; apiKey?: string}> = [];
+    const routed: Array<{provider: string; protocol?: string; model: string; baseUrl?: string; apiKey?: string}> = [];
     const manager = new DelegationManager({
       config: cfg,
       provider: {name: 'parent', async complete() { return {content: 'parent', toolCalls: []}; }},
@@ -290,10 +292,53 @@ describe('bounded orchestration', () => {
     expect(result.ok).toBe(true);
     expect(routed).toEqual([{
       provider: 'compatible',
+      protocol: 'openai-responses',
       model: 'openai/backend-model',
       baseUrl: 'https://relay.example/v1',
       apiKey: 'relay-secret',
     }]);
+  });
+
+  it('does not send a native provider key to a custom agent connection without explicit auth', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-custom-native-connection-'));
+    roots.push(root);
+    const cfg = config(root);
+    cfg.agents = {
+      ...cfg.agents!,
+      defaultConnection: 'relay',
+      connections: {relay: {provider: 'openai', baseUrl: 'https://relay.example/v1'}},
+      routes: {backend: {model: 'backend-model'}},
+    };
+    const profiles = new AgentProfileCatalog(root);
+    await profiles.discover();
+    const context: ContextProvider = {
+      async pack() { return {text: '', hits: [], estimatedTokens: 0, engine: 'test', truncated: false}; },
+      async search() { return []; },
+    };
+    let factoryCalls = 0;
+    const manager = new DelegationManager({
+      config: cfg,
+      provider: {name: 'parent', async complete() { return {content: 'parent', toolCalls: []}; }},
+      contextEngine: context,
+      parentTools: createDefaultToolRegistry(),
+      profiles,
+      environment: {OPENAI_API_KEY: 'official-secret'},
+      providerFactory() {
+        factoryCalls += 1;
+        return {name: 'unexpected', async complete() { return {content: 'unexpected', toolCalls: []}; }};
+      },
+    });
+
+    const execution = manager.tool().execute({tasks: [{profile: 'backend', task: 'Inspect state.'}]}, {
+      config: cfg,
+      workspace: new WorkspaceAccess([root]),
+      session: createSession({workspace: root, provider: 'compatible', model: 'test'}),
+      contextEngine: context,
+    });
+
+    await expect(execution).rejects.toThrow('Custom provider endpoints require explicit connection auth.');
+    await expect(execution).rejects.not.toThrow('official-secret');
+    expect(factoryCalls).toBe(0);
   });
 
   it('lets profiles inherit team defaults while preserving targeted overrides', () => {
@@ -335,6 +380,28 @@ describe('bounded orchestration', () => {
     expect(resolveAgentModelRoute(connectionOnly, cfg.model, 'architect')).toMatchObject({
       source: 'default',
       route: {connection: 'relay', model: cfg.model.model},
+    });
+  });
+
+  it('prefers a connection default model before the team and parent defaults', () => {
+    const cfg = config('/tmp/connection-default-model');
+    cfg.agents = {
+      ...cfg.agents!,
+      defaultConnection: 'relay',
+      defaultModel: 'team-model',
+      connections: {
+        relay: {
+          provider: 'compatible',
+          baseUrl: 'http://127.0.0.1:11434/v1',
+          defaultModel: 'connection-model',
+          auth: {type: 'none'},
+        },
+      },
+    };
+
+    expect(resolveAgentModelRoute(cfg.agents, cfg.model, 'architect')).toMatchObject({
+      source: 'default',
+      route: {connection: 'relay', model: 'connection-model'},
     });
   });
 

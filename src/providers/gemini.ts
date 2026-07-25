@@ -72,7 +72,7 @@ export class GeminiProvider implements ModelProvider {
       }),
       ...(signal ? {signal} : {}),
     });
-    if (!response.ok) return parseErrorResponse(response);
+    if (!response.ok) return parseErrorResponse(response, [apiKey]);
     const data = await response.json() as GeminiResponse;
     const candidate = data.candidates?.[0];
     const parts = candidate?.content?.parts ?? [];
@@ -124,7 +124,7 @@ export class GeminiProvider implements ModelProvider {
       }),
       ...(signal ? {signal} : {}),
     });
-    if (!response.ok) return parseErrorResponse(response);
+    if (!response.ok) return parseErrorResponse(response, [apiKey]);
     if (!response.headers.get('content-type')?.includes('text/event-stream')) {
       const normalized = normalizeGeminiResponse(await response.json() as GeminiResponse);
       if (normalized.content) yield {type: 'text_delta', content: normalized.content};

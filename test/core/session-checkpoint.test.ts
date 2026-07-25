@@ -34,6 +34,44 @@ describe('sessions and checkpoints', () => {
     expect((await store.list())[0]?.title).toBe('Fix queue');
   });
 
+  it('round-trips opaque Responses output items required for stateless continuation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-session-responses-state-'));
+    roots.push(root);
+    const store = new SessionStore(root);
+    const session = createSession({workspace: root, model: 'test', provider: 'compatible'});
+    session.messages.push({
+      id: 'assistant-1',
+      role: 'assistant',
+      content: '',
+      createdAt: '2026-07-26T00:00:00.000Z',
+      toolCalls: [{id: 'call-1', name: 'read_file', arguments: {path: 'a.ts'}}],
+      providerMetadata: {responses: {outputItems: [
+        {id: 'rs-1', type: 'reasoning', encrypted_content: 'opaque-provider-state', summary: []},
+        {id: 'fc-1', type: 'function_call', call_id: 'call-1', name: 'read_file', arguments: '{"path":"a.ts"}'},
+      ]}},
+    });
+
+    await store.save(session);
+    const loaded = await store.load(session.id);
+
+    expect(loaded.messages[0]?.providerMetadata).toEqual(session.messages[0]?.providerMetadata);
+  });
+
+  it('rejects Responses replay metadata above the persistence safety limit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-session-responses-oversized-'));
+    roots.push(root);
+    const store = new SessionStore(root);
+    const session = createSession({workspace: root, model: 'test', provider: 'compatible'});
+    session.messages.push({
+      id: 'assistant-oversized', role: 'assistant', content: '', createdAt: '2026-07-26T00:00:00.000Z',
+      providerMetadata: {responses: {outputItems: [{
+        id: 'rs-oversized', type: 'reasoning', encrypted_content: 'x'.repeat(4 * 1024 * 1024),
+      }]}},
+    });
+
+    await expect(store.save(session)).rejects.toThrow('Responses replay state exceeds 4 MiB');
+  });
+
   it('round-trips context epochs and pending clarification without hidden reasoning', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-session-epoch-intent-'));
     roots.push(root);

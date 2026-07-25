@@ -205,7 +205,7 @@ export function Header({config, askMode, planMode = false, width = 80, glyphMode
   const brand = `${glyphs.brand} ${PRODUCT_NAME.toUpperCase()}`;
   const modeLabel = `${glyphs.activity} ${mode}`;
   const separator = ` ${glyphs.separator} `;
-  const model = sanitizeInlineTerminalText(`${config.model.provider}/${config.model.model}`);
+  const model = sanitizeInlineTerminalText(`${config.activeConnection && config.activeConnection.source !== 'legacy' ? `@${config.activeConnection.id} ` : ''}${config.model.provider}/${config.model.model}`);
   const repository = sanitizeInlineTerminalText(basename(root) || root);
   const minimum = `${brand} ${modeLabel}`;
   const withRepository = `${brand}${separator}${repository}${separator}${modeLabel}`;

@@ -184,6 +184,35 @@ describe('doctor runtime checks', () => {
     }));
   });
 
+  it('reports misspelled connection variables without reading or printing their values', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-doctor-typos-'));
+    roots.push(root);
+    const previousApi = process.env.SEKIN_API;
+    const previousBaseUrl = process.env.SKEIN_BASEURL;
+    process.env.SEKIN_API = 'doctor-secret-one';
+    process.env.SKEIN_BASEURL = 'https://user:doctor-secret-two@example.test/v1';
+    const config = defaultConfig(root);
+    config.model = {provider: 'compatible', model: 'fixture', baseUrl: 'http://127.0.0.1:1/v1'};
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      await expect(runDoctor(config, {json: true})).resolves.toBe(true);
+      const output = stdout.mock.calls.map(([chunk]) => String(chunk)).join('');
+      const report = JSON.parse(output) as {checks: Array<{name: string; detail: string}>};
+      expect(report.checks).toContainEqual(expect.objectContaining({
+        name: 'Environment: SEKIN_API',
+        detail: expect.stringContaining('use SKEIN_API_KEY'),
+      }));
+      expect(report.checks).toContainEqual(expect.objectContaining({
+        name: 'Environment: SKEIN_BASEURL',
+        detail: expect.stringContaining('use SKEIN_BASE_URL'),
+      }));
+      expect(output).not.toMatch(/doctor-secret-one|doctor-secret-two/u);
+    } finally {
+      restoreEnvironment('SEKIN_API', previousApi);
+      restoreEnvironment('SKEIN_BASEURL', previousBaseUrl);
+    }
+  });
+
 });
 
 function restoreEnvironment(name: string, value: string | undefined): void {

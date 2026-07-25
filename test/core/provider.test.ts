@@ -2,7 +2,9 @@ import {afterEach, describe, expect, it, vi} from 'vitest';
 import {AnthropicProvider} from '../../src/providers/anthropic.js';
 import {GeminiProvider} from '../../src/providers/gemini.js';
 import {OpenAIProvider} from '../../src/providers/openai.js';
-import {parseServerSentEvents} from '../../src/providers/provider.js';
+import {parseServerSentEvents, ProviderError} from '../../src/providers/provider.js';
+import {ResponsesProvider} from '../../src/providers/responses.js';
+import {createProvider} from '../../src/providers/index.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -69,6 +71,187 @@ describe('provider streaming helpers', () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  it('routes compatible transports explicitly without cross-protocol guessing', () => {
+    expect(createProvider({
+      provider: 'compatible', protocol: 'openai-responses', model: 'test', baseUrl: 'https://relay.example/v1',
+    })).toBeInstanceOf(ResponsesProvider);
+    expect(createProvider({
+      provider: 'compatible', protocol: 'openai-chat', model: 'test', baseUrl: 'https://relay.example/v1',
+    })).toBeInstanceOf(OpenAIProvider);
+    expect(createProvider({
+      provider: 'compatible', protocol: 'anthropic-messages', model: 'test', baseUrl: 'https://relay.example',
+    })).toBeInstanceOf(AnthropicProvider);
+  });
+
+  it('uses stateless Responses items, bearer auth, tool definitions, and usage', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('https://relay.example/v1/responses');
+      expect(init?.headers).toMatchObject({authorization: 'Bearer relay-key', 'content-type': 'application/json'});
+      const body = JSON.parse(String(init?.body)) as {
+        store?: boolean;
+        stream?: boolean;
+        temperature?: number;
+        input?: Array<Record<string, unknown>>;
+        tools?: Array<Record<string, unknown>>;
+      };
+      expect(body.store).toBe(false);
+      expect(body.stream).toBe(false);
+      expect(body).not.toHaveProperty('temperature');
+      expect(body.input).toEqual([
+        {type: 'message', role: 'system', content: 'Be precise.'},
+        {type: 'message', role: 'user', content: 'Inspect it.'},
+        {type: 'message', role: 'assistant', content: 'Checking.'},
+        {type: 'function_call', call_id: 'call-old', name: 'read_file', arguments: '{"path":"a.ts"}'},
+        {type: 'function_call_output', call_id: 'call-old', output: 'contents'},
+      ]);
+      expect(body.tools).toEqual([expect.objectContaining({
+        type: 'function', name: 'read_file', strict: false, parameters: {type: 'object'},
+      })]);
+      return new Response(JSON.stringify({
+        status: 'completed',
+        output: [
+          {type: 'message', role: 'assistant', content: [{type: 'output_text', text: 'Done.'}]},
+          {type: 'function_call', call_id: 'call-new', name: 'list_files', arguments: '{"path":"."}'},
+        ],
+        usage: {
+          input_tokens: 12,
+          output_tokens: 4,
+          input_tokens_details: {cached_tokens: 7},
+          output_tokens_details: {reasoning_tokens: 2},
+        },
+      }), {headers: {'content-type': 'application/json'}});
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const provider = new ResponsesProvider({
+      provider: 'compatible', protocol: 'openai-responses', model: 'coder',
+      baseUrl: 'https://relay.example/v1', apiKey: 'relay-key', maxTokens: 1024, temperature: 0.2,
+    });
+    const messages = [
+      {id: '1', role: 'system' as const, content: 'Be precise.', createdAt: '2026-01-01T00:00:00.000Z'},
+      {id: '2', role: 'user' as const, content: 'Inspect it.', createdAt: '2026-01-01T00:00:01.000Z'},
+      {
+        id: '3', role: 'assistant' as const, content: 'Checking.', createdAt: '2026-01-01T00:00:02.000Z',
+        toolCalls: [{id: 'call-old', name: 'read_file', arguments: {path: 'a.ts'}}],
+      },
+      {
+        id: '4', role: 'tool' as const, content: 'contents', createdAt: '2026-01-01T00:00:03.000Z',
+        toolCallId: 'call-old', name: 'read_file',
+      },
+    ];
+    const tools = [{name: 'read_file', description: 'Read a file', category: 'read' as const, inputSchema: {type: 'object'}}];
+
+    await expect(provider.complete(messages, tools)).resolves.toMatchObject({
+      content: 'Done.',
+      toolCalls: [{id: 'call-new', name: 'list_files', arguments: {path: '.'}}],
+      usage: {inputTokens: 12, outputTokens: 4, cachedInputTokens: 7, reasoningTokens: 2},
+      stopReason: 'tool_calls',
+    });
+  });
+
+  it('uses the Anthropic relay base convention and bearer authentication', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('https://relay.example/anthropic/v1/messages');
+      expect(init?.headers).toMatchObject({
+        authorization: 'Bearer relay-key',
+        'anthropic-version': '2023-06-01',
+      });
+      expect(init?.headers).not.toHaveProperty('x-api-key');
+      return new Response(JSON.stringify({content: [{type: 'text', text: 'ok'}]}), {
+        headers: {'content-type': 'application/json'},
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const provider = new AnthropicProvider({
+      provider: 'compatible', protocol: 'anthropic-messages', model: 'relay-claude',
+      baseUrl: 'https://relay.example/anthropic', apiKey: 'relay-key',
+    });
+
+    await expect(provider.complete([], [])).resolves.toMatchObject({content: 'ok'});
+  });
+
+  it('replays exact Responses output items for stateless reasoning and tool continuation', async () => {
+    const priorOutput = [
+      {id: 'rs-1', type: 'reasoning', encrypted_content: 'opaque-reasoning', summary: []},
+      {id: 'fc-1', type: 'function_call', call_id: 'call-1', name: 'read_file', arguments: '{"path":"a.ts"}'},
+    ];
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as {input: unknown[]};
+      expect(body.input).toEqual([
+        ...priorOutput,
+        {type: 'function_call_output', call_id: 'call-1', output: 'contents'},
+      ]);
+      return new Response(JSON.stringify({status: 'completed', output: []}), {
+        headers: {'content-type': 'application/json'},
+      });
+    }));
+    const provider = new ResponsesProvider({
+      provider: 'compatible', protocol: 'openai-responses', model: 'coder', baseUrl: 'https://relay.example/v1',
+    });
+
+    await provider.complete([
+      {
+        id: '1', role: 'assistant', content: '', createdAt: '2026-01-01T00:00:00.000Z',
+        toolCalls: [{id: 'call-1', name: 'read_file', arguments: {path: 'a.ts'}}],
+        providerMetadata: {responses: {outputItems: priorOutput}},
+      },
+      {
+        id: '2', role: 'tool', content: 'contents', createdAt: '2026-01-01T00:00:01.000Z',
+        toolCallId: 'call-1', name: 'read_file',
+      },
+    ], []);
+  });
+
+  it('redacts relay credentials and unsafe URLs from Responses failures', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      error: {
+        message: 'Authorization: Bearer relay-key api_key=sk-abcdefghijklmnopqrstuvwxyz123456 at https://user:password@relay.example/v1?token=secret',
+      },
+    }), {status: 401, headers: {'content-type': 'application/json'}})));
+    const provider = new ResponsesProvider({
+      provider: 'compatible', protocol: 'openai-responses', model: 'coder',
+      baseUrl: 'https://relay.example/v1', apiKey: 'relay-key',
+    });
+
+    let failure: ProviderError | undefined;
+    try {
+      await provider.complete([], []);
+    } catch (error) {
+      failure = error as ProviderError;
+    }
+    expect(failure).toBeInstanceOf(ProviderError);
+    const diagnostic = `${failure?.message}\n${failure?.details}`;
+    expect(diagnostic).toContain('[redacted');
+    expect(diagnostic).toContain('https://<redacted>@relay.example/v1?<redacted>');
+    expect(diagnostic).not.toMatch(/relay-key|abcdefghijklmnopqrstuvwxyz123456|password|token=secret/u);
+  });
+
+  it('falls back safely when an untrusted provider returns a non-string error message', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      error: {message: {unexpected: 'shape'}},
+    }), {status: 502, headers: {'content-type': 'application/json'}})));
+    const provider = new ResponsesProvider({
+      provider: 'compatible', protocol: 'openai-responses', model: 'coder', baseUrl: 'https://relay.example/v1',
+    });
+
+    await expect(provider.complete([], [])).rejects.toMatchObject({
+      name: 'ProviderError',
+      message: 'Model API request failed (502)',
+      status: 502,
+    });
+  });
+
+  it('rejects oversized Responses replay state before persisting a session', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      status: 'completed',
+      output: [{id: 'rs-oversized', type: 'reasoning', encrypted_content: 'x'.repeat(4 * 1024 * 1024)}],
+    }), {headers: {'content-type': 'application/json'}})));
+    const provider = new ResponsesProvider({
+      provider: 'compatible', protocol: 'openai-responses', model: 'coder', baseUrl: 'https://relay.example/v1',
+    });
+
+    await expect(provider.complete([], [])).rejects.toThrow('larger than the 4 MiB safety limit');
+  });
+
   it('normalizes Gemini non-streaming usage and preserves explicit zero counts', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
       candidates: [{content: {parts: [{text: 'ok'}]}, finishReason: 'STOP'}],
@@ -133,6 +316,52 @@ describe('provider streaming helpers', () => {
           content: 'Hello world',
           toolCalls: [{id: 'call-1', name: 'read_file', arguments: {path: 'a.ts'}}],
           usage: {inputTokens: 7, outputTokens: 3, cachedInputTokens: 4, reasoningTokens: 2},
+        }),
+      }),
+    ]);
+  });
+
+  it('normalizes Responses SSE text, function arguments, usage, and the final result', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as {store?: boolean; stream?: boolean};
+      expect(body).toMatchObject({store: false, stream: true});
+      return sse([
+        {type: 'response.created', response: {status: 'in_progress'}},
+        {type: 'response.output_text.delta', delta: 'Hello '},
+        {type: 'response.output_text.delta', delta: 'world'},
+        {type: 'response.output_item.added', output_index: 1, item: {
+          id: 'fc-1', type: 'function_call', call_id: 'call-1', name: 'read_file', arguments: '',
+        }},
+        {type: 'response.function_call_arguments.delta', item_id: 'fc-1', output_index: 1, delta: '{"path":"a.ts"}'},
+        {type: 'response.output_item.done', output_index: 1, item: {
+          id: 'fc-1', type: 'function_call', call_id: 'call-1', name: 'read_file', arguments: '{"path":"a.ts"}',
+        }},
+        {type: 'response.completed', response: {
+          status: 'completed',
+          output: [{id: 'fc-1', type: 'function_call', call_id: 'call-1', name: 'read_file', arguments: '{"path":"a.ts"}'}],
+          usage: {
+            input_tokens: 9, output_tokens: 3,
+            input_tokens_details: {cached_tokens: 4}, output_tokens_details: {reasoning_tokens: 2},
+          },
+        }},
+      ]);
+    }));
+    const provider = new ResponsesProvider({
+      provider: 'compatible', protocol: 'openai-responses', model: 'test', baseUrl: 'http://127.0.0.1:1234/v1',
+    });
+
+    const chunks = await collect(provider.stream?.([], []) ?? []);
+
+    expect(chunks).toEqual([
+      {type: 'text_delta', content: 'Hello '},
+      {type: 'text_delta', content: 'world'},
+      expect.objectContaining({
+        type: 'result',
+        response: expect.objectContaining({
+          content: 'Hello world',
+          toolCalls: [{id: 'call-1', name: 'read_file', arguments: {path: 'a.ts'}}],
+          usage: {inputTokens: 9, outputTokens: 3, cachedInputTokens: 4, reasoningTokens: 2},
+          stopReason: 'tool_calls',
         }),
       }),
     ]);

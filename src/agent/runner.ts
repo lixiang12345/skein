@@ -467,6 +467,7 @@ export class AgentRunner {
         );
         const assistantMessage = message('assistant', response.content, {
           ...(response.toolCalls.length ? {toolCalls: response.toolCalls} : {}),
+          ...(response.providerMetadata ? {providerMetadata: response.providerMetadata} : {}),
         });
         assistantMessage.id = assistantId;
         this.session.messages.push(assistantMessage);
@@ -1257,7 +1258,7 @@ export class AgentRunner {
 function message(
   role: ChatMessage['role'],
   content: string,
-  extra: Pick<ChatMessage, 'toolCalls' | 'toolCallId' | 'name'> = {},
+  extra: Pick<ChatMessage, 'toolCalls' | 'toolCallId' | 'name' | 'providerMetadata'> = {},
 ): ChatMessage {
   return {
     id: randomUUID(),
@@ -1287,7 +1288,8 @@ function packConversation(
   for (let index = groups.length - 1; index >= 0; index -= 1) {
     const group = groups[index] ?? [];
     const cost = group.reduce((sum, item) => sum + estimateTokens(item.content) +
-      estimateTokens(JSON.stringify(item.toolCalls ?? [])), 0);
+      estimateTokens(JSON.stringify(item.toolCalls ?? [])) +
+      estimateTokens(JSON.stringify(item.providerMetadata ?? {})), 0);
     if (selected.length && used + cost > budget) break;
     selected.unshift(group);
     used += cost;
@@ -1328,7 +1330,8 @@ function groupMessages(messages: ChatMessage[]): ChatMessage[][] {
 
 function estimateMessages(messages: ChatMessage[]): number {
   return messages.reduce((total, item) => total + estimateTokens(item.content) +
-    estimateTokens(JSON.stringify(item.toolCalls ?? [])), 0);
+    estimateTokens(JSON.stringify(item.toolCalls ?? [])) +
+    estimateTokens(JSON.stringify(item.providerMetadata ?? {})), 0);
 }
 
 function estimateToolDefinitions(tools: {name: string; description: string; inputSchema: Record<string, unknown>}[]): number {

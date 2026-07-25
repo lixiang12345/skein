@@ -55,9 +55,11 @@ interface AnthropicStreamEvent {
 }
 
 export class AnthropicProvider implements ModelProvider {
-  readonly name = 'anthropic';
+  readonly name: string;
 
-  constructor(private readonly config: ModelConfig) {}
+  constructor(private readonly config: ModelConfig) {
+    this.name = config.provider === 'compatible' ? 'compatible' : 'anthropic';
+  }
 
   async complete(
     messages: ChatMessage[],
@@ -65,17 +67,17 @@ export class AnthropicProvider implements ModelProvider {
     signal?: AbortSignal,
     maxOutputTokens?: number,
   ): Promise<ModelResponse> {
-    const apiKey = requireApiKey(this.config);
+    const apiKey = this.config.provider === 'compatible' ? this.config.apiKey : requireApiKey(this.config);
     const base = this.config.baseUrl ?? 'https://api.anthropic.com/v1';
     const system = messages
       .filter((message) => message.role === 'system')
       .map((message) => message.content)
       .join('\n\n');
-    const response = await fetch(joinUrl(base, 'messages'), {
+    const response = await fetch(anthropicMessagesEndpoint(base), {
       method: 'POST',
       redirect: 'error',
       headers: {
-        'x-api-key': apiKey,
+        ...anthropicAuthHeaders(this.config, apiKey),
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
@@ -95,7 +97,7 @@ export class AnthropicProvider implements ModelProvider {
       }),
       ...(signal ? {signal} : {}),
     });
-    if (!response.ok) return parseErrorResponse(response);
+    if (!response.ok) return parseErrorResponse(response, [apiKey]);
     const data = await response.json() as AnthropicResponse;
     const blocks = data.content ?? [];
     return {
@@ -121,17 +123,17 @@ export class AnthropicProvider implements ModelProvider {
     signal?: AbortSignal,
     maxOutputTokens?: number,
   ): AsyncIterable<ModelStreamChunk> {
-    const apiKey = requireApiKey(this.config);
+    const apiKey = this.config.provider === 'compatible' ? this.config.apiKey : requireApiKey(this.config);
     const base = this.config.baseUrl ?? 'https://api.anthropic.com/v1';
     const system = messages
       .filter((message) => message.role === 'system')
       .map((message) => message.content)
       .join('\n\n');
-    const response = await fetch(joinUrl(base, 'messages'), {
+    const response = await fetch(anthropicMessagesEndpoint(base), {
       method: 'POST',
       redirect: 'error',
       headers: {
-        'x-api-key': apiKey,
+        ...anthropicAuthHeaders(this.config, apiKey),
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
@@ -150,7 +152,7 @@ export class AnthropicProvider implements ModelProvider {
       }),
       ...(signal ? {signal} : {}),
     });
-    if (!response.ok) return parseErrorResponse(response);
+    if (!response.ok) return parseErrorResponse(response, [apiKey]);
     if (!response.headers.get('content-type')?.includes('text/event-stream')) {
       const normalized = normalizeAnthropicResponse(await response.json() as AnthropicResponse);
       if (normalized.content) yield {type: 'text_delta', content: normalized.content};
@@ -230,6 +232,21 @@ export class AnthropicProvider implements ModelProvider {
       },
     };
   }
+}
+
+function anthropicMessagesEndpoint(base: string): string {
+  const normalized = base.replace(/\/+$/u, '');
+  if (normalized.endsWith('/messages')) return normalized;
+  return normalized.endsWith('/v1')
+    ? joinUrl(normalized, 'messages')
+    : joinUrl(normalized, 'v1/messages');
+}
+
+function anthropicAuthHeaders(config: ModelConfig, apiKey: string | undefined): Record<string, string> {
+  if (!apiKey) return {};
+  return config.provider === 'compatible'
+    ? {authorization: `Bearer ${apiKey}`}
+    : {'x-api-key': apiKey};
 }
 
 function normalizeAnthropicResponse(data: AnthropicResponse): ModelResponse {

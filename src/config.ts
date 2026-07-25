@@ -54,13 +54,28 @@ const memoryConfigSchema = z.object({
 }).partial();
 
 const agentConnectionNameSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
+const connectionAuthSchema = z.discriminatedUnion('type', [
+  z.object({type: z.literal('env'), name: z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/)}).strict(),
+  z.object({type: z.literal('none')}).strict(),
+]);
+const connectionUrlSchema = z.string().url().refine((value) => {
+  const url = new URL(value);
+  return /^https?:$/i.test(url.protocol) && !url.username && !url.password && !url.search && !url.hash;
+}, {
+  message: 'connection URL must use http or https without credentials, query parameters, or fragments',
+});
 const agentConnectionSchema = z.object({
   provider: z.enum(['openai', 'anthropic', 'gemini', 'compatible']),
-  baseUrl: z.string().url().refine((value) => /^https?:$/i.test(new URL(value).protocol), {
-    message: 'agent connection baseUrl must use http or https',
-  }).optional(),
+  label: z.string().min(1).max(128).optional(),
+  protocol: z.enum(['openai-responses', 'openai-chat', 'anthropic-messages', 'gemini']).optional(),
+  baseUrl: connectionUrlSchema.optional(),
+  modelsBaseUrl: connectionUrlSchema.optional(),
+  defaultModel: z.string().min(1).max(256).optional(),
+  auth: connectionAuthSchema.optional(),
   apiKeyEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/).optional(),
-}).strict();
+}).strict().refine((value) => !(value.auth && value.apiKeyEnv), {
+  message: 'agent connection auth and apiKeyEnv are mutually exclusive',
+});
 
 const agentTeamConfigSchema = z.object({
   enabled: z.boolean().optional(),
@@ -546,6 +561,17 @@ function validateAgentConnections(agents: AgentTeamConfig | undefined): void {
   if (agents?.defaultConnection && !agents.connections?.[agents.defaultConnection]) {
     throw new Error(`Agent defaults reference unknown connection ${agents.defaultConnection}.`);
   }
+  for (const [name, connection] of Object.entries(agents?.connections ?? {})) {
+    if (connection.protocol && connection.provider !== 'compatible') {
+      throw new Error(`Agent connection ${name} must use provider compatible when protocol is explicit.`);
+    }
+    if (connection.provider === 'compatible' && connection.protocol === 'gemini') {
+      throw new Error(`Agent connection ${name} cannot use the Gemini transport.`);
+    }
+    if (connection.protocol === 'anthropic-messages' && !connection.modelsBaseUrl) {
+      throw new Error(`Agent connection ${name} requires modelsBaseUrl for Anthropic transport.`);
+    }
+  }
   for (const [profile, route] of Object.entries(agents?.routes ?? {})) {
     if (route.connection && !agents?.connections?.[route.connection]) {
       throw new Error(`Agent route ${profile} references unknown connection ${route.connection}.`);
@@ -715,6 +741,8 @@ export function configSummary(config: MosaicConfig): Record<string, unknown> {
     model: `${config.model.provider}/${config.model.model}`,
     endpoint: redactEndpoint(config.model.baseUrl),
     apiKey: config.model.apiKey ? 'configured' : 'missing',
+    activeConnection: config.activeConnection,
+    connectionCatalog: config.connectionCatalog,
     context: {
       maxTokens: config.context.maxTokens,
       topK: config.context.topK,
@@ -756,8 +784,13 @@ export function configSummary(config: MosaicConfig): Record<string, unknown> {
       maxWriterPatchBytes: config.agents.maxWriterPatchBytes,
       connections: Object.fromEntries(Object.entries(config.agents.connections ?? {}).map(([name, connection]) => [name, {
         provider: connection.provider,
+        protocol: connection.protocol,
+        defaultModel: connection.defaultModel,
         endpoint: redactEndpoint(connection.baseUrl),
-        credentials: connection.apiKeyEnv ? `env:${connection.apiKeyEnv}` : 'provider default environment',
+        modelsEndpoint: redactEndpoint(connection.modelsBaseUrl ?? connection.baseUrl),
+        credentials: connection.auth?.type === 'env'
+          ? `env:${connection.auth.name}`
+          : connection.auth?.type ?? (connection.apiKeyEnv ? `env:${connection.apiKeyEnv}` : 'provider default environment'),
       }])),
       routes: Object.fromEntries(Object.entries(config.agents.routes ?? {}).map(([profile, route]) => [profile, {
         runtime: route.runtime ?? 'api',

@@ -595,7 +595,8 @@ function concise(value: string, max: number): string {
 
 function estimateMessages(messages: ChatMessage[]): number {
   return messages.reduce((sum, message) => sum + estimateTokens(message.content) +
-    estimateTokens(JSON.stringify(message.toolCalls ?? [])), 0);
+    estimateTokens(JSON.stringify(message.toolCalls ?? [])) +
+    estimateTokens(JSON.stringify(message.providerMetadata ?? {})), 0);
 }
 
 function toolTokens(messages: ChatMessage[]): number {

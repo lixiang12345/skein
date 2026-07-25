@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.29`.
+- Current repository version: `0.3.30`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -42,8 +42,8 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.29.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.29.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.30.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.30.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
@@ -370,25 +370,43 @@ Implementation progress:
   stopped attempt in telemetry, and feeds only the fresh result into the
   caller's aggregation. Completed attempts remain immutable until the next
   report-inspection increment.
-- Named `agents.connections` now let API routes share one provider, base URL,
-  and credential environment-variable reference. This supports the common
-  relay/gateway case where one key grants access to many model families while
-  keeping subscription-backed official CLIs on their own login path.
+- Named `agents.connections` and `SKEIN_CONNECTION_*` profiles now let the
+  primary agent and API routes share one provider, protocol, base URL, default
+  model, and typed authentication reference. One complete connection is
+  selected automatically; multiple candidates require a TTY choice or
+  `--connection` in headless mode. New connections are relay-only and accept
+  only `env` or `none`; subscription-backed official CLIs remain isolated
+  delegated runtimes rather than primary connections.
 - `skein agents connections` and `/connections` expose redacted connection
   status and route counts. Repository-owned connections are stripped until
   project config is trusted, just like direct model routes.
-- `skein agents models <connection>` can query a compatible/OpenAI connection's
-  standard `/models` endpoint, giving users model IDs without trial-and-error
-  configuration. The command is read-only and does not persist the catalog.
+- `skein agents models <connection>` queries the relay's independent
+  OpenAI-style `/models` endpoint. A 32-entry process-local cache uses a
+  15-minute TTL, ETag revalidation, endpoint/credential fingerprint isolation,
+  and hard invalidation on `401`/`403`; it never stores credential values or
+  treats stale data as an authentication success.
 - Team routing now supports `agents.defaultConnection` and optional
   `agents.defaultModel`. Most users configure one shared gateway once; profile
   routes only contain model or provider overrides when needed. CLI and TUI
   surfaces label inherited versus overridden routes, and unknown defaults fail
   validation before any agent starts.
 - `skein agents setup` now provides a guided user-level setup for a shared
-  connection and default model, with a non-interactive provisioning form. The
-  wizard stores only credential environment-variable names and preserves other
-  user configuration.
+  connection and default model, with explicit Responses, Chat Completions, and
+  Anthropic Messages transports plus separate inference/model-catalog bases.
+  The first-run TUI uses the same relay-only model and stores only credential
+  environment-variable names while preserving other user configuration.
+- The Responses transport uses `POST /responses`, `store: false`, typed SSE,
+  normalized text/function/usage events, and exact output-item replay for
+  stateless tool and reasoning continuation. It never retries a failed request
+  through a different protocol. Anthropic relay transport accepts SDK-style
+  root bases, appends `/v1/messages` when needed, and uses relay bearer auth.
+- `skein doctor` reports unsupported `SEKIN_API`/`SKEIN_BASEURL` spellings and
+  connection readiness without reading or printing their values. Custom native
+  endpoints cannot inherit official provider keys, and external CLI runtimes
+  receive a minimal environment allowlist instead of the parent secret set.
+- This relay-only connection catalog, Responses transport, independent model
+  directory, redacted status, and delegated-runtime isolation slice is complete
+  and release-verified in `0.3.30`.
 - Team budgets default to `observe`: telemetry is retained, but configured
   thresholds do not warn or terminate work. `guard` adds non-blocking threshold
   warnings, while `strict` is an explicit hard-stop policy for controlled jobs.

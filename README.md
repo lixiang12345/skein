@@ -79,7 +79,7 @@ The product rationale and competitor research are in
 ## Requirements
 
 - Node.js 22.16 or newer
-- A model API key, or an OpenAI-compatible local endpoint
+- A third-party relay credential in an environment variable, or a keyless local relay
 - Optional: Git and ripgrep
 
 ## Install
@@ -96,7 +96,7 @@ To build, verify, and install a local package artifact from this checkout:
 
 ```bash
 npm run verify:package -- --output-dir artifacts/package
-npm install -g ./artifacts/package/skein-code-cli-0.3.29.tgz
+npm install -g ./artifacts/package/skein-code-cli-0.3.30.tgz
 ```
 
 To install the published package from npm:
@@ -116,11 +116,12 @@ environment variables remain compatible with this release.
 ## Quick start
 
 On the first interactive `skein` run, an incomplete model configuration opens
-a keyboard-driven setup before any session is created. Choose a provider API
-key or an explicitly configured compatible endpoint; Skein never guesses the
-protocol or destination. OpenAI, Anthropic, and Gemini subscription logins are
-not API credentials. Signed-in coding CLIs remain delegated tools rather than
-primary model connections.
+a keyboard-driven relay setup before any session is created. Choose OpenAI
+Responses (recommended), OpenAI Chat Completions, or Anthropic Messages, then
+provide the inference base URL, optional independent model-catalog base URL,
+model ID, and `env` or `none` authentication. Skein does not implement official
+account login for primary connections and never guesses the protocol or
+destination. Signed-in coding CLIs remain separate delegated runtimes.
 
 Before a new interactive session, Skein prepares the workspace before opening the composer. It
 shows the real local index phases, reloads the persisted artifact, verifies its
@@ -129,44 +130,80 @@ new sessions validate and reuse a current index or incrementally rebuild a stale
 an empty workspace is a valid zero-file index, while failed validation offers
 retry or exit instead of silently continuing.
 
-For non-interactive setup, set credentials for one provider:
+For non-interactive setup, export the relay credential and save only its
+environment-variable name:
 
 ```bash
-export OPENAI_API_KEY=...
-# or ANTHROPIC_API_KEY / GEMINI_API_KEY / SKEIN_API_KEY
+export TEAM_RELAY_API_KEY=...
+skein agents setup --yes \
+  --name team-relay \
+  --provider compatible \
+  --protocol openai-responses \
+  --base-url https://relay.example/v1 \
+  --api-key-env TEAM_RELAY_API_KEY \
+  --model provider/coding-model
 ```
 
-For an OpenAI-compatible local or self-hosted endpoint, provide the endpoint
-explicitly so Skein never guesses where workspace code should be sent:
+For a keyless local relay, select `none` explicitly:
 
 ```bash
-export SKEIN_API_KEY=... # omit when the local endpoint needs no authentication
-skein init --provider compatible --base-url http://localhost:11434/v1 --yes
+skein agents setup --yes \
+  --name local \
+  --provider compatible \
+  --protocol openai-responses \
+  --base-url http://localhost:11434/v1 \
+  --auth none \
+  --model local-coder
 ```
+
+Named connections can also drive the primary agent. One complete connection is
+selected automatically; multiple complete connections require an interactive
+choice or an explicit `--connection <name>` in headless runs:
+
+```bash
+export SKEIN_CONNECTIONS=local
+export SKEIN_CONNECTION_LOCAL_PROVIDER=compatible
+export SKEIN_CONNECTION_LOCAL_PROTOCOL=openai-responses
+export SKEIN_CONNECTION_LOCAL_BASE_URL=http://127.0.0.1:11434/v1
+export SKEIN_CONNECTION_LOCAL_AUTH=none
+export SKEIN_CONNECTION_LOCAL_MODEL=coder
+skein --connection local
+```
+
+Use `skein agents connections`, `/connections`, or `skein doctor` to inspect
+redacted source, protocol, endpoint, and authentication readiness. The common
+misspellings `SEKIN_API` and `SKEIN_BASEURL` are diagnostic-only and never
+treated as supported credential aliases.
 
 Relay protocol selection is explicit and is never inferred from the URL or
 model name:
 
-- OpenAI-compatible relays use `POST /chat/completions`, Bearer authentication,
-  and OpenAI message/tool-call shapes (`provider: compatible`).
-- Anthropic-compatible relays use `POST /messages`, `x-api-key`,
-  `anthropic-version`, and Anthropic content blocks (`provider: anthropic` with
-  a custom `baseUrl`).
+- `openai-responses` uses `POST /responses`, typed response items, stateless
+  full-history replay, `store: false`, and Responses SSE events. This is the
+  default for new connections.
+- `openai-chat` uses `POST /chat/completions` and OpenAI message/tool-call
+  shapes for relays that have not implemented Responses.
+- `anthropic-messages` uses the relay's Anthropic SDK-style base and appends
+  `/v1/messages` when needed. Configure `modelsBaseUrl` separately because its
+  model directory is still commonly OpenAI-shaped at `/v1/models`.
 
-Remote relays must use HTTPS. Loopback endpoints may use HTTP. To prevent an
-official key from being sent to a third party, a custom OpenAI, Anthropic, or
-Gemini base URL does not inherit the provider's official environment key; enter
-the relay credential explicitly. The first-run flow writes its user config with
-owner-only permissions and never renders the secret unmasked.
+All relay transports use the configured relay bearer credential or explicit
+`none`; credentials, queries, and URL userinfo are never stored in connection
+metadata. Remote relays must use HTTPS in onboarding, while loopback endpoints
+may use HTTP. The first-run flow writes only endpoint/model metadata and the
+credential environment-variable name to owner-only user configuration.
 
-Create project configuration, index, and start the TUI:
+Configure a user relay connection, index, and start the TUI:
 
 ```bash
 cd /path/to/project
-skein init --provider openai --model gpt-5 --yes
+skein agents setup
 skein index
 skein
 ```
+
+Existing direct `model.provider` configuration remains readable for backward
+compatibility, but new setup and connection discovery are relay-only.
 
 Use `@path` to guarantee a file is attached to the current request:
 

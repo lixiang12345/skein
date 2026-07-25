@@ -2,6 +2,7 @@ import {createInterface} from 'node:readline/promises';
 import chalk, {Chalk} from 'chalk';
 import type {
   AgentEvent,
+  ConnectionRuntimeInfo,
   PackedContext,
   RunCompletion,
   Session,
@@ -24,6 +25,8 @@ export interface ReporterOptions {
   quiet?: boolean;
   compact?: boolean;
   color?: boolean;
+  /** Runtime-only, already-redacted connection selection facts. */
+  connection?: ConnectionRuntimeInfo;
 }
 
 export class HeadlessReporter {
@@ -71,6 +74,7 @@ export class HeadlessReporter {
       process.stdout.write(`${JSON.stringify({
         type: 'session',
         ...outcome,
+        ...(this.options.connection ? {connection: this.options.connection} : {}),
         session: sessionSummary(session),
       })}\n`);
       return outcome;
@@ -79,6 +83,7 @@ export class HeadlessReporter {
       process.stdout.write(`${JSON.stringify({
         type: 'result',
         ...outcome,
+        ...(this.options.connection ? {connection: this.options.connection} : {}),
         response: this.finalResponse,
         session: sessionSummary(session),
         ...(completion ? {completion} : {}),
@@ -96,6 +101,12 @@ export class HeadlessReporter {
       process.stderr.write(this.paint.dim(
         `\n${this.glyphs.meta} ${session.changedFiles.length} changed files ${this.glyphs.separator} ${usage.toLocaleString()} tokens (${usageLabel}) ${this.glyphs.separator} session ${session.id.slice(0, 8)}\n`,
       ));
+      if (this.options.connection) {
+        const connection = this.options.connection;
+        process.stderr.write(this.paint.dim(
+          `${this.glyphs.meta} connection @${connection.id} ${this.glyphs.separator} ${connection.protocol} ${this.glyphs.separator} ${connection.source} ${this.glyphs.separator} ${connection.authType}/${connection.authStatus} ${this.glyphs.separator} inference ${connection.endpoint} ${this.glyphs.separator} models ${connection.modelsEndpoint}\n`,
+        ));
+      }
     }
     return outcome;
   }
@@ -108,6 +119,7 @@ export class HeadlessReporter {
         type: 'final',
         ...outcome,
         error: message,
+        ...(this.options.connection ? {connection: this.options.connection} : {}),
         ...(session ? {session: sessionSummary(session)} : {}),
       })}\n`);
       return outcome;
@@ -117,6 +129,7 @@ export class HeadlessReporter {
         type: 'result',
         ...outcome,
         error: message,
+        ...(this.options.connection ? {connection: this.options.connection} : {}),
         ...(session ? {session: sessionSummary(session)} : {}),
       }, null, 2)}\n`);
       return outcome;

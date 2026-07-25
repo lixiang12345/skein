@@ -27,6 +27,8 @@ export async function runExternalAgent(request: ExternalAgentRequest): Promise<E
   if (!executable) throw new Error(`${command.binary} CLI is not installed or resolves inside the workspace.`);
   const result = await runProcess(executable.executable, command.args, {
     cwd: request.workspace,
+    inheritEnv: false,
+    env: externalRuntimeEnvironment(request.runtime, executable.path),
     timeoutMs: request.timeoutMs ?? 180_000,
     maxOutputBytes: 2_000_000,
     ...(request.signal ? {signal: request.signal} : {}),
@@ -46,6 +48,26 @@ export async function runExternalAgent(request: ExternalAgentRequest): Promise<E
     usage: telemetry.usage,
     toolCalls: telemetry.toolCalls,
   };
+}
+
+/** Pass only terminal, locale, OS-home, and runtime-owned configuration facts. */
+export function externalRuntimeEnvironment(
+  runtime: ExternalAgentRuntime,
+  safePath: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const allowed = [
+    'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME',
+    'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'NO_COLOR',
+    'SystemRoot', 'WINDIR', 'COMSPEC', 'PATHEXT',
+  ];
+  if (runtime === 'codex') allowed.push('CODEX_HOME');
+  if (runtime === 'claude') allowed.push('CLAUDE_CONFIG_DIR');
+  const selected: NodeJS.ProcessEnv = {PATH: safePath};
+  for (const name of allowed) {
+    if (environment[name] !== undefined) selected[name] = environment[name];
+  }
+  return selected;
 }
 
 export function externalAgentCommand(request: ExternalAgentRequest): {binary: string; args: string[]} {

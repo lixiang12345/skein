@@ -7,6 +7,7 @@ import {ContextEngine} from '../context/context-engine.js';
 import {resolveExecutableRuntime, runProcess} from '../utils/process.js';
 import {PRODUCT_COMMAND, PRODUCT_NAME} from '../brand.js';
 import {resolveKittyKeyboardConfig} from '../ui/terminal-capabilities.js';
+import {connectionEnvironmentTypos} from '../agent/connection-catalog.js';
 import {resolveCliGlyphs, type CliGlyphs} from './glyphs.js';
 import {
   inspectHomeNamespace,
@@ -143,6 +144,22 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
       name: 'Legacy compatibility',
       ok: false,
       detail: `${sources.join(', ')}; legacy .mosaic paths and MOSAIC_* variables are supported through v${legacyCompatibility.supportedUntil}, deprecated in ${legacyCompatibility.deprecatedIn}, and removed in ${legacyCompatibility.removedIn}; ${migrationCommands.length ? `run ${migrationCommands.join(' and ')}; ` : ''}replace MOSAIC_* variables with SKEIN_*`,
+      required: false,
+    });
+  }
+  for (const typo of connectionEnvironmentTypos()) {
+    checks.push({
+      name: `Environment: ${typo.name}`,
+      ok: false,
+      detail: `unsupported spelling; use ${typo.replacement} (value was not read or printed)`,
+      required: false,
+    });
+  }
+  for (const connection of config.connectionCatalog?.profiles ?? []) {
+    checks.push({
+      name: `Connection: ${connection.id}`,
+      ok: connection.complete,
+      detail: `${connection.source} ${connection.provider}/${connection.protocol}; ${connection.authType}/${connection.authStatus}; inference ${connection.endpoint}; models ${connection.modelsEndpoint}${connection.issues.length ? `; ${connection.issues.join('; ')}` : ''}`,
       required: false,
     });
   }

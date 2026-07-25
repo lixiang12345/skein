@@ -152,16 +152,17 @@ The shortest setup path is the interactive user-level wizard:
 skein agents setup
 ```
 
-It asks for a connection name, provider, endpoint, credential environment
-variable, and default model. The wizard writes only the environment-variable
-name and saves shared settings under the user Skein namespace, so the same
-connection is available in every workspace. The non-interactive equivalent is
-useful for provisioning:
+It asks for a connection name, explicit relay transport, inference endpoint,
+optional model-catalog endpoint, `env` or `none` authentication, and default
+model. The wizard writes only the environment-variable name and saves shared
+settings under the user Skein namespace, so the same connection is available
+in every workspace. The non-interactive equivalent is useful for provisioning:
 
 ```bash
 skein agents setup --yes \
   --name team-relay \
   --provider compatible \
+  --protocol openai-responses \
   --base-url https://relay.example/v1 \
   --api-key-env TEAM_RELAY_API_KEY \
   --model openai/coding-model
@@ -172,25 +173,86 @@ the same next action without placing a secret in the session transcript.
 
 ### Authentication paths
 
-Skein keeps subscription login and API routing separate because they have
-different ownership and billing semantics:
+Skein keeps primary relay routing and delegated CLI login separate because they
+have different ownership and billing semantics:
 
 - Subscription users authenticate once in each installed official CLI. Codex
   supports ChatGPT subscription login, Claude Code supports Claude.ai/Teams
   login, and Gemini CLI supports Google account login. A Skein route with
   `runtime: "codex"`, `"claude"`, or `"grok"` reuses that CLI's local login;
   Skein does not read, copy, or persist its tokens.
-- Direct API users reference the provider's environment variable on each
-  route, or let a compatible parent route inherit the same endpoint.
+- Existing direct API routes remain readable for backward compatibility; they
+  are not the evolution path for new primary connections.
 - Relay/gateway users define one named `connection` and reuse it across model
-  routes. This matches gateways such as OpenRouter or LiteLLM that expose many
-  models behind one OpenAI-compatible endpoint and bearer key.
+  routes. This matches gateways such as OpenRouter, LiteLLM, and Vercel AI
+  Gateway that expose Responses, Chat Completions, and/or Anthropic Messages
+  behind one relay credential.
+
+### Primary model connection selection
+
+The primary agent and team routes share the same connection catalog. User
+configuration under `agents.connections` is merged with strict named
+environment profiles:
+
+```bash
+export SKEIN_CONNECTIONS=work,local
+export SKEIN_CONNECTION_WORK_PROVIDER=compatible
+export SKEIN_CONNECTION_WORK_PROTOCOL=openai-responses
+export SKEIN_CONNECTION_WORK_BASE_URL=https://relay.example/v1
+export SKEIN_CONNECTION_WORK_API_KEY_ENV=WORK_RELAY_KEY
+export SKEIN_CONNECTION_WORK_MODEL=coder
+export SKEIN_CONNECTION_LOCAL_PROVIDER=compatible
+export SKEIN_CONNECTION_LOCAL_PROTOCOL=openai-chat
+export SKEIN_CONNECTION_LOCAL_BASE_URL=http://127.0.0.1:11434/v1
+export SKEIN_CONNECTION_LOCAL_AUTH=none
+```
+
+IDs are lowercase shell-safe names. IDs that collide after environment
+normalization (for example `team-a` and `team_a`) are rejected. Endpoint and
+credential fields never cross profile boundaries. Selection precedence is an
+explicit `--connection`, the configured default, then automatic selection only
+when exactly one complete profile exists. Multiple complete profiles open a
+TTY selector; headless runs fail with `Pass --connection <name>`.
+
+New named connections are relay-only: `provider` is `compatible`, authentication
+is exactly `env` or `none`, and the transport is `openai-responses`,
+`openai-chat`, or `anthropic-messages`. OAuth, keychain, command helpers, and
+official account login are not connection schema variants. Custom legacy native
+provider endpoints do not inherit the provider's official API key.
+
+Responses is the default because OpenAI recommends it for new projects. Skein
+sets `store: false` and replays the complete returned output items plus tool
+outputs on the next request, which also works with stateless relay
+implementations. Protocol failures never trigger an automatic request through a
+different transport, avoiding duplicate inference and billing.
+
+Some relays publish two SDK base URLs for the same account. The OpenAI base
+usually includes `/v1`; the Anthropic base may be a root or provider prefix and
+expects the client to append `/v1/messages`. This is why inference `baseUrl` and
+OpenAI-style `modelsBaseUrl` are distinct. An Anthropic transport must configure
+`modelsBaseUrl` explicitly:
+
+```json
+{
+  "provider": "compatible",
+  "protocol": "anthropic-messages",
+  "baseUrl": "https://relay.example/anthropic",
+  "modelsBaseUrl": "https://relay.example/v1",
+  "defaultModel": "anthropic/coding-model",
+  "auth": {"type": "env", "name": "TEAM_RELAY_API_KEY"}
+}
+```
 
 Official authentication references: [Codex](https://developers.openai.com/codex/auth),
 [Claude Code](https://code.claude.com/docs/en/authentication), and
 [Gemini CLI](https://geminicli.com/docs/get-started/authentication/). Unified
 gateway examples: [OpenRouter](https://openrouter.ai/docs/quickstart) and
 [LiteLLM](https://docs.litellm.ai/docs/learn/gateway_quickstart).
+Transport references: [OpenAI Responses migration](https://developers.openai.com/api/docs/guides/migrate-to-responses),
+[OpenRouter Responses](https://openrouter.ai/docs/api/reference/responses/overview),
+[OpenRouter Anthropic Messages](https://openrouter.ai/docs/api/api-reference/anthropic-messages/create-a-message),
+[LiteLLM supported endpoints](https://docs.litellm.ai/docs/supported_endpoints),
+and [Vercel AI Gateway APIs](https://vercel.com/docs/ai-gateway/sdks-and-apis).
 
 ```json
 {
@@ -247,8 +309,10 @@ role. Add a profile entry only when that role needs a different model:
     "connections": {
       "team-relay": {
         "provider": "compatible",
+        "protocol": "openai-responses",
         "baseUrl": "https://relay.example/v1",
-        "apiKeyEnv": "TEAM_RELAY_API_KEY"
+        "defaultModel": "openai/coding-model",
+        "auth": {"type": "env", "name": "TEAM_RELAY_API_KEY"}
       }
     },
     "routes": {
@@ -268,8 +332,9 @@ need different connections:
     "connections": {
       "team-relay": {
         "provider": "compatible",
+        "protocol": "openai-responses",
         "baseUrl": "https://relay.example/v1",
-        "apiKeyEnv": "TEAM_RELAY_API_KEY"
+        "auth": {"type": "env", "name": "TEAM_RELAY_API_KEY"}
       }
     },
     "routes": {
@@ -295,15 +360,24 @@ need different connections:
 ```
 
 Run `skein agents connections` or `/connections` to inspect the resolved
-endpoint, environment-variable reference, and route count without revealing
-the key. For compatible/OpenAI connections, run
-`skein agents models team-relay` to inspect the provider's `/models` catalog
-before choosing route IDs. Discovery is read-only and does not rewrite config;
-native Anthropic/Gemini subscription catalogs remain owned by their official
-CLIs. Named connections are best kept in user-level configuration. A
+inference endpoint, model-catalog endpoint, environment-variable reference,
+and route count without revealing the key. Run `skein agents models
+team-relay` to inspect the relay's OpenAI-style `/models` catalog before
+choosing route IDs. Discovery is read-only and does not rewrite config. Its
+process-local cache is bounded to 32 endpoint/auth fingerprints with a 15-minute
+TTL and ETag revalidation; secret values are hashed into the in-memory
+fingerprint and never cached. `401`/`403` invalidates the entry and never returns
+stale models as an authentication success. Named connections are best kept in
+user-level configuration. A
 repository-owned connection or route remains disabled until the project config
 is explicitly trusted, preventing a cloned repository from redirecting a
 developer's key and source context to an attacker-controlled endpoint.
+
+External CLI runtimes remain separate from native connections. Skein launches
+them with a minimal environment containing only the safe executable path,
+home/temporary/locale facts, and that runtime's own config directory. Provider
+keys, `SKEIN_*` credentials, unrelated connection keys, and `NODE_OPTIONS` are
+not inherited by the child process.
 
 Routing precedence is explicit and predictable: a profile route overrides team
 defaults; a route that specifies `provider` without `connection` bypasses the

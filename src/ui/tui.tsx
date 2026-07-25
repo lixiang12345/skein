@@ -4,7 +4,7 @@ import {relative} from 'node:path';
 import type {AgentRunner} from '../agent/index.js';
 import {PLAN_MODE_INSTRUCTIONS} from '../agent/prompt.js';
 import {resolveAgentModelRoute} from '../agent/model-route.js';
-import {providerApiKeyEnv, redactEndpoint, saveUiPreference} from '../config.js';
+import {providerApiKeyEnv, saveUiPreference} from '../config.js';
 import {
   activeMentionToken,
   contextHitMentionSuggestions,
@@ -1031,10 +1031,19 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         return true;
       }
       const routes = Object.values(config.agents?.routes ?? {});
-      const connections = Object.entries(config.agents?.connections ?? {});
-      appendList('Model connections', connections.length ? connections.map(([name, connection]) => ({
-        label: `${name}  ${connection.provider}`,
-        detail: `${redactEndpoint(connection.baseUrl)}${separator}${connection.apiKeyEnv ? `env:${connection.apiKeyEnv}` : 'provider default environment'}${separator}${routes.filter((route) => route.connection === name).length} explicit routes${config.agents?.defaultConnection === name ? `${separator}team default` : ''}`,
+      const connections = config.connectionCatalog?.profiles ?? [];
+      appendList('Model connections', connections.length ? connections.map((connection) => ({
+        label: `${connection.id}  ${connection.provider}  ${connection.source}`,
+        detail: [
+          ...(config.activeConnection?.id === connection.id ? ['active'] : []),
+          ...(config.connectionCatalog?.defaultConnection === connection.id ? ['default'] : []),
+          `${connection.authType}/${connection.authStatus}`,
+          connection.protocol,
+          `inference ${connection.endpoint}`,
+          `models ${connection.modelsEndpoint}`,
+          `${routes.filter((route) => route.connection === connection.id).length} explicit routes`,
+        ].join(separator),
+        tone: connection.complete ? 'success' as const : 'warning' as const,
       })) : [{label: 'No named model connections configured.', detail: `Run ${PRODUCT_COMMAND} agents setup before starting another session.`}]);
       return true;
     }
@@ -1741,7 +1750,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const mcpServers = extensions?.mcpStatus() ?? [];
   const memoryStats = extensions?.memoryStats();
   const workspacePanelStatus: WorkspacePanelStatus | undefined = workspaceReadiness ? {
-    model: `${config.model.provider}/${config.model.model}`,
+    model: `${config.activeConnection && config.activeConnection.source !== 'legacy' ? `@${config.activeConnection.id} ` : ''}${config.model.provider}/${config.model.model}`,
     mode: interactionMode,
     context: workspaceReadiness.files ? 'ready' : 'empty',
     files: workspaceReadiness.files,

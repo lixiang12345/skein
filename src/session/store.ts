@@ -31,6 +31,16 @@ const toolCallSchema = z.object({
   arguments: z.record(z.string(), z.unknown()),
 }).strict();
 
+const providerMetadataSchema = z.object({
+  responses: z.object({
+    outputItems: z.array(z.record(z.string(), z.unknown())).max(128).superRefine((items, context) => {
+      if (new TextEncoder().encode(JSON.stringify(items)).byteLength > 4 * 1024 * 1024) {
+        context.addIssue({code: 'custom', message: 'Responses replay state exceeds 4 MiB'});
+      }
+    }),
+  }).strict().optional(),
+}).strict();
+
 const messageSchema = z.object({
   id: z.string(),
   role: z.enum(['system', 'user', 'assistant', 'tool']),
@@ -39,6 +49,7 @@ const messageSchema = z.object({
   toolCalls: z.array(toolCallSchema).optional(),
   toolCallId: z.string().optional(),
   name: z.string().optional(),
+  providerMetadata: providerMetadataSchema.optional(),
 }).strict();
 
 const taskSchema = z.object({
