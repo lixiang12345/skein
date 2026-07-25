@@ -57,8 +57,10 @@ inspectable index for code retrieval and no retrieval service dependency.
   artifact for bounded readback.
 - **Measurable token economy:** every model request records a privacy-safe
   receipt for stable, dynamic, history, retrieval, tool-result, and tool-schema
-  estimates, alongside actual provider usage when available. Receipts retain
-  only counts and runtime decisions, never prompt or source content.
+  estimates, alongside actual provider usage when available. OpenAI, Anthropic,
+  and Gemini cache/reasoning counters are normalized into session totals and
+  structured events when the provider reports them. Receipts retain only counts
+  and runtime decisions, never prompt or source content.
 - **Reversible work:** Skein snapshots affected files before mutation without
   touching your Git history.
 - **Resumable by default:** conversations, tasks, usage, and changed files live
@@ -94,7 +96,7 @@ To build, verify, and install a local package artifact from this checkout:
 
 ```bash
 npm run verify:package -- --output-dir artifacts/package
-npm install -g ./artifacts/package/skein-code-cli-0.3.21.tgz
+npm install -g ./artifacts/package/skein-code-cli-0.3.22.tgz
 ```
 
 To install the published package from npm:

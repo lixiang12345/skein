@@ -180,6 +180,9 @@ export interface ModelResponse {
   usage?: {
     inputTokens?: number;
     outputTokens?: number;
+    cachedInputTokens?: number;
+    cacheWriteInputTokens?: number;
+    reasoningTokens?: number;
   };
   stopReason?: string;
 }
@@ -196,6 +199,9 @@ export interface SessionTokenUsage {
   outputSource?: TokenMeasurementSource;
   actualInputTokens?: number;
   actualOutputTokens?: number;
+  actualCachedInputTokens?: number;
+  actualCacheWriteInputTokens?: number;
+  actualReasoningTokens?: number;
   estimatedInputTokens?: number;
   estimatedOutputTokens?: number;
 }
@@ -212,6 +218,9 @@ export interface TokenLedgerEntry {
   actual: {
     inputTokens?: number;
     outputTokens?: number;
+    cachedInputTokens?: number;
+    cacheWriteInputTokens?: number;
+    reasoningTokens?: number;
   };
   inputSource: 'actual' | 'estimated';
   outputSource: 'actual' | 'estimated';
@@ -624,7 +633,7 @@ export type AgentEvent =
   | {type: 'writer_lane'; id: string; status: WriterLaneStatus; detail: string; files?: string[]; checkpointId?: string}
   | {type: 'workflow'; name: string; step: string; status: TaskStatus}
   | {type: 'context_compacted'; omittedMessages: number; summaryTokens: number}
-  | {type: 'usage'; inputTokens: number; outputTokens: number; source?: TokenMeasurementSource; inputSource?: TokenMeasurementSource; outputSource?: TokenMeasurementSource; actual?: {inputTokens: number; outputTokens: number}; estimated?: {inputTokens: number; outputTokens: number}; receipt?: TokenLedgerEntry}
+  | {type: 'usage'; inputTokens: number; outputTokens: number; source?: TokenMeasurementSource; inputSource?: TokenMeasurementSource; outputSource?: TokenMeasurementSource; actual?: {inputTokens: number; outputTokens: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; reasoningTokens?: number}; estimated?: {inputTokens: number; outputTokens: number}; receipt?: TokenLedgerEntry}
   | {type: 'error'; error: Error}
   | {type: 'done'; reason: string; completion?: RunCompletion};
 

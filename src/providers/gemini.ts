@@ -23,7 +23,12 @@ interface GeminiResponse {
     }>};
     finishReason?: string;
   }>;
-  usageMetadata?: {promptTokenCount?: number; candidatesTokenCount?: number};
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    cachedContentTokenCount?: number;
+    thoughtsTokenCount?: number;
+  };
 }
 
 export class GeminiProvider implements ModelProvider {
@@ -80,14 +85,7 @@ export class GeminiProvider implements ModelProvider {
           name: part.functionCall?.name ?? 'unknown',
           arguments: safeJsonArguments(part.functionCall?.args),
         })),
-      usage: {
-        ...(data.usageMetadata?.promptTokenCount !== undefined
-          ? {inputTokens: data.usageMetadata.promptTokenCount}
-          : {}),
-        ...(data.usageMetadata?.candidatesTokenCount !== undefined
-          ? {outputTokens: data.usageMetadata.candidatesTokenCount}
-          : {}),
-      },
+      usage: normalizeGeminiUsage(data.usageMetadata),
       ...(candidate?.finishReason ? {stopReason: candidate.finishReason} : {}),
     };
   }
@@ -137,6 +135,8 @@ export class GeminiProvider implements ModelProvider {
     let content = '';
     let inputTokens: number | undefined;
     let outputTokens: number | undefined;
+    let cachedInputTokens: number | undefined;
+    let reasoningTokens: number | undefined;
     let stopReason: string | undefined;
     const toolCalls: ModelResponse['toolCalls'] = [];
     for await (const event of parseServerSentEvents(response)) {
@@ -147,6 +147,12 @@ export class GeminiProvider implements ModelProvider {
       }
       if (chunk.usageMetadata?.candidatesTokenCount !== undefined) {
         outputTokens = chunk.usageMetadata.candidatesTokenCount;
+      }
+      if (chunk.usageMetadata?.cachedContentTokenCount !== undefined) {
+        cachedInputTokens = chunk.usageMetadata.cachedContentTokenCount;
+      }
+      if (chunk.usageMetadata?.thoughtsTokenCount !== undefined) {
+        reasoningTokens = chunk.usageMetadata.thoughtsTokenCount;
       }
       const candidate = chunk.candidates?.[0];
       if (candidate?.finishReason) stopReason = candidate.finishReason;
@@ -172,6 +178,8 @@ export class GeminiProvider implements ModelProvider {
         usage: {
           ...(inputTokens !== undefined ? {inputTokens} : {}),
           ...(outputTokens !== undefined ? {outputTokens} : {}),
+          ...(cachedInputTokens !== undefined ? {cachedInputTokens} : {}),
+          ...(reasoningTokens !== undefined ? {reasoningTokens} : {}),
         },
         ...(stopReason ? {stopReason} : {}),
       },
@@ -189,15 +197,20 @@ function normalizeGeminiResponse(data: GeminiResponse): ModelResponse {
       name: part.functionCall?.name ?? 'unknown',
       arguments: safeJsonArguments(part.functionCall?.args),
     })),
-    usage: {
-      ...(data.usageMetadata?.promptTokenCount !== undefined
-        ? {inputTokens: data.usageMetadata.promptTokenCount}
-        : {}),
-      ...(data.usageMetadata?.candidatesTokenCount !== undefined
-        ? {outputTokens: data.usageMetadata.candidatesTokenCount}
-        : {}),
-    },
+    usage: normalizeGeminiUsage(data.usageMetadata),
     ...(candidate?.finishReason ? {stopReason: candidate.finishReason} : {}),
+  };
+}
+
+function normalizeGeminiUsage(
+  usage: GeminiResponse['usageMetadata'],
+): NonNullable<ModelResponse['usage']> {
+  return {
+    ...(usage?.promptTokenCount !== undefined ? {inputTokens: usage.promptTokenCount} : {}),
+    ...(usage?.candidatesTokenCount !== undefined ? {outputTokens: usage.candidatesTokenCount} : {}),
+    ...(usage?.cachedContentTokenCount !== undefined
+      ? {cachedInputTokens: usage.cachedContentTokenCount} : {}),
+    ...(usage?.thoughtsTokenCount !== undefined ? {reasoningTokens: usage.thoughtsTokenCount} : {}),
   };
 }
 

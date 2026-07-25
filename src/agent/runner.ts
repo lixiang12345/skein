@@ -410,6 +410,9 @@ export class AgentRunner {
         const {inputTokens, outputTokens} = turnUsage;
         const actualInputTokens = validTokenCount(response.usage?.inputTokens);
         const actualOutputTokens = validTokenCount(response.usage?.outputTokens);
+        const actualCachedInputTokens = validTokenCount(response.usage?.cachedInputTokens);
+        const actualCacheWriteInputTokens = validTokenCount(response.usage?.cacheWriteInputTokens);
+        const actualReasoningTokens = validTokenCount(response.usage?.reasoningTokens);
         const receipt = recordTokenLedger(this.session, {
           requestId: userMessage.id,
           turn,
@@ -421,6 +424,10 @@ export class AgentRunner {
           actual: {
             ...(actualInputTokens === undefined ? {} : {inputTokens: actualInputTokens}),
             ...(actualOutputTokens === undefined ? {} : {outputTokens: actualOutputTokens}),
+            ...(actualCachedInputTokens === undefined ? {} : {cachedInputTokens: actualCachedInputTokens}),
+            ...(actualCacheWriteInputTokens === undefined
+              ? {} : {cacheWriteInputTokens: actualCacheWriteInputTokens}),
+            ...(actualReasoningTokens === undefined ? {} : {reasoningTokens: actualReasoningTokens}),
           },
           inputSource: actualInputTokens === undefined ? 'estimated' : 'actual',
           outputSource: actualOutputTokens === undefined ? 'estimated' : 'actual',
@@ -441,6 +448,12 @@ export class AgentRunner {
           actual: {
             inputTokens: this.session.usage.actualInputTokens ?? 0,
             outputTokens: this.session.usage.actualOutputTokens ?? 0,
+            ...(this.session.usage.actualCachedInputTokens === undefined
+              ? {} : {cachedInputTokens: this.session.usage.actualCachedInputTokens}),
+            ...(this.session.usage.actualCacheWriteInputTokens === undefined
+              ? {} : {cacheWriteInputTokens: this.session.usage.actualCacheWriteInputTokens}),
+            ...(this.session.usage.actualReasoningTokens === undefined
+              ? {} : {reasoningTokens: this.session.usage.actualReasoningTokens}),
           },
           estimated: {
             inputTokens: this.session.usage.estimatedInputTokens ?? 0,
@@ -1269,6 +1282,21 @@ function recordTokenUsage(
     session.usage.actualOutputTokens = (session.usage.actualOutputTokens ?? 0) + outputActual;
   } else {
     session.usage.estimatedOutputTokens = (session.usage.estimatedOutputTokens ?? 0) + outputTokens;
+  }
+  const cachedInputActual = validTokenCount(providerUsage?.cachedInputTokens);
+  const cacheWriteInputActual = validTokenCount(providerUsage?.cacheWriteInputTokens);
+  const reasoningActual = validTokenCount(providerUsage?.reasoningTokens);
+  if (cachedInputActual !== undefined) {
+    session.usage.actualCachedInputTokens =
+      (session.usage.actualCachedInputTokens ?? 0) + cachedInputActual;
+  }
+  if (cacheWriteInputActual !== undefined) {
+    session.usage.actualCacheWriteInputTokens =
+      (session.usage.actualCacheWriteInputTokens ?? 0) + cacheWriteInputActual;
+  }
+  if (reasoningActual !== undefined) {
+    session.usage.actualReasoningTokens =
+      (session.usage.actualReasoningTokens ?? 0) + reasoningActual;
   }
   session.usage.inputSource = mergeMeasurementSource(
     priorInputSource,

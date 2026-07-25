@@ -34,6 +34,58 @@ describe('sessions and checkpoints', () => {
     expect((await store.list())[0]?.title).toBe('Fix queue');
   });
 
+  it('round-trips normalized provider usage in session totals and token receipts', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-session-provider-usage-'));
+    roots.push(root);
+    const store = new SessionStore(root);
+    const session = createSession({workspace: root, model: 'test', provider: 'compatible'});
+    session.usage.actualCachedInputTokens = 0;
+    session.usage.actualCacheWriteInputTokens = 3;
+    session.usage.actualReasoningTokens = 4;
+    session.tokenLedger = [{
+      requestId: '00000000-0000-4000-8000-000000000001',
+      turn: 1,
+      recordedAt: '2026-07-25T00:00:00.000Z',
+      estimated: {
+        stableTokens: 1,
+        dynamicTokens: 2,
+        conversationTokens: 3,
+        toolResultTokens: 4,
+        retrievedTokens: 5,
+        toolSchemaTokens: 6,
+        estimatedInputTokens: 21,
+        outputAllowanceTokens: 8,
+        outputTokens: 7,
+      },
+      actual: {
+        inputTokens: 20,
+        outputTokens: 7,
+        cachedInputTokens: 0,
+        cacheWriteInputTokens: 3,
+        reasoningTokens: 4,
+      },
+      inputSource: 'actual',
+      outputSource: 'actual',
+      tools: {loaded: [], deferredCount: 0},
+      retrieval: {engine: 'none', discarded: []},
+    }];
+
+    await store.save(session);
+    const loaded = await store.load(session.id);
+    expect(loaded.usage).toMatchObject({
+      actualCachedInputTokens: 0,
+      actualCacheWriteInputTokens: 3,
+      actualReasoningTokens: 4,
+    });
+    expect(loaded.tokenLedger?.[0]?.actual).toEqual({
+      inputTokens: 20,
+      outputTokens: 7,
+      cachedInputTokens: 0,
+      cacheWriteInputTokens: 3,
+      reasoningTokens: 4,
+    });
+  });
+
   it('round-trips content-free duplication audit receipts', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-session-duplication-'));
     roots.push(root);

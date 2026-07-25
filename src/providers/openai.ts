@@ -15,6 +15,13 @@ import {
   type ModelProvider,
 } from './provider.js';
 
+interface OpenAIUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  prompt_tokens_details?: {cached_tokens?: number};
+  completion_tokens_details?: {reasoning_tokens?: number};
+}
+
 interface OpenAIResponse {
   choices?: Array<{
     message?: {
@@ -26,7 +33,7 @@ interface OpenAIResponse {
     };
     finish_reason?: string;
   }>;
-  usage?: {prompt_tokens?: number; completion_tokens?: number};
+  usage?: OpenAIUsage;
 }
 
 interface OpenAIStreamResponse {
@@ -41,7 +48,7 @@ interface OpenAIStreamResponse {
     };
     finish_reason?: string | null;
   }>;
-  usage?: {prompt_tokens?: number; completion_tokens?: number};
+  usage?: OpenAIUsage;
 }
 
 export class OpenAIProvider implements ModelProvider {
@@ -166,6 +173,8 @@ export class OpenAIProvider implements ModelProvider {
     let content = '';
     let inputTokens: number | undefined;
     let outputTokens: number | undefined;
+    let cachedInputTokens: number | undefined;
+    let reasoningTokens: number | undefined;
     let stopReason: string | undefined;
     const calls = new Map<number, {id: string; name: string; arguments: string}>();
     for await (const event of parseServerSentEvents(response)) {
@@ -173,6 +182,12 @@ export class OpenAIProvider implements ModelProvider {
       const chunk = JSON.parse(event.data) as OpenAIStreamResponse;
       if (chunk.usage?.prompt_tokens !== undefined) inputTokens = chunk.usage.prompt_tokens;
       if (chunk.usage?.completion_tokens !== undefined) outputTokens = chunk.usage.completion_tokens;
+      if (chunk.usage?.prompt_tokens_details?.cached_tokens !== undefined) {
+        cachedInputTokens = chunk.usage.prompt_tokens_details.cached_tokens;
+      }
+      if (chunk.usage?.completion_tokens_details?.reasoning_tokens !== undefined) {
+        reasoningTokens = chunk.usage.completion_tokens_details.reasoning_tokens;
+      }
       const choice = chunk.choices?.[0];
       if (choice?.finish_reason) stopReason = choice.finish_reason;
       const delta = choice?.delta;
@@ -201,6 +216,8 @@ export class OpenAIProvider implements ModelProvider {
         usage: {
           ...(inputTokens !== undefined ? {inputTokens} : {}),
           ...(outputTokens !== undefined ? {outputTokens} : {}),
+          ...(cachedInputTokens !== undefined ? {cachedInputTokens} : {}),
+          ...(reasoningTokens !== undefined ? {reasoningTokens} : {}),
         },
         ...(stopReason ? {stopReason} : {}),
       },
@@ -219,11 +236,19 @@ function normalizeOpenAIResponse(data: OpenAIResponse): ModelResponse {
       name: call.function?.name ?? 'unknown',
       arguments: safeJsonArguments(call.function?.arguments),
     })),
-    usage: {
-      ...(data.usage?.prompt_tokens !== undefined ? {inputTokens: data.usage.prompt_tokens} : {}),
-      ...(data.usage?.completion_tokens !== undefined ? {outputTokens: data.usage.completion_tokens} : {}),
-    },
+    usage: normalizeOpenAIUsage(data.usage),
     ...(choice?.finish_reason ? {stopReason: choice.finish_reason} : {}),
+  };
+}
+
+function normalizeOpenAIUsage(usage: OpenAIUsage | undefined): NonNullable<ModelResponse['usage']> {
+  return {
+    ...(usage?.prompt_tokens !== undefined ? {inputTokens: usage.prompt_tokens} : {}),
+    ...(usage?.completion_tokens !== undefined ? {outputTokens: usage.completion_tokens} : {}),
+    ...(usage?.prompt_tokens_details?.cached_tokens !== undefined
+      ? {cachedInputTokens: usage.prompt_tokens_details.cached_tokens} : {}),
+    ...(usage?.completion_tokens_details?.reasoning_tokens !== undefined
+      ? {reasoningTokens: usage.completion_tokens_details.reasoning_tokens} : {}),
   };
 }
 

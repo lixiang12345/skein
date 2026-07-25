@@ -15,6 +15,13 @@ import {
   type ModelProvider,
 } from './provider.js';
 
+interface AnthropicUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+}
+
 interface AnthropicResponse {
   content?: Array<{
     type: 'text' | 'tool_use';
@@ -24,13 +31,13 @@ interface AnthropicResponse {
     input?: unknown;
   }>;
   stop_reason?: string;
-  usage?: {input_tokens?: number; output_tokens?: number};
+  usage?: AnthropicUsage;
 }
 
 interface AnthropicStreamEvent {
   type?: string;
   index?: number;
-  message?: {usage?: {input_tokens?: number; output_tokens?: number}};
+  message?: {usage?: AnthropicUsage};
   content_block?: {
     type?: 'text' | 'tool_use';
     text?: string;
@@ -44,7 +51,7 @@ interface AnthropicStreamEvent {
     partial_json?: string;
     stop_reason?: string | null;
   };
-  usage?: {input_tokens?: number; output_tokens?: number};
+  usage?: AnthropicUsage;
 }
 
 export class AnthropicProvider implements ModelProvider {
@@ -103,14 +110,7 @@ export class AnthropicProvider implements ModelProvider {
           name: block.name ?? 'unknown',
           arguments: safeJsonArguments(block.input),
         })),
-      usage: {
-        ...(data.usage?.input_tokens !== undefined
-          ? {inputTokens: data.usage.input_tokens}
-          : {}),
-        ...(data.usage?.output_tokens !== undefined
-          ? {outputTokens: data.usage.output_tokens}
-          : {}),
-      },
+      usage: normalizeAnthropicUsage(data.usage),
       ...(data.stop_reason ? {stopReason: data.stop_reason} : {}),
     };
   }
@@ -161,6 +161,8 @@ export class AnthropicProvider implements ModelProvider {
     let content = '';
     let inputTokens: number | undefined;
     let outputTokens: number | undefined;
+    let cachedInputTokens: number | undefined;
+    let cacheWriteInputTokens: number | undefined;
     let stopReason: string | undefined;
     const calls = new Map<number, {
       id: string;
@@ -175,6 +177,13 @@ export class AnthropicProvider implements ModelProvider {
       }
       if (chunk.usage?.input_tokens !== undefined) inputTokens = chunk.usage.input_tokens;
       if (chunk.usage?.output_tokens !== undefined) outputTokens = chunk.usage.output_tokens;
+      const usage = chunk.usage ?? chunk.message?.usage;
+      if (usage?.cache_read_input_tokens !== undefined) {
+        cachedInputTokens = usage.cache_read_input_tokens;
+      }
+      if (usage?.cache_creation_input_tokens !== undefined) {
+        cacheWriteInputTokens = usage.cache_creation_input_tokens;
+      }
       if (chunk.delta?.stop_reason) stopReason = chunk.delta.stop_reason;
       const index = chunk.index ?? 0;
       if (chunk.type === 'content_block_start' && chunk.content_block?.type === 'text') {
@@ -214,6 +223,8 @@ export class AnthropicProvider implements ModelProvider {
         usage: {
           ...(inputTokens !== undefined ? {inputTokens} : {}),
           ...(outputTokens !== undefined ? {outputTokens} : {}),
+          ...(cachedInputTokens !== undefined ? {cachedInputTokens} : {}),
+          ...(cacheWriteInputTokens !== undefined ? {cacheWriteInputTokens} : {}),
         },
         ...(stopReason ? {stopReason} : {}),
       },
@@ -230,11 +241,19 @@ function normalizeAnthropicResponse(data: AnthropicResponse): ModelResponse {
       name: block.name ?? 'unknown',
       arguments: safeJsonArguments(block.input),
     })),
-    usage: {
-      ...(data.usage?.input_tokens !== undefined ? {inputTokens: data.usage.input_tokens} : {}),
-      ...(data.usage?.output_tokens !== undefined ? {outputTokens: data.usage.output_tokens} : {}),
-    },
+    usage: normalizeAnthropicUsage(data.usage),
     ...(data.stop_reason ? {stopReason: data.stop_reason} : {}),
+  };
+}
+
+function normalizeAnthropicUsage(usage: AnthropicUsage | undefined): NonNullable<ModelResponse['usage']> {
+  return {
+    ...(usage?.input_tokens !== undefined ? {inputTokens: usage.input_tokens} : {}),
+    ...(usage?.output_tokens !== undefined ? {outputTokens: usage.output_tokens} : {}),
+    ...(usage?.cache_read_input_tokens !== undefined
+      ? {cachedInputTokens: usage.cache_read_input_tokens} : {}),
+    ...(usage?.cache_creation_input_tokens !== undefined
+      ? {cacheWriteInputTokens: usage.cache_creation_input_tokens} : {}),
   };
 }
 

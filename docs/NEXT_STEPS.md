@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.21`.
+- Current repository version: `0.3.22`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -41,8 +41,8 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.21.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.21.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.22.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.22.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
@@ -107,6 +107,15 @@ receipts record the deferred count. MCP tools remain `network` operations and
 hidden tool calls remain rejected by the existing boundary. This release does
 not defer MCP connection or remote `listTools` discovery and does not claim the
 provider-cache or Context Compaction 2.0 follow-up work is complete.
+
+Version `0.3.22` normalizes provider-reported cache and reasoning usage across
+streaming and non-streaming OpenAI, Anthropic, and Gemini responses. Token
+Ledger receipts, cumulative session usage, and JSON/JSONL events retain cached
+input, cache-write input, and reasoning counts when present, including explicit
+zero values. The session schema remains compatible with older records. This is
+measurement plumbing only: it does not enable provider cache controls, define a
+stable cache key, defer MCP connection/discovery, run paid same-model task A/B,
+or complete Context Compaction 2.0.
 
 ### P0-D: Repository reuse and calibrated duplication enforcement
 

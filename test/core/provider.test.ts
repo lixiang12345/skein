@@ -13,7 +13,15 @@ describe('provider streaming helpers', () => {
       expect(init?.headers).toMatchObject({authorization: 'Bearer relay-key', 'content-type': 'application/json'});
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       expect(body).toMatchObject({model: 'relay-model', messages: [], max_tokens: 1024});
-      return new Response(JSON.stringify({choices: [{message: {content: 'ok'}, finish_reason: 'stop'}]}), {
+      return new Response(JSON.stringify({
+        choices: [{message: {content: 'ok'}, finish_reason: 'stop'}],
+        usage: {
+          prompt_tokens: 20,
+          completion_tokens: 7,
+          prompt_tokens_details: {cached_tokens: 12},
+          completion_tokens_details: {reasoning_tokens: 3},
+        },
+      }), {
         headers: {'content-type': 'application/json'},
       });
     });
@@ -21,7 +29,10 @@ describe('provider streaming helpers', () => {
     const provider = new OpenAIProvider({
       provider: 'compatible', model: 'relay-model', baseUrl: 'https://relay.example/v1', apiKey: 'relay-key', maxTokens: 1024,
     });
-    expect((await provider.complete([], [])).content).toBe('ok');
+    await expect(provider.complete([], [])).resolves.toMatchObject({
+      content: 'ok',
+      usage: {inputTokens: 20, outputTokens: 7, cachedInputTokens: 12, reasoningTokens: 3},
+    });
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
@@ -35,7 +46,15 @@ describe('provider streaming helpers', () => {
       });
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       expect(body).toMatchObject({model: 'relay-claude', messages: [], max_tokens: 2048});
-      return new Response(JSON.stringify({content: [{type: 'text', text: 'ok'}]}), {
+      return new Response(JSON.stringify({
+        content: [{type: 'text', text: 'ok'}],
+        usage: {
+          input_tokens: 8,
+          output_tokens: 2,
+          cache_read_input_tokens: 5,
+          cache_creation_input_tokens: 1,
+        },
+      }), {
         headers: {'content-type': 'application/json'},
       });
     });
@@ -43,8 +62,29 @@ describe('provider streaming helpers', () => {
     const provider = new AnthropicProvider({
       provider: 'anthropic', model: 'relay-claude', baseUrl: 'https://relay.example/v1', apiKey: 'relay-key', maxTokens: 2048,
     });
-    expect((await provider.complete([], [])).content).toBe('ok');
+    await expect(provider.complete([], [])).resolves.toMatchObject({
+      content: 'ok',
+      usage: {inputTokens: 8, outputTokens: 2, cachedInputTokens: 5, cacheWriteInputTokens: 1},
+    });
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('normalizes Gemini non-streaming usage and preserves explicit zero counts', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      candidates: [{content: {parts: [{text: 'ok'}]}, finishReason: 'STOP'}],
+      usageMetadata: {
+        promptTokenCount: 9,
+        candidatesTokenCount: 2,
+        cachedContentTokenCount: 0,
+        thoughtsTokenCount: 0,
+      },
+    }), {headers: {'content-type': 'application/json'}})));
+    const provider = new GeminiProvider({provider: 'gemini', model: 'test', apiKey: 'key'});
+
+    await expect(provider.complete([], [])).resolves.toMatchObject({
+      content: 'ok',
+      usage: {inputTokens: 9, outputTokens: 2, cachedInputTokens: 0, reasoningTokens: 0},
+    });
   });
 
   it('parses incremental SSE payloads, comments, multiline data, and a final unterminated event', async () => {
@@ -72,7 +112,12 @@ describe('provider streaming helpers', () => {
       {choices: [{delta: {content: 'Hello '}}]},
       {choices: [{delta: {content: 'world'}}]},
       {choices: [{delta: {tool_calls: [{index: 0, id: 'call-1', function: {name: 'read_file', arguments: '{"path":"a.ts"}'}}]}}]},
-      {choices: [{finish_reason: 'tool_calls'}], usage: {prompt_tokens: 7, completion_tokens: 3}},
+      {choices: [{finish_reason: 'tool_calls'}], usage: {
+        prompt_tokens: 7,
+        completion_tokens: 3,
+        prompt_tokens_details: {cached_tokens: 4},
+        completion_tokens_details: {reasoning_tokens: 2},
+      }},
       '[DONE]',
     ])));
     const provider = new OpenAIProvider({provider: 'compatible', model: 'test', baseUrl: 'http://127.0.0.1:1234'});
@@ -87,7 +132,7 @@ describe('provider streaming helpers', () => {
         response: expect.objectContaining({
           content: 'Hello world',
           toolCalls: [{id: 'call-1', name: 'read_file', arguments: {path: 'a.ts'}}],
-          usage: {inputTokens: 7, outputTokens: 3},
+          usage: {inputTokens: 7, outputTokens: 3, cachedInputTokens: 4, reasoningTokens: 2},
         }),
       }),
     ]);
@@ -95,7 +140,11 @@ describe('provider streaming helpers', () => {
 
   it('normalizes Anthropic SSE text and streamed JSON tool input', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => sse([
-      {type: 'message_start', message: {usage: {input_tokens: 5}}},
+      {type: 'message_start', message: {usage: {
+        input_tokens: 5,
+        cache_read_input_tokens: 3,
+        cache_creation_input_tokens: 1,
+      }}},
       {type: 'content_block_start', index: 0, content_block: {type: 'text'}},
       {type: 'content_block_delta', index: 0, delta: {type: 'text_delta', text: 'Done.'}},
       {type: 'content_block_start', index: 1, content_block: {type: 'tool_use', id: 'tool-1', name: 'read_file', input: {}}},
@@ -113,7 +162,7 @@ describe('provider streaming helpers', () => {
         response: expect.objectContaining({
           content: 'Done.',
           toolCalls: [{id: 'tool-1', name: 'read_file', arguments: {path: 'a.ts'}}],
-          usage: {inputTokens: 5, outputTokens: 2},
+          usage: {inputTokens: 5, outputTokens: 2, cachedInputTokens: 3, cacheWriteInputTokens: 1},
           stopReason: 'tool_use',
         }),
       }),
@@ -122,8 +171,12 @@ describe('provider streaming helpers', () => {
 
   it('normalizes Gemini SSE text, function calls, and usage', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => sse([
-      {candidates: [{content: {parts: [{text: 'Hello'}]}}], usageMetadata: {promptTokenCount: 4}},
-      {candidates: [{content: {parts: [{functionCall: {name: 'list_files', args: {path: '.'}}}]}, finishReason: 'STOP'}], usageMetadata: {candidatesTokenCount: 1}},
+      {candidates: [{content: {parts: [{text: 'Hello'}]}}], usageMetadata: {
+        promptTokenCount: 4, cachedContentTokenCount: 2,
+      }},
+      {candidates: [{content: {parts: [{functionCall: {name: 'list_files', args: {path: '.'}}}]}, finishReason: 'STOP'}], usageMetadata: {
+        candidatesTokenCount: 1, thoughtsTokenCount: 3,
+      }},
     ])));
     const provider = new GeminiProvider({provider: 'gemini', model: 'test', apiKey: 'key'});
 
@@ -135,7 +188,7 @@ describe('provider streaming helpers', () => {
       response: {
         content: 'Hello',
         toolCalls: [expect.objectContaining({name: 'list_files', arguments: {path: '.'}})],
-        usage: {inputTokens: 4, outputTokens: 1},
+        usage: {inputTokens: 4, outputTokens: 1, cachedInputTokens: 2, reasoningTokens: 3},
         stopReason: 'STOP',
       },
     });

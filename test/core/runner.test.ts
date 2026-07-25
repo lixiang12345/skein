@@ -593,7 +593,13 @@ describe('AgentRunner', () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-usage-actual-'));
     roots.push(root);
     const provider = new QueueProvider([{
-      content: 'Done.', toolCalls: [], usage: {inputTokens: 17, outputTokens: 4},
+      content: 'Done.', toolCalls: [], usage: {
+        inputTokens: 17,
+        outputTokens: 4,
+        cachedInputTokens: 9,
+        cacheWriteInputTokens: 2,
+        reasoningTokens: 3,
+      },
     }]);
     const events: AgentEvent[] = [];
     const runner = new AgentRunner({config: config(root), provider, contextEngine: context});
@@ -606,6 +612,7 @@ describe('AgentRunner', () => {
       inputTokens: 17, outputTokens: 4, source: 'actual',
       inputSource: 'actual', outputSource: 'actual',
       actualInputTokens: 17, actualOutputTokens: 4,
+      actualCachedInputTokens: 9, actualCacheWriteInputTokens: 2, actualReasoningTokens: 3,
     });
     const prompt = events.find((event) => event.type === 'prompt');
     expect(prompt).toMatchObject({
@@ -622,9 +629,19 @@ describe('AgentRunner', () => {
       type: 'usage',
       receipt: {
         inputSource: 'actual', outputSource: 'actual',
-        actual: {inputTokens: 17, outputTokens: 4},
+        actual: {
+          inputTokens: 17,
+          outputTokens: 4,
+          cachedInputTokens: 9,
+          cacheWriteInputTokens: 2,
+          reasoningTokens: 3,
+        },
         estimated: expect.objectContaining({toolResultTokens: expect.any(Number)}),
       },
+    });
+    expect(events.find((event) => event.type === 'usage')).toMatchObject({
+      type: 'usage',
+      actual: {cachedInputTokens: 9, cacheWriteInputTokens: 2, reasoningTokens: 3},
     });
   });
 

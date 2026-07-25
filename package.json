@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.21",
+  "version": "0.3.22",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,6 +16,9 @@
   },
   "skein": {
     "releaseNotes": [
+      "OpenAI, Anthropic, and Gemini usage now normalizes cached input, cache-write input, and reasoning tokens when reported",
+      "Token Ledger, session totals, and structured usage events preserve provider cache and reasoning counts without prompt content",
+      "Streaming, non-streaming, explicit-zero, and legacy-session compatibility paths are covered without claiming cache activation",
       "Failed configured verification output yields bounded current-run diagnostic ranking without persisting paths",
       "Diagnostic hints cannot create zero-relevance hits and are cleared on success or the next agent run",
       "Python absolute and relative module imports now contribute deterministic offline graph adjacency",

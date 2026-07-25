@@ -114,7 +114,13 @@ describe('HeadlessReporter', () => {
     reporter.onEvent({
       type: 'usage', inputTokens: 120, outputTokens: 20, source: 'mixed',
       inputSource: 'actual', outputSource: 'estimated',
-      actual: {inputTokens: 120, outputTokens: 0},
+      actual: {
+        inputTokens: 120,
+        outputTokens: 0,
+        cachedInputTokens: 80,
+        cacheWriteInputTokens: 10,
+        reasoningTokens: 4,
+      },
       estimated: {inputTokens: 0, outputTokens: 20},
     });
 
@@ -122,7 +128,10 @@ describe('HeadlessReporter', () => {
     expect(lines).toEqual([
       expect.objectContaining({type: 'context', packed: expect.objectContaining({budgetTier: 'focused', budgetTokens: 2_000})}),
       expect.objectContaining({type: 'prompt', breakdown: expect.objectContaining({toolSchemaTokens: 50, outputAllowanceTokens: 800})}),
-      expect.objectContaining({type: 'usage', source: 'mixed', outputSource: 'estimated'}),
+      expect.objectContaining({
+        type: 'usage', source: 'mixed', outputSource: 'estimated',
+        actual: expect.objectContaining({cachedInputTokens: 80, cacheWriteInputTokens: 10, reasoningTokens: 4}),
+      }),
     ]);
     expect(JSON.stringify(lines[1])).not.toContain('private source bytes');
   });
