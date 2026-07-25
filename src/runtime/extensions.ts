@@ -74,7 +74,7 @@ export class ExtensionRuntime implements PromptContextProvider {
     }
   }
 
-  async initialize(registry: ToolRegistry, signal?: AbortSignal): Promise<void> {
+  async initialize(registry: ToolRegistry, _signal?: AbortSignal): Promise<void> {
     if (this.initialized) return;
     if (this.memory) {
       await this.memory.open();
@@ -88,8 +88,8 @@ export class ExtensionRuntime implements PromptContextProvider {
     }
     await this.skills?.discover();
     if (this.mcp) {
-      await this.mcp.connectAll(signal);
-      this.mcp.registerTools(registry);
+      const activationTool = this.mcp.activationTool(registry);
+      if (activationTool) registry.register(activationTool);
     }
     await this.profiles?.discover();
     if (this.config.agents?.enabled && this.profiles &&

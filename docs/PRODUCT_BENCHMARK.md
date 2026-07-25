@@ -20,7 +20,7 @@ product surfaces.
 
 | Area | Mainstream signal | Skein today | Product implication |
 | --- | --- | --- | --- |
-| Context | Auggie automatically indexes projects and offers context-aware interactive and print modes. Its MCP Tool Search avoids loading every remote schema up front. See [Auggie overview](https://docs.augmentcode.com/cli/overview) and [integrations](https://docs.augmentcode.com/cli/integrations). | Local BM25/path/symbol retrieval with language-aware chunks, current-file freshness checks, diversity-aware token packing, progressive Skills, and hard token caps. MCP schemas are registered eagerly. | Benchmark local recall and latency by language, then make MCP tool discovery lazy and measurable. |
+| Context | Auggie automatically indexes projects and offers context-aware interactive and print modes. Its MCP Tool Search avoids loading every remote schema up front. See [Auggie overview](https://docs.augmentcode.com/cli/overview) and [integrations](https://docs.augmentcode.com/cli/integrations). | Local BM25/path/symbol retrieval with language-aware chunks, current-file freshness checks, diversity-aware token packing, progressive Skills, and hard token caps. Normal chat startup exposes only a compact `mcp_activate` server catalog; remote MCP connection, `listTools`, and up to eight relevant schemas are loaded on demand. | Measure lazy MCP activation cost and add per-server trust review/sandboxing before marketplace-style plugin support. |
 | Tool result economy | FastCtx argues for structured file/search tools, explicit pagination, bounded output tiers, and persistent background-job logs so the model spends fewer turns on shell mechanics. See the [FastCtx repository](https://github.com/yc-duan/fastctx) and its [LINUX DO introduction](https://linux.do/t/topic/2612425). These are design signals, not independent evidence that every model becomes more accurate. | Native tools already use closed schemas and permission/checkpoint boundaries. Oversized results now use a dynamic token budget, head/tail receipts, source-truncation telemetry, and redacted session-scoped local readback. Single-file UTF-8 reads and foreground-only shell execution remain narrower than FastCtx. | Keep FastCtx optional through MCP instead of duplicating the default kernel. Add measured read/list/search continuation and batch reading before considering persistent background jobs. |
 | Workflow modes | Claude Code documents isolated subagents, agent teams, hooks, code intelligence, Skills, MCP, and plugins in one extension model. See [Claude Code extensions](https://code.claude.com/docs/en/features-overview). Copilot CLI exposes Plan and Autopilot modes. See [Copilot CLI](https://github.com/features/copilot/cli). | Ask and Build modes exist; Ask is read-only but does not produce a named approval-ready plan. | Add an explicit Plan mode. Keep it read-only and require approval before Build. |
 | Code intelligence | Claude Code advertises language-server-backed symbol navigation and live type errors. | Retrieval is lexical/BM25/path/symbol index based; no LSP diagnostics or rename graph. | Add an optional LSP adapter after storage and scheduler foundations. |
@@ -43,8 +43,9 @@ product surfaces.
    quarantining the canonical copy; `--recover` handles interrupted operations;
    `--home` covers user-level state. Shared leases cover live managed writers,
    while namespace mutation requires an exclusive crash-released lease.
-4. **P1 MCP progressive disclosure:** search and activate remote tool schemas
-   on demand instead of placing every schema in every model request.
+4. **P1 MCP trust hardening:** add per-server review, capability manifests,
+   activation telemetry, and optional stdio sandboxing on top of lazy MCP
+   activation.
 5. **P1 scheduler and isolation:** retain the shipped task-budget telemetry and
    reviewer loop, then add cancellation propagation, deterministic integration,
    and single-writer/worktree boundaries.

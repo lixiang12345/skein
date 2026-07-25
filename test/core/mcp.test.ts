@@ -9,9 +9,10 @@ import {afterEach, describe, expect, it, vi} from 'vitest';
 import {McpManager, type McpClientLike} from '../../src/mcp/manager.js';
 import {createMcpToolAdapter, makeMcpToolName} from '../../src/mcp/tool.js';
 import {validateHttpConfig, validateStdioConfig} from '../../src/mcp/validation.js';
+import {ExtensionRuntime} from '../../src/runtime/extensions.js';
 import {ToolRegistry} from '../../src/tools/registry.js';
 import type {ToolExecutionContext} from '../../src/tools/types.js';
-import type {McpConfig, McpServerConfig} from '../../src/types.js';
+import type {McpConfig, McpServerConfig, MosaicConfig} from '../../src/types.js';
 
 const temporaryDirectories: string[] = [];
 
@@ -144,6 +145,124 @@ describe('MCP validation and tool adapters', () => {
 });
 
 describe('McpManager', () => {
+  it('keeps chat startup lazy and activates only request-relevant schemas', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-mcp-lazy-'));
+    temporaryDirectories.push(root);
+    const connect = vi.fn(async () => undefined);
+    const listTools = vi.fn(async () => ({
+      tools: Array.from({length: 10}, (_, index) => ({
+        name: index === 9 ? 'alpha_search' : `remote_${index}`,
+        description: index === 9 ? 'Inspect alpha records.' : `Remote operation ${index}.`,
+        inputSchema: {type: 'object' as const, properties: {}},
+      })),
+    }));
+    const manager = new McpManager(config({
+      description: 'Search internal documentation.',
+    }), {
+      clientFactory: () => fakeClient({connect, listTools}),
+      transportFactory: () => fakeTransport(),
+    });
+    const registry = new ToolRegistry();
+    const runtimeConfig = extensionConfig(root, config({
+      description: 'Search internal documentation.',
+    }));
+    const runtime = await ExtensionRuntime.create(runtimeConfig, registry, {mcpManager: manager});
+    try {
+      expect(connect).not.toHaveBeenCalled();
+      expect(listTools).not.toHaveBeenCalled();
+      expect(manager.status('docs')).toMatchObject({state: 'disconnected', toolCount: 0});
+      const activation = registry.get('mcp_activate');
+      expect(activation?.definition).toMatchObject({category: 'network'});
+      expect(activation?.definition.description).toContain('docs: Search internal documentation.');
+      expect(activation?.definition.description).not.toContain('127.0.0.1');
+      expect(activation?.permissionCategories?.({server: 'docs', query: 'alpha'})).toEqual(['network']);
+
+      const first = await activation?.execute({server: 'docs', query: 'inspect alpha records'}, {
+        config: runtimeConfig,
+        workspace: {} as never,
+        session: {} as never,
+      });
+      expect(connect).toHaveBeenCalledOnce();
+      expect(listTools).toHaveBeenCalledOnce();
+      expect(first).toMatchObject({
+        metadata: {
+          mcpServer: 'docs',
+          state: 'connected',
+          availableTools: 10,
+          loadedTools: expect.arrayContaining(['mcp_docs_alpha_search']),
+          deferredTools: 2,
+        },
+      });
+      expect(registry.get('mcp_docs_alpha_search')).toBeDefined();
+      expect(registry.definitions().filter((tool) => tool.name.startsWith('mcp_docs_')))
+        .toHaveLength(8);
+
+      await activation?.execute({server: 'docs', query: 'inspect alpha records'}, {
+        config: runtimeConfig,
+        workspace: {} as never,
+        session: {} as never,
+      });
+      expect(connect).toHaveBeenCalledOnce();
+      expect(listTools).toHaveBeenCalledOnce();
+      expect(registry.definitions().filter((tool) => tool.name.startsWith('mcp_docs_')))
+        .toHaveLength(8);
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it('returns activation failures as tool results without registering schemas', async () => {
+    const client = fakeClient({
+      connect: vi.fn(async () => {
+        throw new Error('server unavailable');
+      }),
+    });
+    const manager = new McpManager(config(), {
+      clientFactory: () => client,
+      transportFactory: () => fakeTransport(),
+    });
+    const registry = new ToolRegistry();
+    const activation = manager.activationTool(registry);
+
+    const result = await activation?.execute({server: 'docs', query: 'search docs'}, {
+      config: extensionConfig('/tmp', config()),
+      workspace: {} as never,
+      session: {} as never,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      metadata: {mcpServer: 'docs', state: 'error', availableTools: 0, loadedTools: []},
+    });
+    expect(result?.content).toContain('server unavailable');
+    expect(registry.definitions()).toEqual([]);
+  });
+
+  it('keeps servers beyond the configured limit out of the activation catalog', async () => {
+    const servers = Object.fromEntries(Array.from({length: 33}, (_, index) => [
+      `server_${String(index).padStart(2, '0')}`,
+      server({transport: 'http', url: `http://127.0.0.1:${3_000 + index}/mcp`}),
+    ]));
+    const manager = new McpManager({
+      enabled: true,
+      connectTimeoutMs: 1_000,
+      toolTimeoutMs: 2_000,
+      servers,
+    });
+    const activation = manager.activationTool(new ToolRegistry());
+    const schema = activation?.definition.inputSchema as {
+      properties?: {server?: {enum?: string[]}};
+    };
+
+    expect(schema.properties?.server?.enum).toHaveLength(32);
+    expect(schema.properties?.server?.enum).not.toContain('server_32');
+    expect(manager.status('server_32')).toMatchObject({
+      state: 'error',
+      error: 'MCP server limit exceeded (maximum 32)',
+    });
+    await expect(manager.connect('server_32')).resolves.toMatchObject({ok: false});
+  });
+
   it('interoperates with the real MCP SDK client protocol', async () => {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const server = new Server(
@@ -302,14 +421,36 @@ function server(update: Partial<McpServerConfig>): McpServerConfig {
   };
 }
 
-function config(): McpConfig {
+function config(update: Partial<McpServerConfig> = {}): McpConfig {
   return {
     enabled: true,
     connectTimeoutMs: 1_000,
     toolTimeoutMs: 2_000,
     servers: {
-      docs: server({transport: 'http', url: 'http://127.0.0.1:3000/mcp'}),
+      docs: server({transport: 'http', url: 'http://127.0.0.1:3000/mcp', ...update}),
     },
+  };
+}
+
+function extensionConfig(root: string, mcp: McpConfig): MosaicConfig {
+  return {
+    model: {provider: 'compatible', model: 'test', apiKey: 'test'},
+    workspaceRoots: [root],
+    context: {maxTokens: 2_000, topK: 4},
+    permissions: {
+      read: 'allow', write: 'deny', shell: 'deny', git: 'deny', network: 'allow',
+      allowCommands: [], denyCommands: [],
+    },
+    hooks: {},
+    agent: {
+      maxTurns: 4,
+      maxSessionTokens: 20_000,
+      autoVerify: false,
+      verifyCommands: [],
+      checkpointBeforeWrite: true,
+    },
+    ui: {color: false, compact: true},
+    mcp,
   };
 }
 

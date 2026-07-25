@@ -103,6 +103,7 @@ const agentTeamConfigSchema = z.object({
 const mcpServerSchema = z.object({
   enabled: z.boolean().optional(),
   transport: z.enum(['stdio', 'http']).optional(),
+  description: z.string().min(1).max(500).optional(),
   command: z.string().min(1).max(512).optional(),
   args: z.array(z.string().max(4_000)).max(64).optional(),
   cwd: z.string().max(4_000).optional(),

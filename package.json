@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.22",
+  "version": "0.3.23",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,6 +16,9 @@
   },
   "skein": {
     "releaseNotes": [
+      "Normal chat startup now exposes a compact mcp_activate catalog instead of eagerly connecting MCP servers",
+      "MCP activation connects one selected server, discovers remote tools, and loads at most eight relevant schemas",
+      "Explicit MCP diagnostics can still connect eagerly while all MCP activation and remote calls remain network operations",
       "OpenAI, Anthropic, and Gemini usage now normalizes cached input, cache-write input, and reasoning tokens when reported",
       "Token Ledger, session totals, and structured usage events preserve provider cache and reasoning counts without prompt content",
       "Streaming, non-streaming, explicit-zero, and legacy-session compatibility paths are covered without claiming cache activation",

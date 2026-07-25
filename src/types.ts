@@ -106,6 +106,7 @@ export type McpTransport = 'stdio' | 'http';
 export interface McpServerConfig {
   enabled: boolean;
   transport: McpTransport;
+  description?: string;
   command?: string;
   args?: string[];
   cwd?: string;

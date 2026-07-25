@@ -96,7 +96,7 @@ To build, verify, and install a local package artifact from this checkout:
 
 ```bash
 npm run verify:package -- --output-dir artifacts/package
-npm install -g ./artifacts/package/skein-code-cli-0.3.22.tgz
+npm install -g ./artifacts/package/skein-code-cli-0.3.23.tgz
 ```
 
 To install the published package from npm:
@@ -213,6 +213,13 @@ captured result is available. Artifacts are redacted before persistence, belong
 only to the originating session, expire after seven days, and are removed when
 that session is deleted. A receipt marked `source-truncated` is honest about
 bytes already omitted by the producing tool; those bytes cannot be recovered.
+
+Normal chat runs discover MCP servers lazily. Startup exposes only a compact
+`mcp_activate` catalog of configured servers; selecting one connects that
+server, runs remote discovery, and loads at most eight request-relevant schemas
+into the live tool registry. All activated MCP tools remain `network`
+operations. The explicit `skein mcp status` diagnostic still connects
+configured servers eagerly.
 
 At 96 columns and wider, a fresh session uses a two-column welcome surface. The
 left side keeps Skein's brand, workspace path, and next actions close to the

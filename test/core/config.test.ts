@@ -241,6 +241,29 @@ describe('configuration defaults', () => {
     expect(config.model.apiKey).toBe('local-secret');
   });
 
+  it('loads MCP server descriptions for lazy activation catalogs', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-config-mcp-description-'));
+    roots.push(root);
+    const path = join(root, 'config.json');
+    await writeFile(path, JSON.stringify({
+      mcp: {
+        enabled: true,
+        servers: {
+          docs: {
+            enabled: true,
+            transport: 'http',
+            url: 'http://127.0.0.1:3030/mcp',
+            description: 'Search internal docs.',
+          },
+        },
+      },
+    }));
+
+    const config = await loadConfig(root, path);
+
+    expect(config.mcp?.servers.docs?.description).toBe('Search internal docs.');
+  });
+
   it('trusts init-created model routing by fingerprint and invalidates edited config', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mosaic-config-init-trust-'));
     const home = await mkdtemp(join(tmpdir(), 'mosaic-config-home-'));

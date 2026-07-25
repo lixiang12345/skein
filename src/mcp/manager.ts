@@ -7,6 +7,7 @@ import type {Tool as McpSdkTool} from '@modelcontextprotocol/sdk/types.js';
 import stripAnsi from 'strip-ansi';
 import type {McpConfig, McpServerConfig} from '../types.js';
 import type {ToolRegistry, AgentTool} from '../tools/index.js';
+import {ToolInputError} from '../tools/types.js';
 import {
   createMcpToolAdapter,
   disambiguateMcpToolName,
@@ -29,6 +30,7 @@ const MAX_TOOLS_PER_SERVER = 256;
 const MAX_LIST_PAGES = 16;
 const DEFAULT_CONNECT_TIMEOUT = 12_000;
 const DEFAULT_TOOL_TIMEOUT = 60_000;
+const LAZY_SCHEMA_LIMIT = 8;
 
 export type McpServerState = 'disabled' | 'disconnected' | 'connecting' | 'connected' | 'error' | 'closed';
 
@@ -47,6 +49,12 @@ export interface McpConnectResult {
   ok: boolean;
   status: McpServerStatus;
   skippedTools: number;
+}
+
+export interface McpActivationResult extends McpConnectResult {
+  registeredTools: string[];
+  availableTools: number;
+  deferredTools: number;
 }
 
 export interface McpManagerOptions extends McpValidationOptions {
@@ -101,13 +109,106 @@ export class McpManager {
     options: McpManagerOptions = {},
   ) {
     this.options = options;
-    for (const [name, server] of Object.entries(config.servers ?? {})) {
+    const entries = Object.entries(config.servers ?? {});
+    for (const [index, [name, server]] of entries.entries()) {
       const transport = server.transport ?? 'stdio';
+      if (index >= MAX_SERVERS) {
+        this.statuses.set(name, {
+          name,
+          state: 'error',
+          transport,
+          toolCount: 0,
+          error: `MCP server limit exceeded (maximum ${MAX_SERVERS})`,
+        });
+        continue;
+      }
       const state: McpServerState = config.enabled === false || server.enabled === false
-        ? 'disabled'
-        : 'disconnected';
+        ? 'disabled' : 'disconnected';
       this.statuses.set(name, {name, state, transport, toolCount: 0});
     }
+  }
+
+  /** Compact model-visible catalog; transport and remote discovery stay lazy. */
+  activationTool(registry: ToolRegistry): AgentTool | undefined {
+    const names = this.activatableServerNames();
+    if (!names.length) return;
+    const catalog = names.map((name) => {
+      const server = this.config.servers[name];
+      const description = sanitizeCatalogText(server?.description) ||
+        `${server?.transport ?? 'stdio'} MCP server`;
+      return `${name}: ${description}`;
+    }).join('; ');
+    return {
+      definition: {
+        name: 'mcp_activate',
+        description: `Connect to one configured MCP server only when the current task needs it, discover its tools, and load at most ${LAZY_SCHEMA_LIMIT} relevant schemas. Available servers: ${catalog}`,
+        category: 'network',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            server: {type: 'string', enum: names, description: 'Configured MCP server to activate.'},
+            query: {type: 'string', minLength: 1, maxLength: 500, description: 'Capability needed from that server.'},
+          },
+          required: ['server', 'query'],
+          additionalProperties: false,
+        },
+      },
+      permissionCategories: () => ['network'],
+      execute: async (arguments_, context) => {
+        const server = typeof arguments_.server === 'string' ? arguments_.server : '';
+        const query = typeof arguments_.query === 'string' ? arguments_.query.trim() : '';
+        if (!names.includes(server)) throw new ToolInputError('MCP server is not available for activation');
+        if (!query || query.length > 500) {
+          throw new ToolInputError('MCP activation query must contain 1 to 500 characters');
+        }
+        const result = await this.activate(server, query, registry, context.signal);
+        if (!result.ok) {
+          return {
+            ok: false,
+            content: `MCP server ${server} could not be activated: ${result.status.error ?? result.status.state}`,
+            metadata: activationMetadata(result),
+          };
+        }
+        const loaded = result.registeredTools.length
+          ? result.registeredTools.join(', ')
+          : 'no matching tool schemas';
+        const deferred = result.deferredTools
+          ? ` ${result.deferredTools} additional schemas remain deferred; activate again with a narrower query if needed.`
+          : '';
+        return {
+          content: `Activated MCP server ${server}. Loaded: ${loaded}.${deferred}`,
+          metadata: activationMetadata(result),
+        };
+      },
+    };
+  }
+
+  /** Connect/discover one server, then register only request-relevant schemas. */
+  async activate(
+    name: string,
+    query: string,
+    registry: ToolRegistry,
+    signal?: AbortSignal,
+  ): Promise<McpActivationResult> {
+    const connected = await this.connect(name, signal);
+    if (!connected.ok) {
+      return {...connected, registeredTools: [], availableTools: 0, deferredTools: 0};
+    }
+    const connection = this.connections.get(name);
+    if (!connection) {
+      return {...connected, ok: false, registeredTools: [], availableTools: 0, deferredTools: 0};
+    }
+    const tools = [...connection.tools.values()];
+    const selected = tools.length <= LAZY_SCHEMA_LIMIT
+      ? tools
+      : selectRelevantTools(tools, query, LAZY_SCHEMA_LIMIT);
+    this.registerSelectedTools(registry, selected);
+    return {
+      ...connected,
+      registeredTools: selected.map((tool) => tool.definition.name),
+      availableTools: tools.length,
+      deferredTools: Math.max(0, tools.length - selected.length),
+    };
   }
 
   /** Connect enabled servers with a small concurrency bound. */
@@ -117,15 +218,6 @@ export class McpManager {
     const names = configuredNames.slice(0, MAX_SERVERS);
     if (this.config.enabled === false) {
       return configuredNames.map((name) => this.resultFor(name, false, 0));
-    }
-    for (const name of configuredNames.slice(MAX_SERVERS)) {
-      const server = this.config.servers[name];
-      this.setStatus(name, {
-        state: 'error',
-        transport: server?.transport ?? 'stdio',
-        toolCount: 0,
-        error: `MCP server limit exceeded (maximum ${MAX_SERVERS})`,
-      });
     }
     const results: McpConnectResult[] = [];
     let cursor = 0;
@@ -144,6 +236,10 @@ export class McpManager {
   /** Connect one configured server. Connection errors are captured in status. */
   async connect(name: string, signal?: AbortSignal): Promise<McpConnectResult> {
     if (this.closed) throw new Error('MCP manager is closed');
+    const status = this.statuses.get(name);
+    if (status?.state === 'error' && status.error?.includes('server limit exceeded')) {
+      return this.resultFor(name, false, 0);
+    }
     const existing = this.pending.get(name);
     if (existing) return existing;
     const connectionController = new AbortController();
@@ -242,8 +338,12 @@ export class McpManager {
 
   /** Register connected MCP tools, preserving idempotency for the same adapter. */
   registerTools(registry: ToolRegistry): string[] {
+    return this.registerSelectedTools(registry, this.tools());
+  }
+
+  private registerSelectedTools(registry: ToolRegistry, tools: AgentTool[]): string[] {
     const registered: string[] = [];
-    for (const tool of this.tools()) {
+    for (const tool of tools) {
       const existing = registry.get(tool.definition.name);
       if (existing) {
         if (existing !== tool) {
@@ -255,6 +355,14 @@ export class McpManager {
       registered.push(tool.definition.name);
     }
     return registered;
+  }
+
+  private activatableServerNames(): string[] {
+    if (this.config.enabled === false) return [];
+    return [...this.statuses.values()]
+      .filter((status) => status.state !== 'disabled' && status.state !== 'error')
+      .map((status) => status.name)
+      .sort((left, right) => left.localeCompare(right));
   }
 
   private async connectInternal(name: string, signal?: AbortSignal): Promise<McpConnectResult> {
@@ -534,6 +642,39 @@ export class McpManager {
     if (!status) throw new Error(`Unknown MCP server: ${name}`);
     return {name, ok, status: {...status}, skippedTools};
   }
+}
+
+function activationMetadata(result: McpActivationResult): Record<string, unknown> {
+  return {
+    mcpServer: result.name,
+    state: result.status.state,
+    availableTools: result.availableTools,
+    loadedTools: result.registeredTools,
+    deferredTools: result.deferredTools,
+    skippedTools: result.skippedTools,
+  };
+}
+
+function selectRelevantTools(tools: AgentTool[], query: string, limit: number): AgentTool[] {
+  const terms = new Set(query.toLocaleLowerCase().match(/[\p{L}\p{N}_-]{2,}/gu) ?? []);
+  return tools.map((tool) => {
+    const searchable = `${tool.definition.name.replaceAll('_', ' ')} ${tool.definition.description}`
+      .toLocaleLowerCase();
+    let score = 0;
+    for (const term of terms) if (searchable.includes(term)) score += term.length;
+    return {tool, score};
+  }).sort((left, right) => right.score - left.score ||
+    left.tool.definition.name.localeCompare(right.tool.definition.name))
+    .slice(0, limit)
+    .map(({tool}) => tool);
+}
+
+function sanitizeCatalogText(value: string | undefined): string {
+  return value ? stripAnsi(value)
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 200) : '';
 }
 
 function requestOptions(timeoutMs: number, signal?: AbortSignal): RequestOptions {

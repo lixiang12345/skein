@@ -268,13 +268,18 @@ JavaScript plugins are intentionally unsupported because they would share the
 CLI's full filesystem, environment, and process privileges.
 
 MCP is the interoperability boundary for external executable capabilities. It
-is disabled by default, removed from untrusted project configuration, exposes
-namespaced tools, treats server annotations as untrusted, and applies argument,
-schema, result, server-count, timeout, and transport limits. Every MCP call
-currently requires the network permission category. A configured stdio server
-is still an external program with the user's operating-system privileges; cwd
-and environment validation reduce accidental exposure but are not a sandbox.
-Only reviewed user-owned configuration should enable one.
+is disabled by default, removed from untrusted project configuration, exposes a
+compact lazy activation catalog during normal chat startup, treats server
+annotations as untrusted, and applies argument, schema, result, server-count,
+timeout, and transport limits. The `mcp_activate` catalog connects a selected
+server on demand, discovers its remote tools, and registers at most eight
+request-relevant schemas into the live registry; explicit diagnostic commands
+such as `skein mcp status` can still connect all configured servers eagerly.
+Every MCP activation and remote MCP call currently requires the network
+permission category. A configured stdio server is still an external program
+with the user's operating-system privileges; cwd and environment validation
+reduce accidental exposure but are not a sandbox. Only reviewed user-owned
+configuration should enable one.
 
 Before any marketplace-style plugin support, add a declarative capability
 manifest, first-run review, lazy tool-schema activation, per-server permission

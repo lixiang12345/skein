@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.22`.
+- Current repository version: `0.3.23`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -41,8 +41,8 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.22.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.22.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.23.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.23.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
@@ -99,14 +99,15 @@ firewall policies while requiring complete evidence and recovery coverage.
 The replay reports a 36.7% estimated-input reduction; this is a deterministic
 budget measurement, not a provider billing or task-success claim.
 
-MCP tool definitions are now marked for progressive disclosure. Catalogs of
-eight or fewer eligible tools remain fully visible; larger catalogs disclose a
-deterministically ranked maximum of eight schemas. Selected schemas retain
-their registry order and remain loaded for the current run, and Token Ledger
-receipts record the deferred count. MCP tools remain `network` operations and
-hidden tool calls remain rejected by the existing boundary. This release does
-not defer MCP connection or remote `listTools` discovery and does not claim the
-provider-cache or Context Compaction 2.0 follow-up work is complete.
+MCP tool definitions are now marked for progressive disclosure. Normal chat
+startup exposes a compact `mcp_activate` catalog instead of connecting every
+server. Selecting a configured server connects it, runs remote `listTools`, and
+loads at most eight request-relevant schemas into the live registry. Selected
+schemas retain their registry order and remain loaded for the current run, and
+Token Ledger receipts record the deferred count. MCP activation and discovered
+tools remain `network` operations, hidden tool calls remain rejected by the
+existing boundary, and explicit diagnostics such as `skein mcp status` still
+connect eagerly by design.
 
 Version `0.3.22` normalizes provider-reported cache and reasoning usage across
 streaming and non-streaming OpenAI, Anthropic, and Gemini responses. Token
@@ -116,6 +117,12 @@ zero values. The session schema remains compatible with older records. This is
 measurement plumbing only: it does not enable provider cache controls, define a
 stable cache key, defer MCP connection/discovery, run paid same-model task A/B,
 or complete Context Compaction 2.0.
+
+Version `0.3.23` completes the true lazy MCP lifecycle slice: normal chat
+startup performs zero MCP transport connections and zero remote discovery until
+the model explicitly calls `mcp_activate` for a configured server. The release
+does not add per-server trust scopes, provider billing A/B, or Context
+Compaction 2.0.
 
 ### P0-D: Repository reuse and calibrated duplication enforcement
 
@@ -364,10 +371,11 @@ Add a first-run catalog and inspection flow for bundled capabilities. Keep
 installation explicit and reviewable: show source, requested tools, filesystem
 scope, network scope, and trust state before activation. Add fixture servers and
 Skills that exercise timeout, malformed schema, disconnect, and version drift.
-Introduce lazy MCP schema discovery and declarative capability manifests before
-any marketplace. Do not load arbitrary plugin JavaScript in-process; package
-reusable extensions as data-only Skills/workflows plus explicitly trusted MCP
-servers, with an optional subprocess sandbox for stdio servers.
+Lazy MCP activation is now the default chat path. Next, add declarative
+capability manifests, per-server trust review, activation telemetry, and an
+optional subprocess sandbox before any marketplace. Do not load arbitrary plugin
+JavaScript in-process; package reusable extensions as data-only Skills/workflows
+plus explicitly trusted MCP servers.
 
 ### P2: Memory Quality And User Control
 

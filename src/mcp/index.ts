@@ -1,5 +1,6 @@
 export {
   McpManager,
+  type McpActivationResult,
   type McpClientLike,
   type McpConnectResult,
   type McpManagerOptions,
