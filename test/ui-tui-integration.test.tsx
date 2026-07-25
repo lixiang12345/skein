@@ -579,6 +579,72 @@ describe('SkeinApp completion flows', () => {
       await rm(root, {recursive: true, force: true});
     }
   });
+
+  it('renders redacted MCP trust review and requires destructive confirmations', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-mcp-trust-ui-'));
+    const session = testSession(root);
+    const {runner} = mockRunner(root, session);
+    const trust = vi.fn(async () => ({
+      name: 'docs', state: 'disconnected', transport: 'http', toolCount: 0,
+      required: false, trust: 'trusted',
+    }));
+    const revoke = vi.fn(async () => ({
+      name: 'docs', state: 'revoked', transport: 'http', toolCount: 0,
+      required: false, trust: 'revoked',
+    }));
+    const extensions = {
+      listWorkflows: () => [],
+      mcpStatus: () => [{
+        name: 'docs', state: 'untrusted', transport: 'http', toolCount: 0,
+        required: false, trust: 'untrusted',
+      }],
+      mcpInspect: () => ({
+        schemaVersion: 1,
+        id: 'mcp:docs',
+        source: {kind: 'mcp', owner: 'user-config'},
+        name: 'docs',
+        version: '1.0.0',
+        required: false,
+        transport: 'http',
+        target: 'https://example.com/mcp',
+        dynamicTools: false,
+        tools: [{
+          name: 'search', permissions: ['read', 'network'],
+          network: ['https://api.example.com/search'], commands: [], paths: [],
+          sensitiveFields: ['token'], background: false, processTree: false,
+          completionEvidence: 'none',
+        }],
+      }),
+      mcpTrust: trust,
+      mcpRevoke: revoke,
+      memoryStats: () => undefined,
+    } as unknown as ExtensionRuntime;
+    const harness = await mountApp(runner, root, extensions);
+
+    try {
+      harness.stdin.write('/mcp trust docs\r');
+      await vi.waitFor(() => expect(harness.output()).toContain('MCP trust review · docs'));
+      expect(harness.output()).toContain('https://example.com/mcp');
+      expect(harness.output()).toContain('sensitive fields');
+      expect(harness.output()).toContain('token');
+      expect(harness.output()).toContain('/mcp trust docs --confirm');
+      expect(trust).not.toHaveBeenCalled();
+
+      harness.stdin.write('/mcp trust docs --confirm\r');
+      await vi.waitFor(() => expect(trust).toHaveBeenCalledWith('docs'));
+      expect(harness.output()).toContain('Activation remains explicit');
+
+      harness.stdin.write('/mcp revoke docs\r');
+      await vi.waitFor(() => expect(harness.output()).toContain('/mcp revoke docs --confirm'));
+      expect(revoke).not.toHaveBeenCalled();
+      harness.stdin.write('/mcp revoke docs --confirm\r');
+      await vi.waitFor(() => expect(revoke).toHaveBeenCalledWith('docs'));
+      expect(harness.output()).toContain('Re-inspection and trust are required');
+    } finally {
+      await harness.cleanup();
+      await rm(root, {recursive: true, force: true});
+    }
+  });
 });
 
 type MockInput = PassThrough & {

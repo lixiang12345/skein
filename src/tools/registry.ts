@@ -39,6 +39,17 @@ export class ToolRegistry {
     return this.tools.has(name) || this.aliases.has(name);
   }
 
+  /** Remove one exact tool instance without letting extensions evict core tools. */
+  unregister(name: string, expected?: AgentTool): boolean {
+    const current = this.tools.get(name);
+    if (!current || (expected && current !== expected)) return false;
+    this.tools.delete(name);
+    for (const [alias, target] of this.aliases) {
+      if (target === name) this.aliases.delete(alias);
+    }
+    return true;
+  }
+
   list(): AgentTool[] {
     return [...this.tools.values()];
   }

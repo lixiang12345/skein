@@ -127,6 +127,8 @@ export class DelegationManager {
     return {
       definition: {
         name: 'delegate',
+        source: 'agent',
+        activation: 'always',
         description: 'Run independent read-only investigations with specialized isolated agents and return concise evidence-backed summaries.',
         category: 'read',
         inputSchema: jsonSchema({
@@ -175,6 +177,8 @@ export class DelegationManager {
     return {
       definition: {
         name: 'team_run',
+        source: 'agent',
+        activation: 'always',
         description: 'Run a visible multi-model council: parallel read-only specialists share findings, a reviewer challenges them, and one bounded revision round runs before returning an acceptance report.',
         category: 'read',
         inputSchema: jsonSchema({
@@ -220,6 +224,8 @@ export class DelegationManager {
     return {
       definition: {
         name: 'writer_run',
+        source: 'agent',
+        activation: 'always',
         description: 'Create one reviewed patch in a disposable Git worktree. This never changes the main workspace; use writer_integrate explicitly after review.',
         category: 'write',
         inputSchema: jsonSchema({
@@ -253,6 +259,8 @@ export class DelegationManager {
     return {
       definition: {
         name: 'writer_integrate',
+        source: 'agent',
+        activation: 'always',
         description: 'Explicitly apply one accepted writer patch to the main workspace after SHA, HEAD, cleanliness, path, and checkpoint gates pass.',
         category: 'write',
         inputSchema: jsonSchema({

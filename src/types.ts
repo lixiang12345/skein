@@ -7,6 +7,33 @@ export type PermissionGrant = boolean | 'session';
 
 export type ToolCategory = 'read' | 'write' | 'shell' | 'git' | 'network';
 
+export type ToolSource = 'builtin' | 'memory' | 'workflow' | 'agent' | 'mcp';
+
+export type CompletionEvidenceSupport = 'full' | 'partial' | 'none';
+
+/** Common declarative trust vocabulary shared by current and future extensions. */
+export interface CapabilityManifestTool {
+  name: string;
+  description?: string;
+  permissions: ToolCategory[];
+  network: string[];
+  commands: string[];
+  paths: string[];
+  sensitiveFields: string[];
+  background: boolean;
+  processTree: boolean;
+  completionEvidence: CompletionEvidenceSupport;
+}
+
+export interface CapabilityManifest {
+  schemaVersion: 1;
+  id: string;
+  source: {kind: ToolSource; owner: string};
+  name: string;
+  version: string;
+  tools: CapabilityManifestTool[];
+}
+
 export interface ModelConfig {
   provider: ProviderName;
   model: string;
@@ -103,10 +130,32 @@ export interface AgentModelRoute {
 
 export type McpTransport = 'stdio' | 'http';
 
+/**
+ * User-authored effects for one remote MCP tool. Server annotations are never
+ * allowed to reduce these local permission requirements.
+ */
+export interface McpToolCapabilityConfig {
+  name: string;
+  description?: string;
+  permissions: ToolCategory[];
+  network?: string[];
+  commands?: string[];
+  paths?: string[];
+  sensitiveFields?: string[];
+  background?: boolean;
+  processTree?: boolean;
+  completionEvidence?: CompletionEvidenceSupport;
+}
+
 export interface McpServerConfig {
   enabled: boolean;
+  /** Required servers are availability dependencies and may block startup. */
+  required?: boolean;
   transport: McpTransport;
   description?: string;
+  /** Declarative capability version reviewed by the user before activation. */
+  version?: string;
+  tools?: McpToolCapabilityConfig[];
   command?: string;
   args?: string[];
   cwd?: string;
@@ -376,6 +425,16 @@ export interface ToolDefinition {
   inputSchema: Record<string, unknown>;
   /** Extension tools may be disclosed progressively when the catalog is large. */
   progressive?: boolean;
+  /** Content-free provenance used by `/tools`; providers do not receive it. */
+  source?: ToolSource;
+  /** Static upper-bound permission categories for capability review. */
+  permissionCategories?: ToolCategory[];
+  /** Whether an extension is only a catalog control or an activated tool. */
+  activation?: 'always' | 'catalog' | 'active';
+  /** Remote mutation evidence support claimed by the reviewed manifest. */
+  completionEvidence?: CompletionEvidenceSupport;
+  /** Argument fields redacted from terminal, JSON events, and approval UIs. */
+  sensitiveFields?: string[];
 }
 
 export interface ContextHit {

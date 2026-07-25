@@ -58,3 +58,33 @@ ui:
   color: true
   compact: false
   theme: auto
+
+# External capabilities are disabled until both configuration and the separate
+# workspace-bound manifest trust review are explicit. Use:
+#   skein mcp search docs
+#   skein mcp inspect docs
+#   skein mcp trust docs
+#   skein mcp activate docs search documentation
+mcp:
+  enabled: false
+  connectTimeoutMs: 12000
+  toolTimeoutMs: 60000
+  servers:
+    docs:
+      enabled: false
+      required: false
+      transport: http
+      url: https://docs.example.com/mcp
+      description: Search approved documentation.
+      version: 1.0.0
+      tools:
+        - name: search
+          description: Search the approved documentation corpus.
+          permissions: [read]
+          network: [https://docs.example.com]
+          commands: []
+          paths: []
+          sensitiveFields: [token]
+          background: false
+          processTree: false
+          completionEvidence: none

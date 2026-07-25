@@ -96,7 +96,7 @@ To build, verify, and install a local package artifact from this checkout:
 
 ```bash
 npm run verify:package -- --output-dir artifacts/package
-npm install -g ./artifacts/package/skein-code-cli-0.3.26.tgz
+npm install -g ./artifacts/package/skein-code-cli-0.3.27.tgz
 ```
 
 To install the published package from npm:
@@ -214,12 +214,27 @@ only to the originating session, expire after seven days, and are removed when
 that session is deleted. A receipt marked `source-truncated` is honest about
 bytes already omitted by the producing tool; those bytes cannot be recovered.
 
-Normal chat runs discover MCP servers lazily. Startup exposes only a compact
-`mcp_activate` catalog of configured servers; selecting one connects that
-server, runs remote discovery, and loads at most eight request-relevant schemas
-into the live tool registry. All activated MCP tools remain `network`
-operations. The explicit `skein mcp status` diagnostic still connects
-configured servers eagerly.
+Normal chat runs discover MCP servers lazily through `mcp_search → mcp_inspect
+→ mcp_activate`. Search and inspection use only redacted local manifests and
+perform no transport I/O. Activation is rejected until the user confirms the
+exact workspace-bound manifest fingerprint with `skein mcp trust <server>` or
+`/mcp trust <server> --confirm`; the model cannot grant trust. A trusted
+activation connects one server, runs remote discovery, and loads at most eight
+request-relevant schemas into the live registry. `skein mcp status` is now a
+no-connect diagnostic; only explicitly `required` servers may connect and block
+during startup.
+
+Manifests declare source, version, tools, permission categories, network,
+command and path scopes, sensitive fields, background/process-tree effects,
+and completion-evidence support. Legacy manifests without declared tools remain
+inspectable but cannot be trusted or activated. MCP calls always retain the local `network`
+boundary, and server annotations cannot lower declared permissions. When a
+manifest names tools, undeclared schemas injected by the server are skipped.
+Sensitive arguments are redacted from text, TUI, JSON, and approval events.
+Remote mutations without a Skein-bound checkpoint plus changed-file, artifact,
+and completion receipts remain explicitly `unresolved`. Use `skein mcp disable`
+or `skein mcp revoke --yes` (and the matching `/mcp` commands) to unload schemas
+and persist the decision.
 
 At 96 columns and wider, a fresh session uses a two-column welcome surface. The
 left side keeps Skein's brand, workspace path, and next actions close to the

@@ -289,21 +289,37 @@ JavaScript plugins are intentionally unsupported because they would share the
 CLI's full filesystem, environment, and process privileges.
 
 MCP is the interoperability boundary for external executable capabilities. It
-is disabled by default, removed from untrusted project configuration, exposes a
-compact lazy activation catalog during normal chat startup, treats server
-annotations as untrusted, and applies argument, schema, result, server-count,
-timeout, and transport limits. The `mcp_activate` catalog connects a selected
-server on demand, discovers its remote tools, and registers at most eight
-request-relevant schemas into the live registry; explicit diagnostic commands
-such as `skein mcp status` can still connect all configured servers eagerly.
-Every MCP activation and remote MCP call currently requires the network
-permission category. A configured stdio server is still an external program
-with the user's operating-system privileges; cwd and environment validation
-reduce accidental exposure but are not a sandbox. Only reviewed user-owned
-configuration should enable one.
+is disabled by default, removed from untrusted project configuration, treats
+server annotations as untrusted, and applies argument, schema, result,
+server-count, timeout, and transport limits. A common declarative capability
+vocabulary describes source, version, tools, permission categories, network,
+commands, paths, sensitive fields, background/process-tree effects, and
+completion-evidence support. Tool definitions carry the same source,
+activation, permission, and evidence metadata so `/tools` can distinguish the
+built-in, memory, workflow, agent, and MCP surfaces.
 
-Before any marketplace-style plugin support, add a declarative capability
-manifest, first-run review, lazy tool-schema activation, per-server permission
-scopes, and an optional process sandbox. Plugin packages should compose Skills,
-workflows, and MCP servers rather than load arbitrary code into the Skein
-process.
+Normal chat exposes three bounded controls: `mcp_search` and `mcp_inspect` read
+only local redacted manifests; `mcp_activate` connects only a manifest whose
+workspace-bound SHA-256 fingerprint the user trusted. The model cannot write
+the trust store. Remote discovery stays true-lazy and activation registers at
+most eight query-relevant schemas. Once a manifest names tools, undeclared
+remote schemas are rejected. Disable and revoke decisions persist and unload
+registered adapters. Optional server failures remain isolated; only an
+explicitly required, trusted server is checked during runtime initialization
+and allowed to block it.
+
+Every MCP call retains `network` permission even for stdio. Declared write,
+shell, and Git effects add rather than replace permission categories. Sensitive
+argument fields are redacted before terminal, TUI, JSON, or approval events.
+External mutations receive complete change tracking only when Skein created the
+pre-call checkpoint and the server returns that exact id with workspace-valid
+changed files, artifact receipts, and completion evidence. Other mutation
+results set tracking to `unresolved`, preventing an unsupported completion
+claim.
+
+A configured stdio server is still an external program with the user's
+operating-system privileges; cwd and environment validation are not a process
+sandbox. Marketplace-style packages must compose data-only Skills, workflows,
+profiles, and explicitly trusted MCP servers rather than load arbitrary code
+into the Skein process. An optional OS/container subprocess sandbox remains a
+future hardening layer.

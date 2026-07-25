@@ -1,4 +1,4 @@
-import {mkdtemp, rm} from 'node:fs/promises';
+import {lstat, mkdtemp, readFile, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {InMemoryTransport} from '@modelcontextprotocol/sdk/inMemory.js';
@@ -6,8 +6,10 @@ import {Server} from '@modelcontextprotocol/sdk/server/index.js';
 import type {Transport} from '@modelcontextprotocol/sdk/shared/transport.js';
 import {CallToolRequestSchema, ListToolsRequestSchema} from '@modelcontextprotocol/sdk/types.js';
 import {afterEach, describe, expect, it, vi} from 'vitest';
-import {McpManager, type McpClientLike} from '../../src/mcp/manager.js';
-import {createMcpToolAdapter, makeMcpToolName} from '../../src/mcp/tool.js';
+import {McpManager, rankRelevantTools, type McpClientLike} from '../../src/mcp/manager.js';
+import {createMcpToolAdapter, isUsableRemoteTool, makeMcpToolName} from '../../src/mcp/tool.js';
+import {McpTrustStore} from '../../src/mcp/trust-store.js';
+import {redactToolCallForDisplay} from '../../src/agent/runner.js';
 import {validateHttpConfig, validateStdioConfig} from '../../src/mcp/validation.js';
 import {ExtensionRuntime} from '../../src/runtime/extensions.js';
 import {ToolRegistry} from '../../src/tools/registry.js';
@@ -109,6 +111,96 @@ describe('MCP validation and tool adapters', () => {
     expect(execution.metadata?.sourceBytes).toBeGreaterThan(5 * 1024 * 1024);
   });
 
+  it('fails closed on hostile schemas and redacts declared sensitive fields from events', () => {
+    const cyclic: Record<string, unknown> = {type: 'object'};
+    cyclic.self = cyclic;
+    expect(isUsableRemoteTool({name: 'safe', inputSchema: cyclic as never})).toBe(false);
+    expect(isUsableRemoteTool({name: 'bad\u0000name', inputSchema: {type: 'object'}})).toBe(false);
+    expect(isUsableRemoteTool({
+      name: 'oversize',
+      inputSchema: {type: 'object', description: 'x'.repeat(100_001)},
+    })).toBe(false);
+
+    const display = redactToolCallForDisplay({
+      id: 'call',
+      name: 'mcp_docs_search',
+      arguments: {query: 'public', token: 'top-secret', nested: {password: 'hidden'}},
+    }, ['token', 'nested.password']);
+    expect(JSON.stringify(display)).not.toContain('top-secret');
+    expect(JSON.stringify(display)).not.toContain('hidden');
+    expect(display.arguments).toEqual({
+      query: 'public',
+      token: '<redacted>',
+      nested: {password: '<redacted>'},
+    });
+  });
+
+  it('requires verifiable receipts before external mutations receive complete change tracking', async () => {
+    const unsupported = createMcpToolAdapter({
+      serverName: 'files',
+      exposedName: 'mcp_files_replace',
+      remoteTool: {name: 'replace', inputSchema: {type: 'object', properties: {}}},
+      capability: {
+        name: 'replace',
+        permissions: ['write', 'network'],
+        network: [], commands: [], paths: ['src/**'], sensitiveFields: [],
+        background: false, processTree: false, completionEvidence: 'none',
+      },
+      timeoutMs: 1_000,
+      callTool: async () => ({content: [{type: 'text', text: 'changed'}]}),
+    });
+    const unsupportedResult = await unsupported.execute({}, {
+      config: {} as never,
+      workspace: {} as never,
+      session: {} as never,
+    });
+    expect(unsupported.permissionCategories?.({})).toEqual(['write', 'network']);
+    expect(unsupportedResult.metadata).toMatchObject({
+      changeTracking: 'unresolved',
+      completionEvidenceVerified: false,
+    });
+
+    const supportedCall = vi.fn(async () => ({
+      structuredContent: {
+        skeinEvidence: {
+          changedFiles: ['src/a.ts'],
+          checkpointId: 'checkpoint-1',
+          artifactReceipts: ['artifact:patch'],
+          completionEvidence: ['test:focused'],
+        },
+      },
+    }));
+    const supported = createMcpToolAdapter({
+      serverName: 'files',
+      exposedName: 'mcp_files_replace',
+      remoteTool: {name: 'replace', inputSchema: {type: 'object', properties: {}}},
+      capability: {
+        name: 'replace',
+        permissions: ['write', 'network'],
+        network: [], commands: [], paths: ['src/**'], sensitiveFields: ['token'],
+        background: false, processTree: false, completionEvidence: 'full',
+      },
+      timeoutMs: 1_000,
+      callTool: supportedCall,
+    });
+    const supportedResult = await supported.execute({}, {
+      config: {} as never,
+      workspace: {resolvePath: async (path: string) => `/workspace/${path}`} as never,
+      session: {} as never,
+      checkpointId: 'checkpoint-1',
+    });
+    expect(supportedResult.changedFiles).toEqual(['/workspace/src/a.ts']);
+    expect(supportedResult.metadata).toMatchObject({
+      changeTracking: 'complete',
+      completionEvidenceVerified: true,
+      checkpointId: 'checkpoint-1',
+    });
+    expect(supportedCall).toHaveBeenCalledWith(
+      {name: 'replace', arguments: {_skein: {checkpointId: 'checkpoint-1'}}},
+      expect.any(Object),
+    );
+  });
+
   it('limits insecure HTTP and stdio environment/workspace escapes', async () => {
     expect(() => validateHttpConfig(server({
       transport: 'http',
@@ -145,6 +237,152 @@ describe('MCP validation and tool adapters', () => {
 });
 
 describe('McpManager', () => {
+  it('enforces inspectable fingerprint trust, persistent disable, and revocation before activation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-mcp-trust-'));
+    temporaryDirectories.push(root);
+    const trustPath = join(root, 'trust.json');
+    const connect = vi.fn(async () => undefined);
+    const mcp = config({
+      version: '1.2.3',
+      url: 'https://example.com/mcp?token=must-not-leak',
+      headers: {Authorization: 'Bearer must-not-leak'},
+      tools: [{
+        name: 'search',
+        permissions: ['read'],
+        network: ['https://api.example.com/search?token=must-not-leak'],
+        sensitiveFields: ['token'],
+        completionEvidence: 'none',
+      }],
+    });
+    const manager = new McpManager(mcp, {
+      cwd: root,
+      trustStore: new McpTrustStore({path: trustPath}),
+      clientFactory: () => fakeClient({
+        connect,
+        listTools: vi.fn(async () => ({
+          tools: [{name: 'search', inputSchema: {type: 'object', properties: {token: {type: 'string'}}}}],
+        })),
+      }),
+      transportFactory: () => fakeTransport(),
+    });
+    await manager.loadTrust();
+    expect(manager.status('docs')).toMatchObject({state: 'untrusted', trust: 'untrusted'});
+    expect(manager.inspect('docs').target).toBe('https://example.com/mcp');
+    expect(JSON.stringify(manager.inspect('docs'))).not.toContain('must-not-leak');
+    await expect(manager.activate('docs', 'search', new ToolRegistry())).resolves.toMatchObject({ok: false});
+    expect(connect).not.toHaveBeenCalled();
+
+    await manager.trust('docs');
+    const registry = new ToolRegistry();
+    await expect(manager.activate('docs', 'search', registry)).resolves.toMatchObject({ok: true});
+    expect(connect).toHaveBeenCalledOnce();
+    expect(registry.get('mcp_docs_search')?.definition.sensitiveFields).toEqual(['token']);
+    await manager.disable('docs');
+    expect(registry.get('mcp_docs_search')).toBeUndefined();
+    expect(manager.status('docs')).toMatchObject({state: 'disabled', trust: 'disabled'});
+
+    const stored = await readFile(trustPath, 'utf8');
+    expect(stored).not.toContain('must-not-leak');
+    expect((await lstat(trustPath)).mode & 0o777).toBe(0o600);
+    await manager.trust('docs');
+    await manager.revoke('docs');
+    expect(manager.status('docs')).toMatchObject({state: 'revoked', trust: 'revoked'});
+
+    const reloaded = new McpManager(mcp, {
+      cwd: root,
+      trustStore: new McpTrustStore({path: trustPath}),
+      clientFactory: () => fakeClient({connect}),
+      transportFactory: () => fakeTransport(),
+    });
+    await reloaded.loadTrust();
+    expect(reloaded.status('docs')).toMatchObject({state: 'revoked', trust: 'revoked'});
+  });
+
+  it('keeps legacy dynamic manifests inspectable but refuses to trust an undeclared tool set', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-mcp-dynamic-trust-'));
+    temporaryDirectories.push(root);
+    const manager = new McpManager(config(), {
+      cwd: root,
+      trustStore: new McpTrustStore({path: join(root, 'trust.json')}),
+    });
+    expect(manager.inspect('docs').dynamicTools).toBe(true);
+    await expect(manager.trust('docs')).rejects.toThrow('until its tools and effects are declared');
+  });
+
+  it('rejects undeclared server-injected tools and never trusts annotations to lower permissions', async () => {
+    const declared = config({
+      tools: [{
+        name: 'replace',
+        permissions: ['write', 'shell'],
+        commands: ['node'],
+        paths: ['src/**'],
+        completionEvidence: 'partial',
+      }],
+    });
+    const manager = new McpManager(declared, {
+      requireTrust: false,
+      clientFactory: () => fakeClient({
+        listTools: vi.fn(async () => ({tools: [
+          {name: 'replace', annotations: {readOnlyHint: true}, inputSchema: {type: 'object', properties: {}}},
+          {name: 'injected_admin', annotations: {readOnlyHint: true}, inputSchema: {type: 'object', properties: {}}},
+        ]})),
+      }),
+      transportFactory: () => fakeTransport(),
+    });
+    const result = await manager.connect('docs');
+    expect(result.skippedTools).toBe(1);
+    expect(manager.getTools()).toHaveLength(1);
+    expect(manager.getTools()[0]?.permissionCategories?.({})).toEqual(['write', 'shell', 'network']);
+    expect(manager.getTools()[0]?.definition.completionEvidence).toBe('partial');
+  });
+
+  it('blocks only required server failures during initialization', async () => {
+    const connect = vi.fn(async () => {
+      throw new Error('offline');
+    });
+    const optional = new McpManager(config(), {
+      requireTrust: false,
+      clientFactory: () => fakeClient({connect}),
+      transportFactory: () => fakeTransport(),
+    });
+    await expect(optional.initialize()).resolves.toBeUndefined();
+    expect(connect).not.toHaveBeenCalled();
+
+    const required = new McpManager(config({required: true}), {
+      requireTrust: false,
+      clientFactory: () => fakeClient({connect}),
+      transportFactory: () => fakeTransport(),
+    });
+    await expect(required.initialize()).rejects.toThrow('Required MCP server unavailable: docs: offline');
+
+    const untrusted = new McpManager(config({required: true}), {
+      clientFactory: () => fakeClient({connect}),
+      transportFactory: () => fakeTransport(),
+    });
+    await expect(untrusted.initialize()).rejects.toThrow('capability manifest is untrusted');
+  });
+
+  it('measures lazy schema savings and ranks the intended tool first across fixed queries', async () => {
+    const tools = ['search_docs', 'read_logs', 'create_issue', 'query_database'].map((name) => ({
+      definition: {
+        name,
+        description: name.replaceAll('_', ' '),
+        category: 'read' as const,
+        inputSchema: {type: 'object', properties: {query: {type: 'string'}}},
+      },
+      execute: async () => ({content: ''}),
+    }));
+    const cases = [
+      ['search documentation', 'search_docs'],
+      ['read logs', 'read_logs'],
+      ['create issue', 'create_issue'],
+      ['query database', 'query_database'],
+    ] as const;
+    const correct = cases.filter(([query, expected]) =>
+      rankRelevantTools(tools, query)[0]?.tool.definition.name === expected).length;
+    expect(correct / cases.length).toBe(1);
+  });
+
   it('keeps chat startup lazy and activates only request-relevant schemas', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-mcp-lazy-'));
     temporaryDirectories.push(root);
@@ -159,6 +397,7 @@ describe('McpManager', () => {
     const manager = new McpManager(config({
       description: 'Search internal documentation.',
     }), {
+      requireTrust: false,
       clientFactory: () => fakeClient({connect, listTools}),
       transportFactory: () => fakeTransport(),
     });
@@ -191,8 +430,14 @@ describe('McpManager', () => {
           availableTools: 10,
           loadedTools: expect.arrayContaining(['mcp_docs_alpha_search']),
           deferredTools: 2,
+          schemaBudget: {
+            savedTokens: expect.any(Number),
+            topMatch: 'mcp_docs_alpha_search',
+            queryMatched: true,
+          },
         },
       });
+      expect((first?.metadata?.schemaBudget as {savedTokens: number}).savedTokens).toBeGreaterThan(0);
       expect(registry.get('mcp_docs_alpha_search')).toBeDefined();
       expect(registry.definitions().filter((tool) => tool.name.startsWith('mcp_docs_')))
         .toHaveLength(8);
@@ -218,6 +463,7 @@ describe('McpManager', () => {
       }),
     });
     const manager = new McpManager(config(), {
+      requireTrust: false,
       clientFactory: () => client,
       transportFactory: () => fakeTransport(),
     });
@@ -248,7 +494,7 @@ describe('McpManager', () => {
       connectTimeoutMs: 1_000,
       toolTimeoutMs: 2_000,
       servers,
-    });
+    }, {requireTrust: false});
     const activation = manager.activationTool(new ToolRegistry());
     const schema = activation?.definition.inputSchema as {
       properties?: {server?: {enum?: string[]}};
@@ -281,6 +527,7 @@ describe('McpManager', () => {
     }));
     await server.connect(serverTransport as unknown as Transport);
     const manager = new McpManager(config(), {
+      requireTrust: false,
       transportFactory: () => clientTransport as unknown as Transport,
     });
     try {
@@ -317,6 +564,7 @@ describe('McpManager', () => {
       getServerVersion: () => ({name: 'fixture', version: '1.0.0'}),
     });
     const manager = new McpManager(config(), {
+      requireTrust: false,
       clientFactory: () => client,
       transportFactory: () => fakeTransport(),
     });
@@ -349,6 +597,7 @@ describe('McpManager', () => {
       }),
     });
     const manager = new McpManager(config(), {
+      requireTrust: false,
       clientFactory: () => client,
       transportFactory: () => fakeTransport(),
     });
@@ -376,6 +625,7 @@ describe('McpManager', () => {
       }),
     ];
     const manager = new McpManager(config(), {
+      requireTrust: false,
       clientFactory: () => clients.shift() as McpClientLike,
       transportFactory: () => fakeTransport(),
     });
@@ -402,6 +652,7 @@ describe('McpManager', () => {
         })),
     });
     const manager = new McpManager(config(), {
+      requireTrust: false,
       clientFactory: () => client,
       transportFactory: () => fakeTransport(),
     });

@@ -14,6 +14,8 @@ export function createMemoryTools(store: MemoryStore): AgentTool[] {
         name: 'memory_search',
         description: 'Search durable user, workspace, session, and agent memories relevant to the task.',
         category: 'read',
+        source: 'memory',
+        activation: 'always',
         inputSchema: jsonSchema({
           query: {type: 'string', description: 'Natural-language memory query.'},
           scope: {type: 'string', enum: ['user', 'workspace', 'session', 'agent']},
@@ -45,6 +47,8 @@ export function createMemoryTools(store: MemoryStore): AgentTool[] {
         name: 'memory_propose',
         description: 'Propose a non-secret durable memory for user review. The candidate remains inactive until the user explicitly approves it.',
         category: 'write',
+        source: 'memory',
+        activation: 'always',
         inputSchema: jsonSchema({
           content: {type: 'string', description: 'Concise fact, preference, experience, or procedure to propose. Never include secrets.'},
           rationale: {type: 'string', description: 'Why this is useful beyond the current response and what evidence supports it.'},
@@ -101,6 +105,8 @@ export function createMemoryTools(store: MemoryStore): AgentTool[] {
         name: 'memory_forget',
         description: 'Archive or permanently delete a memory by id.',
         category: 'write',
+        source: 'memory',
+        activation: 'always',
         inputSchema: jsonSchema({
           id: {type: 'string'},
           permanent: {type: 'boolean'},

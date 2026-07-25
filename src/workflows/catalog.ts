@@ -108,6 +108,8 @@ export function createWorkflowTool(catalog: WorkflowCatalog): AgentTool {
       name: 'workflow_plan',
       description: 'Load a built-in typed workflow for implementation, debugging, review, or refactoring.',
       category: 'read',
+      source: 'workflow',
+      activation: 'always',
       inputSchema: jsonSchema({
         name: {type: 'string', enum: catalog.list().map((workflow) => workflow.name)},
         task: {type: 'string'},

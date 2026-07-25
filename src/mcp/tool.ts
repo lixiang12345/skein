@@ -4,6 +4,7 @@ import type {Tool as McpSdkTool} from '@modelcontextprotocol/sdk/types.js';
 import stripAnsi from 'strip-ansi';
 import type {AgentTool, ToolExecution} from '../tools/types.js';
 import {ToolInputError} from '../tools/types.js';
+import type {McpCapabilityTool} from './capabilities.js';
 
 const MAX_ARGUMENT_BYTES = 256_000;
 const MAX_DESCRIPTION_LENGTH = 4_000;
@@ -26,41 +27,74 @@ export interface McpToolAdapterOptions {
   remoteTool: McpRemoteTool;
   timeoutMs: number;
   callTool: McpCallTool;
+  capability?: McpCapabilityTool;
 }
 
 export function createMcpToolAdapter(options: McpToolAdapterOptions): AgentTool {
   const {remoteTool} = options;
   const inputSchema = copyInputSchema(remoteTool.inputSchema);
+  const permissionCategories = options.capability?.permissions ?? ['network'];
+  const completionEvidence = options.capability?.completionEvidence ?? 'none';
+  const mutating = permissionCategories.some((category) =>
+    category === 'write' || category === 'shell' || category === 'git');
   return {
     definition: {
       name: options.exposedName,
-      description: describeTool(options.serverName, remoteTool),
+      description: describeTool(options.serverName, remoteTool, options.capability),
       // MCP servers are an external trust boundary. Read-only annotations are
       // hints from that server and must not lower the local permission level.
       category: 'network',
       inputSchema,
       progressive: true,
+      source: 'mcp',
+      permissionCategories,
+      activation: 'active',
+      completionEvidence,
+      ...(options.capability?.sensitiveFields.length
+        ? {sensitiveFields: options.capability.sensitiveFields}
+        : {}),
     },
-    permissionCategories: () => ['network'],
+    permissionCategories: () => permissionCategories,
+    ...(mutating ? {
+      affectedPaths: async (arguments_, context) => resolveDeclaredMutationPaths(
+        arguments_,
+        options.capability?.paths ?? [],
+        context,
+      ),
+    } : {}),
     async execute(arguments_, context): Promise<ToolExecution> {
       assertArguments(arguments_);
+      const remoteArguments = mutating && completionEvidence === 'full' && context.checkpointId
+        ? {...arguments_, _skein: {checkpointId: context.checkpointId}}
+        : arguments_;
       const result = await options.callTool({
         name: remoteTool.name,
-        arguments: arguments_,
+        arguments: remoteArguments,
       }, {
         timeout: options.timeoutMs,
         maxTotalTimeout: options.timeoutMs,
         ...(context.signal ? {signal: context.signal} : {}),
       });
       const normalized = normalizeCallResult(result);
+      const evidence = mutating && completionEvidence === 'full'
+        ? await validateCompletionEvidence(normalized.structuredContent, context)
+        : undefined;
       return {
         ok: !normalized.isError,
         content: normalized.content,
+        ...(evidence ? {changedFiles: evidence.changedFiles} : {}),
         metadata: {
           mcpServer: options.serverName,
           mcpTool: remoteTool.name,
           sourceBytes: normalized.sourceBytes,
           sourceTruncated: normalized.sourceTruncated,
+          capabilityPermissions: permissionCategories,
+          completionEvidence,
+          ...(mutating ? {
+            changeTracking: evidence ? 'complete' : 'unresolved',
+            completionEvidenceVerified: Boolean(evidence),
+          } : {}),
+          ...(evidence ? evidence : {}),
           ...(normalized.isError ? {mcpError: true} : {}),
         },
       };
@@ -99,10 +133,15 @@ export function isUsableRemoteTool(tool: McpRemoteTool): boolean {
   }
 }
 
-function describeTool(serverName: string, tool: McpRemoteTool): string {
+function describeTool(
+  serverName: string,
+  tool: McpRemoteTool,
+  capability?: McpCapabilityTool,
+): string {
   const label = stripAnsi(tool.title?.trim() || tool.name)
     .replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 200);
-  const description = tool.description ? stripAnsi(tool.description)
+  const sourceDescription = capability?.description ?? tool.description;
+  const description = sourceDescription ? stripAnsi(sourceDescription)
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ')
     .trim().slice(0, MAX_DESCRIPTION_LENGTH)
     : undefined;
@@ -136,6 +175,7 @@ function normalizeCallResult(result: unknown): {
   isError: boolean;
   sourceBytes: number;
   sourceTruncated: boolean;
+  structuredContent?: unknown;
 } {
   if (!isRecord(result)) {
     return boundResult(safeJson(result), false);
@@ -153,7 +193,75 @@ function normalizeCallResult(result: unknown): {
   }
   const content = sections.filter(Boolean).join('\n\n') ||
     (isError ? 'The MCP tool reported an error.' : 'The MCP tool completed without output.');
-  return boundResult(content, isError);
+  return {...boundResult(content, isError), ...(result.structuredContent === undefined
+    ? {} : {structuredContent: result.structuredContent})};
+}
+
+async function validateCompletionEvidence(
+  structuredContent: unknown,
+  context: Parameters<AgentTool['execute']>[1],
+): Promise<{
+  changedFiles: string[];
+  checkpointId: string;
+  artifactReceipts: string[];
+  completionEvidenceRefs: string[];
+} | undefined> {
+  if (!isRecord(structuredContent)) return;
+  const receipt = isRecord(structuredContent.skeinEvidence)
+    ? structuredContent.skeinEvidence
+    : undefined;
+  if (!receipt || !context.checkpointId || !Array.isArray(receipt.changedFiles) || receipt.changedFiles.length > 256 ||
+    typeof receipt.checkpointId !== 'string' || !receipt.checkpointId.trim() ||
+    receipt.checkpointId !== context.checkpointId ||
+    !Array.isArray(receipt.artifactReceipts) || !receipt.artifactReceipts.length ||
+    !Array.isArray(receipt.completionEvidence) || !receipt.completionEvidence.length) return;
+  const changedFiles: string[] = [];
+  for (const path of receipt.changedFiles) {
+    if (typeof path !== 'string' || !path.trim()) return;
+    try {
+      changedFiles.push(await context.workspace.resolvePath(path, {allowMissing: true}));
+    } catch {
+      return;
+    }
+  }
+  const artifactReceipts = receipt.artifactReceipts
+    .filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+    .map((value) => sanitizeInlineText(value).slice(0, 256));
+  const completionEvidenceRefs = receipt.completionEvidence
+    .filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+    .map((value) => sanitizeInlineText(value).slice(0, 256));
+  if (artifactReceipts.length !== receipt.artifactReceipts.length ||
+    completionEvidenceRefs.length !== receipt.completionEvidence.length) return;
+  return {
+    changedFiles,
+    checkpointId: sanitizeInlineText(receipt.checkpointId).slice(0, 256),
+    artifactReceipts,
+    completionEvidenceRefs,
+  };
+}
+
+async function resolveDeclaredMutationPaths(
+  arguments_: Record<string, unknown>,
+  declaredPaths: string[],
+  context: Parameters<NonNullable<AgentTool['affectedPaths']>>[1],
+): Promise<string[]> {
+  const candidates: string[] = [];
+  for (const key of ['path', 'file', 'cwd']) {
+    const value = arguments_[key];
+    if (typeof value === 'string' && value.trim()) candidates.push(value);
+  }
+  if (Array.isArray(arguments_.paths)) {
+    candidates.push(...arguments_.paths.filter((value): value is string =>
+      typeof value === 'string' && Boolean(value.trim())));
+  }
+  // Exact declared paths can be checkpointed even when the remote schema uses
+  // a domain-specific argument name. Globs are scope declarations, not files.
+  candidates.push(...declaredPaths.filter((path) => !/[?*{}\[\]]/u.test(path)));
+  const resolved: string[] = [];
+  for (const candidate of [...new Set(candidates)].slice(0, 256)) {
+    resolved.push(await context.workspace.resolvePath(candidate, {allowMissing: true}));
+  }
+  return resolved;
 }
 
 function boundResult(content: string, isError: boolean): {

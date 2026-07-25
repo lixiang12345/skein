@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.26`.
+- Current repository version: `0.3.27`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -41,8 +41,8 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.26.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.26.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.27.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.27.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
@@ -99,15 +99,13 @@ firewall policies while requiring complete evidence and recovery coverage.
 The replay reports a 36.7% estimated-input reduction; this is a deterministic
 budget measurement, not a provider billing or task-success claim.
 
-MCP tool definitions are now marked for progressive disclosure. Normal chat
-startup exposes a compact `mcp_activate` catalog instead of connecting every
-server. Selecting a configured server connects it, runs remote `listTools`, and
-loads at most eight request-relevant schemas into the live registry. Selected
-schemas retain their registry order and remain loaded for the current run, and
-Token Ledger receipts record the deferred count. MCP activation and discovered
-tools remain `network` operations, hidden tool calls remain rejected by the
-existing boundary, and explicit diagnostics such as `skein mcp status` still
-connect eagerly by design.
+MCP tool definitions use progressive disclosure. Version `0.3.23` exposed a
+compact `mcp_activate` catalog instead of connecting every server, then loaded
+at most eight request-relevant schemas. Version `0.3.27` adds the preceding
+local `mcp_search` and `mcp_inspect` stages plus user-owned fingerprint trust;
+`skein mcp status` is now no-connect. Selected schemas remain stable for the
+current run, Token Ledger receipts record the deferred count, MCP calls retain
+the network boundary, and hidden tool calls remain rejected.
 
 Version `0.3.22` normalizes provider-reported cache and reasoning usage across
 streaming and non-streaming OpenAI, Anthropic, and Gemini responses. Token
@@ -414,17 +412,29 @@ Implementation progress:
   Team Run compatibility. Parallel writers, external CLI writer mode, cost
   controls, Gemini CLI, and optional tmux/iTerm pane hosts remain next.
 
-### P2: MCP, Skills, And Workflow Trust UX
+### P1: MCP capability trust (complete in 0.3.27)
 
-Add a first-run catalog and inspection flow for bundled capabilities. Keep
-installation explicit and reviewable: show source, requested tools, filesystem
-scope, network scope, and trust state before activation. Add fixture servers and
-Skills that exercise timeout, malformed schema, disconnect, and version drift.
-Lazy MCP activation is now the default chat path. Next, add declarative
-capability manifests, per-server trust review, activation telemetry, and an
-optional subprocess sandbox before any marketplace. Do not load arbitrary plugin
-JavaScript in-process; package reusable extensions as data-only Skills/workflows
-plus explicitly trusted MCP servers.
+Version `0.3.27` completes local `search → inspect → trust → activate` for MCP.
+Redacted manifests cover source, version, tools, permission categories,
+network, commands, paths, sensitive fields, background/process-tree effects,
+and completion-evidence support. Trust is bound to the exact manifest
+fingerprint and workspace; the model cannot grant it. Persistent disable and
+revoke unload activated schemas. Optional server failures remain isolated and
+only explicitly required servers may block initialization.
+
+Declared permissions are additive to the non-removable network boundary, and
+server annotations cannot lower them. A named manifest rejects undeclared
+server-injected tools. Text, JSON, and TUI events redact declared sensitive
+arguments. External mutations stay completion-unresolved unless Skein's own
+checkpoint id, workspace-valid changed files, artifact receipts, and completion
+evidence round-trip successfully. Fixed tests cover malformed schemas,
+injection, trust invalidation, disable/revoke, required degradation, schema
+token savings, and top-tool selection. These are deterministic contract tests,
+not a general real-model accuracy claim.
+
+Future extension work may add an optional subprocess sandbox and data-only
+bundles that compose Skills, workflows, profiles, and trusted MCP servers. It
+must not load arbitrary plugin JavaScript in-process.
 
 ### Delivered: bounded long-session continuity and intent sufficiency
 

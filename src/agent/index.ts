@@ -1,4 +1,4 @@
-export {AgentRunner} from './runner.js';
+export {AgentRunner, redactToolCallForDisplay} from './runner.js';
 export type {AgentRunnerOptions} from './runner.js';
 export {AgentProfileCatalog, builtInProfiles} from './profiles.js';
 export type {AgentProfile} from './profiles.js';

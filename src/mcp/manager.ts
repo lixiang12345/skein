@@ -8,6 +8,7 @@ import stripAnsi from 'strip-ansi';
 import type {McpConfig, McpServerConfig} from '../types.js';
 import type {ToolRegistry, AgentTool} from '../tools/index.js';
 import {ToolInputError} from '../tools/types.js';
+import {estimateTokens} from '../utils/tokens.js';
 import {
   createMcpToolAdapter,
   disambiguateMcpToolName,
@@ -24,6 +25,15 @@ import {
   type ValidatedHttpConfig,
   type ValidatedStdioConfig,
 } from './validation.js';
+import {
+  buildMcpCapabilityManifest,
+  capabilityFingerprint,
+  declaredToolCapability,
+  searchMcpCapabilities,
+  type McpCapabilityManifest,
+  type McpCapabilitySearchResult,
+} from './capabilities.js';
+import {McpTrustStore, type McpTrustState} from './trust-store.js';
 
 const MAX_SERVERS = 32;
 const MAX_TOOLS_PER_SERVER = 256;
@@ -32,13 +42,23 @@ const DEFAULT_CONNECT_TIMEOUT = 12_000;
 const DEFAULT_TOOL_TIMEOUT = 60_000;
 const LAZY_SCHEMA_LIMIT = 8;
 
-export type McpServerState = 'disabled' | 'disconnected' | 'connecting' | 'connected' | 'error' | 'closed';
+export type McpServerState =
+  | 'disabled'
+  | 'untrusted'
+  | 'revoked'
+  | 'disconnected'
+  | 'connecting'
+  | 'connected'
+  | 'error'
+  | 'closed';
 
 export interface McpServerStatus {
   name: string;
   state: McpServerState;
   transport: 'stdio' | 'http';
   toolCount: number;
+  required: boolean;
+  trust: McpTrustState;
   connectedAt?: string;
   serverVersion?: string;
   error?: string;
@@ -55,12 +75,22 @@ export interface McpActivationResult extends McpConnectResult {
   registeredTools: string[];
   availableTools: number;
   deferredTools: number;
+  schemaBudget?: {
+    eagerTokens: number;
+    loadedTokens: number;
+    savedTokens: number;
+    topMatch: string | null;
+    queryMatched: boolean;
+  };
 }
 
 export interface McpManagerOptions extends McpValidationOptions {
   clientName?: string;
   clientVersion?: string;
   logger?: (message: string, details?: Record<string, unknown>) => void;
+  trustStore?: McpTrustStore;
+  /** Test-only compatibility escape hatch; production runtimes require trust. */
+  requireTrust?: boolean;
   /** Injectable factories keep lifecycle tests independent of child processes/network. */
   clientFactory?: (name: string) => McpClientLike;
   transportFactory?: (
@@ -100,8 +130,13 @@ export class McpManager {
   private readonly statuses = new Map<string, McpServerStatus>();
   private readonly toolOwners = new Map<string, string>();
   private readonly stableAdapters = new Map<string, AgentTool>();
+  private readonly registries = new Set<ToolRegistry>();
   private readonly options: McpManagerOptions;
+  private readonly trustStore: McpTrustStore;
+  private readonly workspace: string;
+  private readonly requireTrust: boolean;
   private readonly shutdownController = new AbortController();
+  private trustLoaded = false;
   private closed = false;
 
   constructor(
@@ -109,6 +144,9 @@ export class McpManager {
     options: McpManagerOptions = {},
   ) {
     this.options = options;
+    this.trustStore = options.trustStore ?? new McpTrustStore();
+    this.workspace = options.cwd ?? process.cwd();
+    this.requireTrust = options.requireTrust !== false;
     const entries = Object.entries(config.servers ?? {});
     for (const [index, [name, server]] of entries.entries()) {
       const transport = server.transport ?? 'stdio';
@@ -118,19 +156,127 @@ export class McpManager {
           state: 'error',
           transport,
           toolCount: 0,
+          required: server.required === true,
+          trust: 'untrusted',
           error: `MCP server limit exceeded (maximum ${MAX_SERVERS})`,
         });
         continue;
       }
-      const state: McpServerState = config.enabled === false || server.enabled === false
-        ? 'disabled' : 'disconnected';
-      this.statuses.set(name, {name, state, transport, toolCount: 0});
+      const disabled = config.enabled === false || server.enabled === false;
+      const state: McpServerState = disabled
+        ? 'disabled' : this.requireTrust ? 'untrusted' : 'disconnected';
+      this.statuses.set(name, {
+        name,
+        state,
+        transport,
+        toolCount: 0,
+        required: server.required === true,
+        trust: disabled ? 'disabled' : this.requireTrust ? 'untrusted' : 'trusted',
+      });
     }
+  }
+
+  /** Load persisted trust and prove availability for explicitly required servers. */
+  async initialize(signal?: AbortSignal): Promise<void> {
+    await this.ensureTrustLoaded();
+    const required = [...this.statuses.values()]
+      .filter((status) => status.required && status.state !== 'disabled')
+      .map((status) => status.name);
+    const failures: string[] = [];
+    for (const name of required) {
+      const status = this.statuses.get(name);
+      if (status?.trust !== 'trusted') {
+        failures.push(`${name}: capability manifest is ${status?.trust ?? 'untrusted'}`);
+        continue;
+      }
+      const result = await this.connect(name, signal);
+      if (!result.ok) failures.push(`${name}: ${result.status.error ?? result.status.state}`);
+    }
+    if (failures.length) {
+      throw new Error(`Required MCP server unavailable: ${failures.join('; ')}`);
+    }
+  }
+
+  /** Refresh local trust state without connecting; used by status and review UIs. */
+  async loadTrust(): Promise<void> {
+    await this.ensureTrustLoaded();
+  }
+
+  /** Compact, no-network capability controls advertised before remote schemas. */
+  catalogTools(registry: ToolRegistry): AgentTool[] {
+    const names = this.catalogServerNames();
+    if (!names.length) return [];
+    const search: AgentTool = {
+      definition: {
+        name: 'mcp_search',
+        description: 'Search configured MCP capability manifests without connecting to a server or loading remote schemas.',
+        category: 'read',
+        source: 'mcp',
+        permissionCategories: ['read'],
+        activation: 'catalog',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: {type: 'string', maxLength: 500, description: 'Capability, tool, permission, or server to find.'},
+          },
+          required: ['query'],
+          additionalProperties: false,
+        },
+      },
+      permissionCategories: () => ['read'],
+      execute: async (arguments_) => {
+        const query = typeof arguments_.query === 'string' ? arguments_.query.trim() : '';
+        if (query.length > 500) throw new ToolInputError('MCP search query must be at most 500 characters');
+        await this.ensureTrustLoaded();
+        const results = this.search(query);
+        return {
+          content: results.length
+            ? results.map((result) => `${result.name}: ${result.description} (${result.trust}, ${result.declaredTools || 'dynamic'} tools)`).join('\n')
+            : 'No configured MCP capability matched the query.',
+          metadata: {mcpSearch: results},
+        };
+      },
+    };
+    const inspect: AgentTool = {
+      definition: {
+        name: 'mcp_inspect',
+        description: 'Inspect one redacted declarative MCP capability manifest and its local trust state without connecting.',
+        category: 'read',
+        source: 'mcp',
+        permissionCategories: ['read'],
+        activation: 'catalog',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            server: {type: 'string', enum: names, description: 'Configured MCP server to inspect.'},
+          },
+          required: ['server'],
+          additionalProperties: false,
+        },
+      },
+      permissionCategories: () => ['read'],
+      execute: async (arguments_) => {
+        const server = typeof arguments_.server === 'string' ? arguments_.server : '';
+        if (!names.includes(server)) throw new ToolInputError('MCP server is not available for inspection');
+        await this.ensureTrustLoaded();
+        const manifest = this.inspect(server);
+        return {
+          content: JSON.stringify({manifest, trust: this.status(server)?.trust ?? 'untrusted'}, null, 2),
+          metadata: {
+            mcpServer: server,
+            trust: this.status(server)?.trust ?? 'untrusted',
+            manifestFingerprint: this.fingerprint(server),
+          },
+        };
+      },
+    };
+    const activation = this.activationTool(registry);
+    return activation ? [search, inspect, activation] : [search, inspect];
   }
 
   /** Compact model-visible catalog; transport and remote discovery stay lazy. */
   activationTool(registry: ToolRegistry): AgentTool | undefined {
-    const names = this.activatableServerNames();
+    const names = this.catalogServerNames();
     if (!names.length) return;
     const catalog = names.map((name) => {
       const server = this.config.servers[name];
@@ -141,8 +287,11 @@ export class McpManager {
     return {
       definition: {
         name: 'mcp_activate',
-        description: `Connect to one configured MCP server only when the current task needs it, discover its tools, and load at most ${LAZY_SCHEMA_LIMIT} relevant schemas. Available servers: ${catalog}`,
+        description: `Activate one already trusted MCP capability after mcp_search and mcp_inspect, then load at most ${LAZY_SCHEMA_LIMIT} relevant schemas. This tool cannot grant trust. Available servers: ${catalog}`,
         category: 'network',
+        source: 'mcp',
+        permissionCategories: ['network'],
+        activation: 'catalog',
         inputSchema: {
           type: 'object',
           properties: {
@@ -163,9 +312,12 @@ export class McpManager {
         }
         const result = await this.activate(server, query, registry, context.signal);
         if (!result.ok) {
+          const trust = result.status.trust;
           return {
             ok: false,
-            content: `MCP server ${server} could not be activated: ${result.status.error ?? result.status.state}`,
+            content: trust !== 'trusted'
+              ? `MCP server ${server} is ${trust}. Review it with mcp_inspect; only the user can trust it with the CLI or /mcp trust confirmation flow.`
+              : `MCP server ${server} could not be activated: ${result.status.error ?? result.status.state}`,
             metadata: activationMetadata(result),
           };
         }
@@ -190,6 +342,7 @@ export class McpManager {
     registry: ToolRegistry,
     signal?: AbortSignal,
   ): Promise<McpActivationResult> {
+    await this.ensureTrustLoaded();
     const connected = await this.connect(name, signal);
     if (!connected.ok) {
       return {...connected, registeredTools: [], availableTools: 0, deferredTools: 0};
@@ -203,17 +356,28 @@ export class McpManager {
       ? tools
       : selectRelevantTools(tools, query, LAZY_SCHEMA_LIMIT);
     this.registerSelectedTools(registry, selected);
+    const ranked = rankRelevantTools(tools, query);
+    const eagerTokens = estimateTokens(JSON.stringify(tools.map((tool) => tool.definition)));
+    const loadedTokens = estimateTokens(JSON.stringify(selected.map((tool) => tool.definition)));
     return {
       ...connected,
       registeredTools: selected.map((tool) => tool.definition.name),
       availableTools: tools.length,
       deferredTools: Math.max(0, tools.length - selected.length),
+      schemaBudget: {
+        eagerTokens,
+        loadedTokens,
+        savedTokens: Math.max(0, eagerTokens - loadedTokens),
+        topMatch: ranked[0]?.tool.definition.name ?? null,
+        queryMatched: (ranked[0]?.score ?? 0) > 0,
+      },
     };
   }
 
   /** Connect enabled servers with a small concurrency bound. */
   async connectAll(signal?: AbortSignal): Promise<McpConnectResult[]> {
     if (this.closed) throw new Error('MCP manager is closed');
+    await this.ensureTrustLoaded();
     const configuredNames = Object.keys(this.config.servers ?? {});
     const names = configuredNames.slice(0, MAX_SERVERS);
     if (this.config.enabled === false) {
@@ -236,8 +400,12 @@ export class McpManager {
   /** Connect one configured server. Connection errors are captured in status. */
   async connect(name: string, signal?: AbortSignal): Promise<McpConnectResult> {
     if (this.closed) throw new Error('MCP manager is closed');
+    await this.ensureTrustLoaded();
     const status = this.statuses.get(name);
     if (status?.state === 'error' && status.error?.includes('server limit exceeded')) {
+      return this.resultFor(name, false, 0);
+    }
+    if (this.requireTrust && status?.trust !== 'trusted') {
       return this.resultFor(name, false, 0);
     }
     const existing = this.pending.get(name);
@@ -270,9 +438,12 @@ export class McpManager {
     if (!current) throw new Error(`Unknown MCP server: ${name}`);
     const status: McpServerStatus = {
       name,
-      state: current.state === 'disabled' ? 'disabled' : 'disconnected',
+      state: current.state === 'disabled' || current.state === 'revoked' || current.state === 'untrusted'
+        ? current.state : 'disconnected',
       transport: current.transport,
       toolCount: 0,
+      required: current.required,
+      trust: current.trust,
     };
     this.statuses.set(name, status);
     return status;
@@ -283,7 +454,9 @@ export class McpManager {
     if (this.closed) throw new Error('MCP manager is closed');
     const status = this.statuses.get(name);
     if (!status) throw new Error(`Unknown MCP server: ${name}`);
-    if (status.state === 'disabled') return this.resultFor(name, false, 0);
+    if (status.state === 'disabled' || status.state === 'revoked' || status.state === 'untrusted') {
+      return this.resultFor(name, false, 0);
+    }
     const pending = this.pending.get(name);
     if (pending) await pending;
     await this.disconnect(name);
@@ -310,9 +483,12 @@ export class McpManager {
     for (const [name, status] of this.statuses) {
       this.statuses.set(name, {
         name,
-        state: status.state === 'disabled' ? 'disabled' : 'closed',
+        state: status.state === 'disabled' || status.state === 'revoked' || status.state === 'untrusted'
+          ? status.state : 'closed',
         transport: status.transport,
         toolCount: 0,
+        required: status.required,
+        trust: status.trust,
       });
     }
   }
@@ -324,6 +500,77 @@ export class McpManager {
   status(name: string): McpServerStatus | undefined {
     const status = this.statuses.get(name);
     return status ? {...status} : undefined;
+  }
+
+  search(query = ''): Array<McpCapabilitySearchResult & {state: McpServerState; trust: McpTrustState}> {
+    return searchMcpCapabilities(this.config, query).map((result) => {
+      const status = this.statuses.get(result.name);
+      return {
+        ...result,
+        state: status?.state ?? 'error',
+        trust: status?.trust ?? 'untrusted',
+      };
+    });
+  }
+
+  inspect(name: string): McpCapabilityManifest {
+    const server = this.config.servers?.[name];
+    if (!server) throw new Error(`Unknown MCP server: ${name}`);
+    return buildMcpCapabilityManifest(name, server, this.workspace);
+  }
+
+  fingerprint(name: string): string {
+    const server = this.config.servers?.[name];
+    if (!server) throw new Error(`Unknown MCP server: ${name}`);
+    return capabilityFingerprint(name, server, this.workspace);
+  }
+
+  async trust(name: string): Promise<McpServerStatus> {
+    const server = this.config.servers?.[name];
+    if (!server) throw new Error(`Unknown MCP server: ${name}`);
+    if (this.config.enabled === false || server.enabled === false) {
+      throw new Error(`MCP server is disabled by configuration: ${name}`);
+    }
+    if (this.inspect(name).dynamicTools) {
+      throw new Error(`MCP capability ${name} cannot be trusted until its tools and effects are declared.`);
+    }
+    await this.trustStore.trust(this.workspace, name, this.fingerprint(name));
+    this.trustLoaded = true;
+    return this.setStatus(name, {
+      state: 'disconnected',
+      trust: 'trusted',
+      required: server.required === true,
+      transport: server.transport ?? 'stdio',
+      toolCount: 0,
+    });
+  }
+
+  async disable(name: string): Promise<McpServerStatus> {
+    const server = this.config.servers?.[name];
+    if (!server) throw new Error(`Unknown MCP server: ${name}`);
+    await this.disconnect(name);
+    this.unregisterServerTools(name);
+    await this.trustStore.disable(this.workspace, name, this.fingerprint(name));
+    return this.setStatus(name, {
+      state: 'disabled',
+      trust: 'disabled',
+      required: server.required === true,
+      toolCount: 0,
+    });
+  }
+
+  async revoke(name: string): Promise<McpServerStatus> {
+    const server = this.config.servers?.[name];
+    if (!server) throw new Error(`Unknown MCP server: ${name}`);
+    await this.disconnect(name);
+    this.unregisterServerTools(name);
+    await this.trustStore.revoke(this.workspace, name, this.fingerprint(name));
+    return this.setStatus(name, {
+      state: 'revoked',
+      trust: 'revoked',
+      required: server.required === true,
+      toolCount: 0,
+    });
   }
 
   tools(): AgentTool[] {
@@ -342,6 +589,7 @@ export class McpManager {
   }
 
   private registerSelectedTools(registry: ToolRegistry, tools: AgentTool[]): string[] {
+    this.registries.add(registry);
     const registered: string[] = [];
     for (const tool of tools) {
       const existing = registry.get(tool.definition.name);
@@ -357,12 +605,43 @@ export class McpManager {
     return registered;
   }
 
-  private activatableServerNames(): string[] {
-    if (this.config.enabled === false) return [];
+  private unregisterServerTools(name: string): void {
+    for (const [identity, tool] of this.stableAdapters) {
+      if (!identity.startsWith(`${name}\u0000`)) continue;
+      for (const registry of this.registries) {
+        registry.unregister(tool.definition.name, tool);
+      }
+    }
+  }
+
+  private catalogServerNames(): string[] {
     return [...this.statuses.values()]
-      .filter((status) => status.state !== 'disabled' && status.state !== 'error')
+      .filter((status) => !status.error?.includes('server limit exceeded'))
       .map((status) => status.name)
       .sort((left, right) => left.localeCompare(right));
+  }
+
+  private async ensureTrustLoaded(): Promise<void> {
+    if (this.trustLoaded) return;
+    for (const [name, server] of Object.entries(this.config.servers ?? {}).slice(0, MAX_SERVERS)) {
+      const current = this.statuses.get(name);
+      if (!current) continue;
+      if (this.config.enabled === false || server.enabled === false) {
+        this.setStatus(name, {state: 'disabled', trust: 'disabled', toolCount: 0});
+        continue;
+      }
+      if (!this.requireTrust) {
+        this.setStatus(name, {state: 'disconnected', trust: 'trusted', toolCount: 0});
+        continue;
+      }
+      const trust = await this.trustStore.state(this.workspace, name, this.fingerprint(name));
+      this.setStatus(name, {
+        state: trust === 'trusted' ? 'disconnected' : trust,
+        trust,
+        toolCount: 0,
+      });
+    }
+    this.trustLoaded = true;
   }
 
   private async connectInternal(name: string, signal?: AbortSignal): Promise<McpConnectResult> {
@@ -379,7 +658,12 @@ export class McpManager {
       return {name, ok: false, status, skippedTools: 0};
     }
     if (this.config.enabled === false || configured.enabled === false) {
-      const status = this.setStatus(name, {state: 'disabled', transport: transportKind, toolCount: 0});
+      const status = this.setStatus(name, {
+        state: 'disabled',
+        trust: 'disabled',
+        transport: transportKind,
+        toolCount: 0,
+      });
       return {name, ok: false, status, skippedTools: 0};
     }
     if (this.connections.has(name)) {
@@ -432,6 +716,9 @@ export class McpManager {
       const listed = await this.listRemoteTools(client, timeoutMs, signal);
       if (closedDuringConnect) throw new Error('MCP server closed during connection setup');
       const toolMap = this.buildAdapters(name, configured, listed.tools);
+      const undeclaredTools = configured.tools?.length
+        ? listed.tools.filter((tool) => !configured.tools?.some((declared) => declared.name === tool.name)).length
+        : 0;
       const connection: Connection = {
         name,
         client,
@@ -453,7 +740,12 @@ export class McpManager {
         );
       }
       const status = this.setStatus(name, statusPatch);
-      return {name, ok: true, status, skippedTools: listed.skippedTools + listed.truncatedTools};
+      return {
+        name,
+        ok: true,
+        status,
+        skippedTools: listed.skippedTools + listed.truncatedTools + undeclaredTools,
+      };
     } catch (error) {
       if (client) await closeQuietly(client);
       else if (transport) await closeTransportQuietly(transport);
@@ -560,6 +852,10 @@ export class McpManager {
       DEFAULT_TOOL_TIMEOUT,
     );
     for (const remoteTool of remoteTools) {
+      const capability = declaredToolCapability(config, remoteTool.name, this.workspace);
+      // Once a manifest names tools, schemas injected by the server are not
+      // silently promoted into the reviewed capability set.
+      if (config.tools?.length && !capability) continue;
       let exposedName = makeMcpToolName(namespace, remoteTool.name);
       const identity = `${serverName}\u0000${remoteTool.name}`;
       if (seen.has(exposedName) || this.isToolNameOwnedByAnother(exposedName, identity)) {
@@ -590,6 +886,7 @@ export class McpManager {
           remoteTool,
           timeoutMs,
           callTool,
+          ...(capability ? {capability} : {}),
         });
         this.stableAdapters.set(identity, adapter);
       }
@@ -627,6 +924,8 @@ export class McpManager {
       state: patch.state ?? current?.state ?? 'disconnected',
       transport: patch.transport ?? current?.transport ?? 'stdio',
       toolCount: patch.toolCount ?? current?.toolCount ?? 0,
+      required: patch.required ?? current?.required ?? false,
+      trust: patch.trust ?? current?.trust ?? 'untrusted',
       ...(patch.connectedAt !== undefined ? {connectedAt: patch.connectedAt} :
         current?.connectedAt !== undefined ? {connectedAt: current.connectedAt} : {}),
       ...(patch.serverVersion !== undefined ? {serverVersion: patch.serverVersion} :
@@ -652,10 +951,18 @@ function activationMetadata(result: McpActivationResult): Record<string, unknown
     loadedTools: result.registeredTools,
     deferredTools: result.deferredTools,
     skippedTools: result.skippedTools,
+    ...(result.schemaBudget ? {schemaBudget: result.schemaBudget} : {}),
   };
 }
 
 function selectRelevantTools(tools: AgentTool[], query: string, limit: number): AgentTool[] {
+  return rankRelevantTools(tools, query).slice(0, limit).map(({tool}) => tool);
+}
+
+export function rankRelevantTools(
+  tools: AgentTool[],
+  query: string,
+): Array<{tool: AgentTool; score: number}> {
   const terms = new Set(query.toLocaleLowerCase().match(/[\p{L}\p{N}_-]{2,}/gu) ?? []);
   return tools.map((tool) => {
     const searchable = `${tool.definition.name.replaceAll('_', ' ')} ${tool.definition.description}`
@@ -664,9 +971,7 @@ function selectRelevantTools(tools: AgentTool[], query: string, limit: number): 
     for (const term of terms) if (searchable.includes(term)) score += term.length;
     return {tool, score};
   }).sort((left, right) => right.score - left.score ||
-    left.tool.definition.name.localeCompare(right.tool.definition.name))
-    .slice(0, limit)
-    .map(({tool}) => tool);
+    left.tool.definition.name.localeCompare(right.tool.definition.name));
 }
 
 function sanitizeCatalogText(value: string | undefined): string {

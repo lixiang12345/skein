@@ -889,12 +889,99 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       return true;
     }
     if (command === 'mcp') {
+      const [action = 'list', server = '', ...tail] = argument.split(/\s+/u).filter(Boolean);
+      if (action === 'search') {
+        const results = extensions?.mcpSearch([server, ...tail].filter(Boolean).join(' ')) ?? [];
+        appendList('MCP capability search', results.length ? results.map((result) => ({
+          label: `${result.name}  ${result.trust}${result.required ? `${separator}required` : ''}`,
+          detail: `${result.description}${separator}${result.version}${separator}${result.declaredTools || 'dynamic'} tools`,
+          tone: result.trust === 'trusted' ? 'success' : result.trust === 'revoked' ? 'error' : 'warning',
+        })) : [{label: 'No configured MCP capability matched.'}]);
+        return true;
+      }
+      if (action === 'inspect' || action === 'trust') {
+        if (!server) {
+          append({id: nextId(), kind: 'notice', tone: 'error', text: `Usage: /mcp ${action} <server>${action === 'trust' ? ' [--confirm]' : ''}`});
+          return true;
+        }
+        const manifest = extensions?.mcpInspect(server);
+        if (!manifest) {
+          append({id: nextId(), kind: 'notice', tone: 'error', text: 'MCP is disabled or unavailable.'});
+          return true;
+        }
+        appendList(`MCP trust review · ${manifest.name}`, [
+          {label: `${manifest.source.kind}:${manifest.name}  ${manifest.version}`, detail: `${manifest.transport}${separator}${manifest.target}${manifest.required ? `${separator}required` : ''}`},
+          ...(manifest.tools.length ? manifest.tools.flatMap((tool) => {
+            const tone = tool.permissions.some((category) => category !== 'read' && category !== 'network')
+              ? 'warning' as const : 'normal' as const;
+            return [
+              {label: `${tool.name}  ${tool.permissions.join('+')}`, detail: `completion evidence ${tool.completionEvidence}`, tone},
+              {label: 'network scopes', detail: tool.network.join(', ') || 'unspecified', tone},
+              {label: 'command scopes', detail: tool.commands.join(', ') || 'none', tone},
+              {label: 'path scopes', detail: tool.paths.join(', ') || 'none', tone},
+              {label: `sensitive fields  ${tool.sensitiveFields.join(', ') || 'none'}`, detail: `${tool.background ? 'background' : 'foreground'}${separator}${tool.processTree ? 'process-tree' : 'single-process'}`, tone},
+            ];
+          }) : [{label: 'Dynamic remote tools', detail: 'Undeclared tools stay network-only and do not receive Skein completion-evidence protection.', tone: 'warning' as const}]),
+        ]);
+        if (action === 'trust') {
+          if (manifest.dynamicTools) {
+            append({id: nextId(), kind: 'notice', tone: 'error', text: `Declare tools and effects for ${server} in user-owned config before trust can be granted.`});
+            return true;
+          }
+          if (!tail.includes('--confirm')) {
+            append({id: nextId(), kind: 'notice', tone: 'warning', text: `Review complete. Run /mcp trust ${server} --confirm to trust this exact manifest fingerprint.`});
+          } else {
+            const status = await extensions?.mcpTrust(server);
+            append({id: nextId(), kind: 'notice', tone: status ? 'success' : 'error', text: status ? `Trusted MCP capability ${server}. Activation remains explicit.` : 'MCP is unavailable.'});
+          }
+        }
+        return true;
+      }
+      if (action === 'activate') {
+        const query = tail.join(' ').trim();
+        if (!server || !query) {
+          append({id: nextId(), kind: 'notice', tone: 'error', text: 'Usage: /mcp activate <server> <capability query>'});
+          return true;
+        }
+        const result = await extensions?.mcpActivate(server, query);
+        append({
+          id: nextId(),
+          kind: 'notice',
+          tone: result?.ok ? 'success' : 'error',
+          text: result?.ok
+            ? `Activated ${server}; loaded ${result.registeredTools.length} of ${result.availableTools} schemas.`
+            : `Could not activate ${server}: ${result?.status.error ?? result?.status.trust ?? 'MCP unavailable'}`,
+        });
+        return true;
+      }
+      if (action === 'disable') {
+        if (!server) {
+          append({id: nextId(), kind: 'notice', tone: 'error', text: 'Usage: /mcp disable <server>'});
+          return true;
+        }
+        const status = await extensions?.mcpDisable(server);
+        append({id: nextId(), kind: 'notice', tone: status ? 'success' : 'error', text: status ? `Disabled MCP capability ${server}.` : 'MCP is unavailable.'});
+        return true;
+      }
+      if (action === 'revoke') {
+        if (!server || !tail.includes('--confirm')) {
+          append({id: nextId(), kind: 'notice', tone: 'warning', text: `Revocation removes persisted trust. Run /mcp revoke ${server || '<server>'} --confirm to continue.`});
+          return true;
+        }
+        const status = await extensions?.mcpRevoke(server);
+        append({id: nextId(), kind: 'notice', tone: status ? 'success' : 'error', text: status ? `Revoked MCP capability ${server}. Re-inspection and trust are required before reuse.` : 'MCP is unavailable.'});
+        return true;
+      }
+      if (action !== 'list') {
+        append({id: nextId(), kind: 'notice', tone: 'error', text: 'Usage: /mcp [search|inspect|trust|activate|disable|revoke] [...]'});
+        return true;
+      }
       const servers = extensions?.mcpStatus() ?? [];
       appendList('MCP', servers.length
-        ? servers.map((server) => ({
-          label: `${server.name}  ${server.state}${server.serverVersion ? `${separator}v${server.serverVersion}` : ''}`,
-          detail: `${server.transport}${separator}${server.toolCount} tools${server.connectedAt ? `${separator}connected ${server.connectedAt.slice(11, 19)}` : ''}${server.error ? `${separator}${server.error}` : ''}`,
-          tone: server.state === 'connected' ? 'success' : server.state === 'error' ? 'error' : 'warning',
+        ? servers.map((item) => ({
+          label: `${item.name}  ${item.state}${item.required ? `${separator}required` : ''}${item.serverVersion ? `${separator}v${item.serverVersion}` : ''}`,
+          detail: `${item.transport}${separator}${item.trust}${separator}${item.toolCount} tools${item.connectedAt ? `${separator}connected ${item.connectedAt.slice(11, 19)}` : ''}${item.error ? `${separator}${item.error}` : ''}`,
+          tone: item.state === 'connected' ? 'success' : item.state === 'error' || item.state === 'revoked' ? 'error' : 'warning',
         }))
         : [{label: 'No MCP servers configured.'}]);
       return true;
@@ -902,8 +989,8 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     if (command === 'tools') {
       const definitions = runner.tools.definitions();
       appendList('Tools', definitions.map((tool) => ({
-        label: `${tool.name}  ${tool.category}`,
-        detail: tool.description,
+        label: `${tool.name}  ${tool.source ?? 'builtin'}${separator}${(tool.permissionCategories ?? [tool.category]).join('+')}`,
+        detail: `${tool.activation ?? 'always'}${tool.completionEvidence ? `${separator}evidence ${tool.completionEvidence}` : ''}${separator}${tool.description}`,
         tone: tool.category === 'read' ? 'normal' : tool.category === 'network' ? 'warning' : 'normal',
       })));
       return true;

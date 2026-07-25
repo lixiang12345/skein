@@ -102,8 +102,23 @@ const agentTeamConfigSchema = z.object({
 
 const mcpServerSchema = z.object({
   enabled: z.boolean().optional(),
+  required: z.boolean().optional(),
   transport: z.enum(['stdio', 'http']).optional(),
   description: z.string().min(1).max(500).optional(),
+  version: z.string().min(1).max(128).optional(),
+  tools: z.array(z.object({
+    name: z.string().min(1).max(256),
+    description: z.string().min(1).max(500).optional(),
+    permissions: z.array(z.enum(['read', 'write', 'shell', 'git', 'network']))
+      .min(1).max(5),
+    network: z.array(z.string().min(1).max(500)).max(32).optional(),
+    commands: z.array(z.string().min(1).max(500)).max(32).optional(),
+    paths: z.array(z.string().min(1).max(4_000)).max(64).optional(),
+    sensitiveFields: z.array(z.string().min(1).max(256)).max(64).optional(),
+    background: z.boolean().optional(),
+    processTree: z.boolean().optional(),
+    completionEvidence: z.enum(['full', 'partial', 'none']).optional(),
+  }).strict()).max(256).optional(),
   command: z.string().min(1).max(512).optional(),
   args: z.array(z.string().max(4_000)).max(64).optional(),
   cwd: z.string().max(4_000).optional(),
@@ -112,7 +127,33 @@ const mcpServerSchema = z.object({
   headers: z.record(z.string(), z.string().max(20_000)).optional(),
   timeoutMs: z.number().int().positive().max(300_000).optional(),
   toolPrefix: z.string().regex(/^[a-z][a-z0-9_-]{0,24}$/).optional(),
-}).strict();
+}).strict().superRefine((server, context) => {
+  const names = new Set<string>();
+  for (const [index, tool] of (server.tools ?? []).entries()) {
+    if (names.has(tool.name)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['tools', index, 'name'],
+        message: `duplicate MCP capability tool: ${tool.name}`,
+      });
+    }
+    names.add(tool.name);
+    if (tool.permissions.includes('shell') && !tool.commands?.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['tools', index, 'commands'],
+        message: 'MCP shell capability must declare command scopes',
+      });
+    }
+    if (tool.permissions.includes('write') && !tool.paths?.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['tools', index, 'paths'],
+        message: 'MCP write capability must declare path scopes',
+      });
+    }
+  }
+});
 
 const mcpConfigSchema = z.object({
   enabled: z.boolean().optional(),

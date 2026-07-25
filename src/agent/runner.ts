@@ -421,6 +421,7 @@ export class AgentRunner {
             this.session.audit ?? [],
             this.session.duplicationSuppressions ?? [],
           ).size > 0,
+          turnDirective.intent,
           request,
           loadedProgressiveTools,
         );
@@ -751,7 +752,8 @@ export class AgentRunner {
     // process exit cannot leave an unaudited operation behind.
     await this.persist();
     throwIfAborted(options.signal);
-    await emit({type: 'tool_start', call, category: tool.definition.category});
+    const displayCall = redactToolCallForDisplay(call, tool.definition.sensitiveFields ?? []);
+    await emit({type: 'tool_start', call: displayCall, category: tool.definition.category});
     const executionContext: ToolExecutionContext = {
       config: this.config,
       workspace: this.workspace,
@@ -961,13 +963,17 @@ export class AgentRunner {
       this.recordPermission(call, category, 'allow', 'Approved for this session.');
       return true;
     }
-    await emit({type: 'permission', call, category, reason: decision.reason});
+    const displayCall = redactToolCallForDisplay(
+      call,
+      this.tools.get(call.name)?.definition.sensitiveFields ?? [],
+    );
+    await emit({type: 'permission', call: displayCall, category, reason: decision.reason});
     if (!options.requestPermission) {
       this.recordPermission(call, category, 'deny', 'No permission handler was available.');
       return false;
     }
     try {
-      const grant = await options.requestPermission(call, category, decision.reason);
+      const grant = await options.requestPermission(displayCall, category, decision.reason);
       const allowed = grant === true || grant === 'session';
       if (grant === 'session') this.sessionApprovals.add(approvalKey);
       this.recordPermission(
@@ -1490,6 +1496,23 @@ function uniqueCategories(categories: ToolCategory[]): ToolCategory[] {
   return [...new Set(categories)];
 }
 
+export function redactToolCallForDisplay(call: ToolCall, sensitiveFields: string[]): ToolCall {
+  if (!sensitiveFields.length) return call;
+  const sensitive = new Set(sensitiveFields.map((field) => field.toLocaleLowerCase()));
+  const redact = (value: unknown, path: string[] = []): unknown => {
+    if (Array.isArray(value)) return value.map((item, index) => redact(item, [...path, String(index)]));
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => {
+      const fieldPath = [...path, key].join('.').toLocaleLowerCase();
+      const field = key.toLocaleLowerCase();
+      return [key, sensitive.has(field) || sensitive.has(fieldPath)
+        ? '<redacted>'
+        : redact(item, [...path, key])];
+    }));
+  };
+  return {...call, arguments: redact(call.arguments) as Record<string, unknown>};
+}
+
 function failedResult(
   call: ToolCall,
   content: string,
@@ -1516,11 +1539,13 @@ function visibleToolDefinitions(
   contractEnabled: boolean,
   artifactReadAvailable: boolean,
   duplicationAvailable: boolean,
+  intent: string,
   request: string,
   loadedProgressiveTools: Set<string>,
 ): ReturnType<ToolRegistry['definitions']> {
   const eligible = tools.definitions().filter((tool) =>
     (!askMode || tool.category === 'read') &&
+    intentAllowsTool(intent, tool) &&
     (contractEnabled || tool.name !== 'task_contract') &&
     (artifactReadAvailable || tool.name !== 'read_tool_artifact') &&
     (duplicationAvailable || tool.name !== 'duplication_audit'),
@@ -1532,6 +1557,31 @@ function visibleToolDefinitions(
   }
   return eligible.filter((tool) => !tool.progressive || loadedProgressiveTools.has(tool.name));
 }
+
+function intentAllowsTool(
+  intent: string,
+  tool: ReturnType<ToolRegistry['definitions']>[number],
+): boolean {
+  if (!BUILTIN_TOOL_NAMES.has(tool.name)) return true;
+  if (intent === 'explain') return tool.category === 'read';
+  if (intent === 'review') return tool.category === 'read' || tool.name === 'git';
+  return true;
+}
+
+const BUILTIN_TOOL_NAMES = new Set([
+  'read_file',
+  'read_tool_artifact',
+  'list_files',
+  'search_code',
+  'write_file',
+  'apply_patch',
+  'shell',
+  'git',
+  'task',
+  'task_contract',
+  'duplication_audit',
+  'working_memory',
+]);
 
 function selectProgressiveTools(
   tools: ReturnType<ToolRegistry['definitions']>,

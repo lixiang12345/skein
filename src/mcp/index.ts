@@ -1,5 +1,6 @@
 export {
   McpManager,
+  rankRelevantTools,
   type McpActivationResult,
   type McpClientLike,
   type McpConnectResult,
@@ -24,3 +25,13 @@ export {
   type ValidatedHttpConfig,
   type ValidatedStdioConfig,
 } from './validation.js';
+export {
+  buildMcpCapabilityManifest,
+  capabilityFingerprint,
+  declaredToolCapability,
+  searchMcpCapabilities,
+  type McpCapabilityManifest,
+  type McpCapabilitySearchResult,
+  type McpCapabilityTool,
+} from './capabilities.js';
+export {McpTrustStore, type McpTrustState, type McpTrustStoreOptions} from './trust-store.js';

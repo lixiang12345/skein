@@ -5,6 +5,7 @@ import {afterEach, describe, expect, it} from 'vitest';
 import {AgentRunner} from '../../src/agent/runner.js';
 import type {ModelProvider} from '../../src/providers/provider.js';
 import {ToolRegistry} from '../../src/tools/registry.js';
+import {createDefaultToolRegistry} from '../../src/tools/index.js';
 import type {AgentTool, ContextProvider} from '../../src/tools/types.js';
 import type {ChatMessage, ModelResponse, MosaicConfig} from '../../src/types.js';
 
@@ -67,6 +68,34 @@ function progressiveTool(name: string, description: string): AgentTool {
 }
 
 describe('progressive tool disclosure', () => {
+  it('limits built-in schemas for explain and review intents while preserving extension catalogs', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-intent-tools-'));
+    roots.push(root);
+    const calls: string[][] = [];
+    const provider: ModelProvider = {
+      name: 'compatible',
+      async complete(_messages, tools) {
+        calls.push(tools.map((tool) => tool.name));
+        return {content: 'Done.', toolCalls: []};
+      },
+    };
+    const explainRunner = new AgentRunner({
+      config: config(root), provider, contextEngine: context,
+      toolRegistry: createDefaultToolRegistry(), persistSession: false,
+    });
+    await explainRunner.run('Explain how the architecture works.');
+    expect(calls[0]).toEqual(['read_file', 'list_files', 'search_code', 'task', 'working_memory']);
+
+    const reviewRunner = new AgentRunner({
+      config: config(root), provider, contextEngine: context,
+      toolRegistry: createDefaultToolRegistry(), persistSession: false,
+    });
+    await reviewRunner.run('Review the current changes for correctness.');
+    expect(calls[1]).toEqual([
+      'read_file', 'list_files', 'search_code', 'git', 'task', 'working_memory',
+    ]);
+  });
+
   it('loads at most eight relevant tools and keeps selected schemas for later turns', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-progressive-tools-'));
     roots.push(root);

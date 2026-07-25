@@ -878,7 +878,7 @@ memoryCommand
 const mcpCommand = program.command('mcp').description('Inspect configured MCP servers');
 mcpCommand
   .command('status')
-  .description('Connect and report MCP server/tool status')
+  .description('Report redacted MCP trust and connection status without connecting optional servers')
   .option('-w, --workspace <path>', 'workspace root')
   .option('--config <path>', 'explicit config file')
   .option('--json', 'print JSON')
@@ -890,16 +890,131 @@ mcpCommand
       workspaceRoots: config.workspaceRoots,
     });
     try {
-      await manager.connectAll();
+      await manager.loadTrust();
       const status = manager.list();
       if (options.json) printObject(status, true);
       else if (!status.length) process.stdout.write('No MCP servers configured.\n');
       else for (const server of status) {
-        process.stdout.write(`${server.name.padEnd(18)} ${server.state.padEnd(12)} ${server.toolCount} tools${server.error ? `  ${server.error}` : ''}\n`);
+        process.stdout.write(`${server.name.padEnd(18)} ${server.state.padEnd(12)} ${server.trust.padEnd(10)} ${server.required ? 'required' : 'optional'}  ${server.toolCount} tools${server.error ? `  ${server.error}` : ''}\n`);
       }
     } finally {
       await manager.close();
     }
+  });
+mcpCommand
+  .command('search [query...]')
+  .description('Search configured capability manifests without network access')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--json', 'print JSON')
+  .action(async (query: string[], options: ConfigOptions) => {
+    const config = await runtimeConfig(workspaceOption(options.workspace), runtimeOptions(options));
+    if (!config.mcp) return printObject([], options.json === true);
+    const manager = createMcpManager(config);
+    await manager.loadTrust();
+    const results = manager.search(query.join(' '));
+    if (options.json) printObject(results, true);
+    else if (!results.length) process.stdout.write('No configured MCP capability matched.\n');
+    else for (const result of results) {
+      process.stdout.write(`${result.name.padEnd(18)} ${result.trust.padEnd(10)} ${result.version}  ${result.description}\n`);
+    }
+  });
+mcpCommand
+  .command('inspect <server>')
+  .description('Review a redacted declarative capability manifest without connecting')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--json', 'print JSON')
+  .action(async (server: string, options: ConfigOptions) => {
+    const config = await runtimeConfig(workspaceOption(options.workspace), runtimeOptions(options));
+    if (!config.mcp) throw new Error('MCP is not configured.');
+    const manager = createMcpManager(config);
+    await manager.loadTrust();
+    const review = {
+      manifest: manager.inspect(server),
+      fingerprint: manager.fingerprint(server),
+      trust: manager.status(server)?.trust ?? 'untrusted',
+    };
+    if (options.json) printObject(review, true);
+    else printMcpManifest(review);
+  });
+mcpCommand
+  .command('trust <server>')
+  .description('Trust the current redacted manifest fingerprint after review')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--json', 'print JSON')
+  .option('--yes', 'confirm trust non-interactively')
+  .action(async (server: string, options: ConfigOptions & {yes?: boolean}) => {
+    const config = await runtimeConfig(workspaceOption(options.workspace), runtimeOptions(options));
+    if (!config.mcp) throw new Error('MCP is not configured.');
+    const manager = createMcpManager(config);
+    await manager.loadTrust();
+    const review = {
+      manifest: manager.inspect(server),
+      fingerprint: manager.fingerprint(server),
+      trust: manager.status(server)?.trust ?? 'untrusted',
+    };
+    if (!options.json) printMcpManifest(review);
+    if (!options.yes && !(await confirm(`Trust this exact capability manifest for ${server}?`))) return;
+    const status = await manager.trust(server);
+    if (options.json) printObject({manifest: review.manifest, fingerprint: review.fingerprint, status}, true);
+    else process.stdout.write(`Trusted ${server}. Activation remains explicit.\n`);
+  });
+mcpCommand
+  .command('activate <server> <query...>')
+  .description('Connect one trusted server and load only query-relevant schemas')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--json', 'print JSON')
+  .action(async (server: string, query: string[], options: ConfigOptions) => {
+    const config = await runtimeConfig(workspaceOption(options.workspace), runtimeOptions(options));
+    if (!config.mcp) throw new Error('MCP is not configured.');
+    const manager = createMcpManager(config);
+    const registry = createDefaultToolRegistry();
+    try {
+      await manager.loadTrust();
+      const result = await manager.activate(server, query.join(' '), registry);
+      if (options.json) printObject(result, true);
+      else process.stdout.write(result.ok
+        ? `Activated ${server}; loaded ${result.registeredTools.length}/${result.availableTools} relevant schemas.\n`
+        : `Could not activate ${server}: ${result.status.error ?? result.status.trust}.\n`);
+      if (!result.ok) process.exitCode = 1;
+    } finally {
+      await manager.close();
+    }
+  });
+mcpCommand
+  .command('disable <server>')
+  .description('Persistently disable an MCP capability and unload its schemas')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--json', 'print JSON')
+  .action(async (server: string, options: ConfigOptions) => {
+    const config = await runtimeConfig(workspaceOption(options.workspace), runtimeOptions(options));
+    if (!config.mcp) throw new Error('MCP is not configured.');
+    const manager = createMcpManager(config);
+    await manager.loadTrust();
+    const status = await manager.disable(server);
+    if (options.json) printObject(status, true);
+    else process.stdout.write(`Disabled ${server}.\n`);
+  });
+mcpCommand
+  .command('revoke <server>')
+  .description('Revoke persisted MCP trust and require a fresh review')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--json', 'print JSON')
+  .option('--yes', 'confirm revocation non-interactively')
+  .action(async (server: string, options: ConfigOptions & {yes?: boolean}) => {
+    const config = await runtimeConfig(workspaceOption(options.workspace), runtimeOptions(options));
+    if (!config.mcp) throw new Error('MCP is not configured.');
+    if (!options.yes && !(await confirm(`Revoke persisted trust for ${server}?`))) return;
+    const manager = createMcpManager(config);
+    await manager.loadTrust();
+    const status = await manager.revoke(server);
+    if (options.json) printObject(status, true);
+    else process.stdout.write(`Revoked ${server}; inspect and trust the manifest before reuse.\n`);
   });
 
 program
@@ -1452,6 +1567,35 @@ function sessionMarkdown(session: Session): string {
     lines.push('## Changed files', '', ...session.changedFiles.map((path) => `- ${path}`), '');
   }
   return `${lines.join('\n')}\n`;
+}
+
+function createMcpManager(config: MosaicConfig): McpManager {
+  if (!config.mcp) throw new Error('MCP is not configured.');
+  return new McpManager(config.mcp, {
+    cwd: config.workspaceRoots[0] ?? process.cwd(),
+    workspaceRoots: config.workspaceRoots,
+  });
+}
+
+function printMcpManifest(review: {
+  manifest: ReturnType<McpManager['inspect']>;
+  fingerprint: string;
+  trust: string;
+}): void {
+  const {manifest} = review;
+  process.stdout.write(`MCP capability ${manifest.name} (${manifest.version})\n`);
+  process.stdout.write(`  Source: ${manifest.source.kind}/${manifest.source.owner}\n`);
+  process.stdout.write(`  Target: ${manifest.transport} ${manifest.target}\n`);
+  process.stdout.write(`  Trust: ${review.trust}  ${manifest.required ? 'required' : 'optional'}\n`);
+  process.stdout.write(`  Fingerprint: ${review.fingerprint}\n`);
+  if (!manifest.tools.length) {
+    process.stdout.write('  Tools: dynamically discovered; network-only, completion evidence unsupported\n');
+    return;
+  }
+  for (const tool of manifest.tools) {
+    process.stdout.write(`  ${tool.name}: ${tool.permissions.join('+')}  evidence=${tool.completionEvidence}\n`);
+    process.stdout.write(`    network=${tool.network.join(', ') || 'unspecified'} commands=${tool.commands.join(', ') || 'none'} paths=${tool.paths.join(', ') || 'none'} sensitive=${tool.sensitiveFields.join(', ') || 'none'}\n`);
+  }
 }
 
 async function confirm(prompt: string): Promise<boolean> {

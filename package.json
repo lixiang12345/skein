@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.26",
+  "version": "0.3.27",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,6 +16,13 @@
   },
   "skein": {
     "releaseNotes": [
+      "MCP now follows a no-network search and inspect review before explicit workspace-bound manifest trust and lazy activation",
+      "Declarative capability manifests expose redacted source, version, tools, permissions, network, command, path, sensitive-field, process, and completion-evidence effects",
+      "Persistent disable and revoke unload active remote schemas while manifest fingerprint changes fail closed to untrusted",
+      "Server annotations cannot lower local permissions, named manifests reject injected undeclared schemas, and optional server failures remain isolated",
+      "Only explicitly required trusted MCP servers may block startup, while status inspection no longer connects optional servers",
+      "Sensitive MCP arguments are redacted from terminal, TUI, JSON, and approval events; unsupported external mutations remain completion-unresolved",
+      "Explain and review intents expose smaller built-in schema sets, and MCP activation reports deterministic eager-versus-loaded schema estimates plus top-match evidence",
       "First-run setup now states that the primary agent needs API credentials and that provider subscriptions or signed-in coding CLIs are separate delegated tools",
       "Permission prompts show the policy reason, redacted target, working directory, category risk, and explicit once, session, deny, and stop choices",
       "The Recovery Center joins last-run state, failure repair hints, changed files, checkpoints, diff, audit, rollback, retry, and safe session resume",

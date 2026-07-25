@@ -24,7 +24,7 @@ export const commandDefinitions: CommandDefinition[] = [
   command('skills', 'List discovered task playbooks'),
   command('agents', 'List built-in and installed expert profiles'),
   command('connections', 'Inspect shared model endpoints and setup status', '/connections [setup]'),
-  command('mcp', 'Show external MCP server health and tools'),
+  command('mcp', 'Search, inspect, trust, activate, disable, or revoke MCP capabilities', '/mcp [search|inspect|trust|activate|disable|revoke] [...]'),
   command('tools', 'List built-in and MCP tools with permission categories'),
   command('permissions', 'Inspect the active permission policy'),
   command('changes', 'List files changed in the active session'),
@@ -89,6 +89,22 @@ export function commandSuggestions(
       {name: 'build', description: 'Allow edits and commands under the permission policy'},
     ].filter((item) => item.name.includes(query)).map((item) => ({
       value: `/mode ${item.name}`,
+      label: item.name,
+      description: item.description,
+    }));
+  }
+
+  if (firstSpace >= 0 && commandName === 'mcp') {
+    const query = argument.trim().toLocaleLowerCase();
+    return [
+      {name: 'search', description: 'Search redacted local capability manifests'},
+      {name: 'inspect', description: 'Review one manifest before trust'},
+      {name: 'trust', description: 'Trust the current manifest after confirmation'},
+      {name: 'activate', description: 'Connect a trusted server and load relevant schemas'},
+      {name: 'disable', description: 'Persistently disable a capability'},
+      {name: 'revoke', description: 'Revoke trust after confirmation'},
+    ].filter((item) => item.name.includes(query)).map((item) => ({
+      value: `/mcp ${item.name} `,
       label: item.name,
       description: item.description,
     }));

@@ -2,7 +2,15 @@ import {resolve} from 'node:path';
 import {AgentProfileCatalog, DelegationManager} from '../agent/index.js';
 import type {PromptAugmentation, PromptContextProvider} from '../agent/prompt-context.js';
 import type {ModelProvider} from '../providers/provider.js';
-import {McpManager, type McpServerStatus} from '../mcp/index.js';
+import {
+  McpManager,
+  type McpActivationResult,
+  type McpCapabilityManifest,
+  type McpCapabilitySearchResult,
+  type McpServerState,
+  type McpServerStatus,
+  type McpTrustState,
+} from '../mcp/index.js';
 import {
   createMemoryTools,
   MemoryStore,
@@ -31,6 +39,7 @@ export class ExtensionRuntime implements PromptContextProvider {
   readonly workflows = new WorkflowCatalog();
   private readonly options: ExtensionRuntimeOptions;
   private delegation: DelegationManager | undefined;
+  private registry: ToolRegistry | undefined;
   private initialized = false;
 
   private constructor(
@@ -88,8 +97,8 @@ export class ExtensionRuntime implements PromptContextProvider {
     }
     await this.skills?.discover();
     if (this.mcp) {
-      const activationTool = this.mcp.activationTool(registry);
-      if (activationTool) registry.register(activationTool);
+      await this.mcp.initialize(_signal);
+      for (const tool of this.mcp.catalogTools(registry)) registry.register(tool);
     }
     await this.profiles?.discover();
     if (this.config.agents?.enabled && this.profiles &&
@@ -111,6 +120,7 @@ export class ExtensionRuntime implements PromptContextProvider {
       }
     }
     registry.register(createWorkflowTool(this.workflows));
+    this.registry = registry;
     this.initialized = true;
   }
 
@@ -198,6 +208,31 @@ export class ExtensionRuntime implements PromptContextProvider {
 
   mcpStatus(): McpServerStatus[] {
     return this.mcp?.list() ?? [];
+  }
+
+  mcpSearch(query = ''): Array<McpCapabilitySearchResult & {state: McpServerState; trust: McpTrustState}> {
+    return this.mcp?.search(query) ?? [];
+  }
+
+  mcpInspect(name: string): McpCapabilityManifest | undefined {
+    return this.mcp?.inspect(name);
+  }
+
+  async mcpTrust(name: string): Promise<McpServerStatus | undefined> {
+    return this.mcp?.trust(name);
+  }
+
+  async mcpDisable(name: string): Promise<McpServerStatus | undefined> {
+    return this.mcp?.disable(name);
+  }
+
+  async mcpRevoke(name: string): Promise<McpServerStatus | undefined> {
+    return this.mcp?.revoke(name);
+  }
+
+  async mcpActivate(name: string, query: string, signal?: AbortSignal): Promise<McpActivationResult | undefined> {
+    if (!this.mcp || !this.registry) return;
+    return this.mcp.activate(name, query, this.registry, signal);
   }
 
   cancelAgent(id: string): boolean {

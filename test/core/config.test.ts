@@ -264,6 +264,56 @@ describe('configuration defaults', () => {
     expect(config.mcp?.servers.docs?.description).toBe('Search internal docs.');
   });
 
+  it('validates declarative MCP side effects before capability trust', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-config-mcp-manifest-'));
+    roots.push(root);
+    const path = join(root, 'config.json');
+    await writeFile(path, JSON.stringify({
+      mcp: {
+        enabled: true,
+        servers: {
+          files: {
+            enabled: true,
+            required: false,
+            transport: 'stdio',
+            command: 'fastctx',
+            version: '1.0.0',
+            tools: [{
+              name: 'replace',
+              permissions: ['write', 'shell'],
+              commands: ['fastctx replace'],
+              paths: ['src/**'],
+              sensitiveFields: ['token'],
+              background: false,
+              processTree: false,
+              completionEvidence: 'full',
+            }],
+          },
+        },
+      },
+    }));
+    const config = await loadConfig(root, path);
+    expect(config.mcp?.servers.files).toMatchObject({
+      version: '1.0.0',
+      tools: [{name: 'replace', permissions: ['write', 'shell']}],
+    });
+
+    await writeFile(path, JSON.stringify({
+      mcp: {
+        enabled: true,
+        servers: {
+          files: {
+            enabled: true,
+            transport: 'stdio',
+            command: 'fastctx',
+            tools: [{name: 'replace', permissions: ['write']}],
+          },
+        },
+      },
+    }));
+    await expect(loadConfig(root, path)).rejects.toThrow('MCP write capability must declare path scopes');
+  });
+
   it('trusts init-created model routing by fingerprint and invalidates edited config', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mosaic-config-init-trust-'));
     const home = await mkdtemp(join(tmpdir(), 'mosaic-config-home-'));
