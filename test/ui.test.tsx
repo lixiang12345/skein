@@ -519,7 +519,7 @@ describe('terminal presentation', () => {
     }
   });
 
-  it.each([20, 40, 80])('renders a bounded interactive team workbench at %i columns', (columns) => {
+  it.each([20, 40, 80, 120])('renders a bounded interactive team workbench at %i columns', (columns) => {
     const items = [
       {id: 'worker', kind: 'agent' as const, profile: 'architect', provider: 'anthropic', model: 'claude', phase: 'work' as const, task: 'Map 跨模块 boundaries and verify ownership', state: 'ok' as const, durationMs: 42_000, inputTokens: 12_000, outputTokens: 2_000, toolCalls: 7, summary: 'Architecture report ready.', alerts: ['soft token threshold exceeded (10000); continuing']},
       {id: 'reviewer', kind: 'agent' as const, profile: 'reviewer', provider: 'openai', model: 'gpt', phase: 'review' as const, task: 'Review evidence', state: 'running' as const, startedAt: Date.now() - 2_000},
@@ -531,13 +531,18 @@ describe('terminal presentation', () => {
       width={columns}
       selectedIndex={0}
       expanded
-      run={{id: 'run', objective: 'Deliver the multi-agent workbench', startedAt: Date.now() - 10_000, reviewRounds: 1}}
+      run={{
+        id: 'run', objective: 'Deliver the multi-agent workbench', startedAt: Date.now() - 10_000,
+        accepted: false, reviewRounds: 1,
+        review: {decision: 'escalate', pass: 2, fail: 1, unknown: 3},
+      }}
     />, {columns});
 
     expect(output).toContain('TEAM WORKBENCH');
     expect(output).toContain('[agents]');
     expect(output).toContain('architect');
     expect(output).toContain('soft token');
+    if (columns >= 80) expect(output).toContain('judge escalate 2/1/3');
     for (const line of output.split('\n')) {
       expect(displayWidth(line), `${columns}-column workbench row overflowed: ${JSON.stringify(line)}`).toBeLessThanOrEqual(columns);
     }

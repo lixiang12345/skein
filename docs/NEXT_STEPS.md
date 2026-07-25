@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.30`.
+- Current repository version: `0.3.31`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -42,8 +42,8 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.30.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.30.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.31.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.31.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
@@ -416,23 +416,33 @@ Implementation progress:
 - The scheduler now emits `agent_queued` and `agent_cancelled` events so queued,
   running, cancelled, and completed specialists are all observable. A parent
   cancellation or upstream timeout clears queued work and records the reason on
-  each cleared agent. The council reviewer emits a required `CONFLICTS` field
-  that is parsed into a structured conflict report and surfaced in the returned
-  team summary. The TUI Team Cockpit and Workbench render the queued and
+  each cleared agent. The Council Reviewer now emits one strict JSON verdict
+  with a bounded `conflicts` array that is surfaced in the returned team
+  summary. The TUI Team Cockpit and Workbench render the queued and
   cancelled states with distinct glyphs, colors, and the cancellation reason.
 - The first writer lane is implemented behind `agents.writerEnabled=false` by
   default. `writer_run` creates one repo-leased disposable worktree, confines an
   API writer to five path-safe read/write tools, requires an API Reviewer, and
-  persists a bounded patch plus lifecycle evidence in Team Run v2.
+  persists a bounded patch plus lifecycle evidence in Team Run v3.
 - `writer_integrate` is the only main-workspace integration path. It gates on
-  patch SHA, accepted review, base `HEAD`, clean target paths, patch parsing,
+  patch SHA, a structured evidence-backed verdict bound to the current semantic
+  Task Contract, base `HEAD`, clean target paths, patch parsing,
   `git apply --check`, and a mandatory checkpoint; failed applies restore the
-  checkpoint and conflicts never overwrite user work.
+  checkpoint and conflicts never overwrite user work. Team Run v1/v2 remains
+  readable, but legacy text acceptance is not integration authority.
+- G1 Evidence Schema is complete in `0.3.31`: every tool-result path receives a
+  canonical content-addressed receipt; Council report bundles are persisted per
+  round; Reviewer JSON is strict and content-addressed; every required criterion
+  needs admissible evidence; deterministic failure, malformed output, stale
+  contract/artifact binding, and unknown evidence fail closed. The Workbench,
+  text inspection, JSON, and JSONL surface decision and pass/fail/unknown counts.
 - Writer regression coverage proves success and rollback, concurrent-lane
   rejection, cancellation cleanup, oversize rejection, SHA and dirty-target
-  gates, simulated partial-apply recovery, workspace-profile rejection, and v1
-  Team Run compatibility. Parallel writers, external CLI writer mode, cost
-  controls, Gemini CLI, and optional tmux/iTerm pane hosts remain next.
+  gates, simulated partial-apply recovery, workspace-profile rejection, v1/v2
+  Team Run compatibility, artifact/manifest tampering, Reviewer failure and
+  cancellation, Task Contract drift, and deterministic preflight short-circuit.
+  Capability Registry/router shadow mode is the next evidence-routing slice;
+  parallel writers and external CLI writer mode remain deferred.
 
 ### P1: MCP capability trust (complete in 0.3.27)
 
@@ -525,7 +535,8 @@ deprecation window is complete.
 
 ## Suggested Next Conversation Opening
 
-Start with: “Audit the opt-in P1 writer lane against its Team Run v2 evidence,
-then decide whether the next increment should add external CLI writers or
-dependency-aware parallel worktrees. Keep active-workspace integration explicit
-and preserve SHA, review, clean-target, checkpoint, and rollback gates.”
+Start with: “Implement P1-G G2 Capability Registry and Router in shadow mode on
+top of Team Run v3. Keep configured priors separate from observed outcomes,
+open a new epoch when the model, endpoint, prompt, or tool fingerprint changes,
+and do not change live route selection until deterministic replay evidence and
+uncertainty gates pass.”

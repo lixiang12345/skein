@@ -37,6 +37,10 @@ inspectable index for code retrieval and no retrieval service dependency.
   configured check, or `git diff --check` tool result exists. Otherwise the
   TUI and machine output say `unverified` or `verification_failed`, regardless
   of what the model claims in prose.
+- **Evidence-bound review:** Team Run reviewers return one strict structured
+  verdict bound to the Task Contract and exact artifact SHA. Required criteria
+  must cite content-addressed evidence; deterministic failures, malformed JSON,
+  unknown handles, stale patches, and legacy text verdicts fail closed.
 - **Model ownership:** use four provider families without changing the agent or
   session format.
 - **Retrieval you control:** run the local BM25/path/symbol index, inspect its
@@ -70,7 +74,9 @@ inspectable index for code retrieval and no retrieval service dependency.
   reviewed durable memory share one permission and audit model.
 - **Reviewed writer lane:** an opt-in API-backed writer can prepare a bounded
   patch in a disposable Git worktree; only the main agent can explicitly
-  integrate it after review, conflict checks, and a recoverable checkpoint.
+  integrate it after deterministic preflight, a structured evidence-bound
+  review, current-contract validation, conflict checks, and a recoverable
+  checkpoint.
 
 The product rationale and competitor research are in
 [docs/PRODUCT.md](docs/PRODUCT.md); the implementation model is in
@@ -96,7 +102,7 @@ To build, verify, and install a local package artifact from this checkout:
 
 ```bash
 npm run verify:package -- --output-dir artifacts/package
-npm install -g ./artifacts/package/skein-code-cli-0.3.30.tgz
+npm install -g ./artifacts/package/skein-code-cli-0.3.31.tgz
 ```
 
 To install the published package from npm:
@@ -493,8 +499,12 @@ agents:
 temporary worktree. It cannot change the active workspace. A reviewed patch is
 applied only through `writer_integrate`, which requires its Team Run ID and
 SHA-256, rejects HEAD drift or dirty targets, and records a checkpoint rollback
-command. See [docs/MULTI_MODEL_TEAMS.md](docs/MULTI_MODEL_TEAMS.md) for the full
-trust and lifecycle contract.
+command. Team Run v3 stores the semantic Review Contract, exact patch and
+Council artifact hashes, content-addressed evidence receipts, and the normalized
+pass/fail/unknown verdict. Version 1 and 2 manifests remain inspectable, but an
+old text `VERDICT: ACCEPT` can never authorize integration. See
+[docs/MULTI_MODEL_TEAMS.md](docs/MULTI_MODEL_TEAMS.md) for the full trust and
+lifecycle contract.
 
 `provider: compatible` must be paired with `model.baseUrl` (or the
 `--base-url` flag). Additional roots declared in project config are constrained

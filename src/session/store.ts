@@ -22,6 +22,7 @@ import {
   resolveProjectNamespaceSync,
 } from '../utils/namespace.js';
 import {withNamespaceLease} from '../utils/namespace-lease.js';
+import {deterministicEvidenceReceiptValid} from '../agent/evidence-receipt.js';
 
 const sessionIdSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/);
 
@@ -122,6 +123,10 @@ const auditMetadataSchema = z.record(z.string(), z.unknown()).superRefine((metad
   if (suppression !== undefined && !duplicationSuppressionSchema.safeParse(suppression).success) {
     ctx.addIssue({code: 'custom', message: 'Invalid duplication suppression receipt'});
   }
+  const evidence = metadata.evidenceReceipt;
+  if (evidence !== undefined && !deterministicEvidenceReceiptValid(evidence)) {
+    ctx.addIssue({code: 'custom', message: 'Invalid deterministic evidence receipt'});
+  }
   const activeMatches = metadata.activeDuplicationMatches;
   if (activeMatches !== undefined && !z.array(z.string().regex(/^[a-f0-9]{24}$/u)).max(8)
     .safeParse(activeMatches).success) {
@@ -159,6 +164,7 @@ const toolArtifactSchema = z.object({
 
 const verificationEvidenceSchema = z.object({
   toolCallId: z.string(),
+  receiptId: z.string().regex(/^evidence:[a-f0-9]{64}$/u).optional(),
   tool: z.enum(['shell', 'git']),
   command: z.string(),
   kind: z.enum(['configured', 'test', 'typecheck', 'lint', 'build', 'diff', 'check']),

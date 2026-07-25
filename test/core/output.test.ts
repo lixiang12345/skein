@@ -22,6 +22,19 @@ afterEach(() => {
 });
 
 describe('HeadlessReporter', () => {
+  it('preserves the optional structured team verdict in stream JSON', () => {
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const reporter = new HeadlessReporter({format: 'stream-json', color: false});
+    reporter.onEvent({
+      type: 'team_done', id: 'run-1', accepted: false, reviewRounds: 1,
+      review: {decision: 'escalate', pass: 2, fail: 1, unknown: 3},
+    });
+    expect(JSON.parse(stdout.mock.calls.map(([chunk]) => String(chunk)).join(''))).toEqual({
+      type: 'team_done', id: 'run-1', accepted: false, reviewRounds: 1,
+      review: {decision: 'escalate', pass: 2, fail: 1, unknown: 3},
+    });
+  });
+
   it('prints only the latest assistant response once in quiet mode', () => {
     const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);

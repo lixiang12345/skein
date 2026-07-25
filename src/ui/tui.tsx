@@ -437,8 +437,8 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         append({id: nextId(), kind: 'notice', tone: 'info', text: `Team run ${event.id.slice(0, 8)} started${separator}${event.objective.slice(0, 180)}`});
         break;
       case 'team_done':
-        setTeamRun((current) => ({...current, id: current?.id ?? event.id, accepted: event.accepted, reviewRounds: event.reviewRounds}));
-        append({id: nextId(), kind: 'notice', tone: event.accepted ? 'success' : 'error', text: `Team run ${event.id.slice(0, 8)} ${event.accepted ? 'accepted' : 'rejected'}${separator}${event.reviewRounds} revision round${event.reviewRounds === 1 ? '' : 's'}`});
+        setTeamRun((current) => ({...current, id: current?.id ?? event.id, accepted: event.accepted, reviewRounds: event.reviewRounds, ...(event.review ? {review: event.review} : {})}));
+        append({id: nextId(), kind: 'notice', tone: event.accepted ? 'success' : 'error', text: `Team run ${event.id.slice(0, 8)} ${event.accepted ? 'accepted' : 'rejected'}${separator}${event.reviewRounds} revision round${event.reviewRounds === 1 ? '' : 's'}${event.review ? `${separator}judge ${event.review.decision} ${event.review.pass} pass ${event.review.fail} fail ${event.review.unknown} unknown` : ''}`});
         break;
       case 'writer_lane':
         append({

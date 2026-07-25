@@ -11,6 +11,10 @@ import type {
   DuplicationCompletionSummary,
 } from '../types.js';
 import {eventsSinceContract} from './task-contract.js';
+import {
+  createDeterministicEvidenceReceipt,
+  deterministicEvidenceReceiptValid,
+} from './evidence-receipt.js';
 import {commandForCall} from '../tools/permissions.js';
 import {isInside} from '../utils/path.js';
 
@@ -18,6 +22,8 @@ export interface CapturedVerification extends VerificationEvidence {
   changeSequence: number;
   commandKey: string;
 }
+
+export {createDeterministicEvidenceReceipt} from './evidence-receipt.js';
 
 export function captureVerification(
   call: ToolCall,
@@ -36,6 +42,13 @@ export function captureVerification(
   if (!kind) return undefined;
   return {
     toolCallId: call.id,
+    ...(deterministicEvidenceReceiptValid(result.metadata?.evidenceReceipt, {
+      toolCallId: call.id,
+      tool: call.name,
+      outcome: result.ok ? 'success' : 'failure',
+    })
+      ? {receiptId: result.metadata.evidenceReceipt.id}
+      : {}),
     tool: call.name,
     command: redactCommand(command),
     kind,
@@ -265,6 +278,13 @@ function buildAcceptance(
     const index = contractEvents.indexOf(event);
     successfulRefs.set(event.id, {event, index});
     successfulRefs.set(event.toolCallId, {event, index});
+    if (deterministicEvidenceReceiptValid(event.metadata?.evidenceReceipt, {
+      toolCallId: event.toolCallId,
+      tool: event.tool,
+      outcome: 'success',
+    })) {
+      successfulRefs.set(event.metadata.evidenceReceipt.id, {event, index});
+    }
   }
   const required = contract.acceptanceCriteria.filter((item) => item.required);
   const normalized = required.map((item) => {
@@ -372,6 +392,7 @@ function classifySingleVerificationCommand(command: string): VerificationKind | 
 function publicEvidence(item: CapturedVerification): VerificationEvidence {
   return {
     toolCallId: item.toolCallId,
+    ...(item.receiptId ? {receiptId: item.receiptId} : {}),
     tool: item.tool,
     command: item.command,
     kind: item.kind,

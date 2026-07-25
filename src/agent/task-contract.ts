@@ -1,6 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import type {Session, TaskContract, TaskContractCriterion} from '../types.js';
 import type {TurnIntent} from './prompt.js';
+import {deterministicEvidenceReceiptValid} from './evidence-receipt.js';
 
 const EXECUTABLE_INTENTS = new Set<TurnIntent>(['debug', 'refactor', 'test', 'implement']);
 
@@ -58,6 +59,14 @@ export function successfulContractEvidence(session: Session): Set<string> {
     if (event.tool === 'task_contract' || event.tool === 'task' || event.tool === 'working_memory') continue;
     refs.add(event.id);
     refs.add(event.toolCallId);
+    const receipt = event.metadata?.evidenceReceipt;
+    if (deterministicEvidenceReceiptValid(receipt, {
+      toolCallId: event.toolCallId,
+      tool: event.tool,
+      outcome: 'success',
+    })) {
+      refs.add(receipt.id);
+    }
   }
   return refs;
 }

@@ -4,6 +4,7 @@ import {
   captureVerification,
   classifyVerificationCommand,
   completionRecoveryDirective,
+  createDeterministicEvidenceReceipt,
   verificationDiagnosticPaths,
 } from '../../src/agent/completion-gate.js';
 import type {SessionAuditEvent, TaskContract, ToolCall, ToolResult} from '../../src/types.js';
@@ -39,6 +40,45 @@ describe('completion gate', () => {
     expect(evidence).toMatchObject({kind: 'configured', ok: true, changeSequence: 2});
     expect(evidence?.command).toBe('API_KEY=[redacted] node verify.js');
     expect(evidence?.command).not.toContain('secret-value');
+  });
+
+  it('propagates a content-addressed deterministic receipt without persisting raw secrets', () => {
+    const call = shellCall('receipt-check', 'npm test');
+    const receipt = createDeterministicEvidenceReceipt({
+      toolCallId: call.id,
+      tool: call.name,
+      arguments: {command: 'API_KEY=secret-value npm test'},
+      ok: true,
+      content: 'token=secret-value\nall tests passed',
+      changedFiles: ['/workspace/src/a.ts'],
+    });
+    const evidence = captureVerification(call, {
+      ...result(call.id, true), metadata: {evidenceReceipt: receipt},
+    }, 1, []);
+
+    expect(receipt.id).toBe(`evidence:${receipt.sha256}`);
+    expect(JSON.stringify(receipt)).not.toContain('secret-value');
+    expect(evidence).toMatchObject({receiptId: receipt.id, kind: 'test', ok: true});
+    expect(buildRunCompletion(['/workspace/src/a.ts'], [evidence!], 1).checks[0])
+      .toMatchObject({receiptId: receipt.id});
+  });
+
+  it('canonicalizes receipt inputs and rejects a tampered receipt binding', () => {
+    const first = createDeterministicEvidenceReceipt({
+      toolCallId: 'stable', tool: 'shell', arguments: {nested: {b: 2, a: 1}, command: 'npm test'},
+      ok: true, content: 'passed', changedFiles: ['b.ts', 'a.ts', 'a.ts'],
+    });
+    const second = createDeterministicEvidenceReceipt({
+      toolCallId: 'stable', tool: 'shell', arguments: {command: 'npm test', nested: {a: 1, b: 2}},
+      ok: true, content: 'passed', changedFiles: ['a.ts', 'b.ts'],
+    });
+    expect(second).toEqual(first);
+
+    const tampered = {...first, outputSha256: 'f'.repeat(64)};
+    const evidence = captureVerification(shellCall('stable', 'npm test'), {
+      ...result('stable', true), metadata: {evidenceReceipt: tampered},
+    }, 1, []);
+    expect(evidence).not.toHaveProperty('receiptId');
   });
 
   it('extracts only bounded workspace diagnostic locations from real failed verification output', () => {
@@ -152,6 +192,25 @@ describe('completion gate', () => {
       contract('satisfied', ['tool-ok']), [successfulAudit('tool-ok')],
     );
     expect(withAudit).toMatchObject({status: 'no_changes', acceptance: {satisfied: 1}});
+  });
+
+  it('keeps a criterion satisfied when it cites a valid content-addressed receipt', () => {
+    const call = shellCall('receipt-tool', 'npm test');
+    const receipt = createDeterministicEvidenceReceipt({
+      toolCallId: call.id, tool: call.name, arguments: call.arguments,
+      ok: true, content: 'passed',
+    });
+    const verification = captureVerification(call, {
+      ...result(call.id, true), metadata: {evidenceReceipt: receipt},
+    }, 0, []);
+    const audit: SessionAuditEvent = {
+      ...successfulAudit('receipt-tool'),
+      metadata: {evidenceReceipt: receipt},
+    };
+    const report = buildRunCompletion(
+      [], verification ? [verification] : [], 0, 'complete', contract('satisfied', [receipt.id]), [audit],
+    );
+    expect(report).toMatchObject({status: 'no_changes', acceptance: {satisfied: 1, pending: 0}});
   });
 
   it('enforces Contract verification requirements after the final mutation', () => {

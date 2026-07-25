@@ -566,7 +566,10 @@ describe('AgentRunner', () => {
         result: expect.objectContaining({
           ok: false,
           content: expect.stringContaining('not exposed for this turn'),
-          metadata: {failure: expect.objectContaining({class: 'unknown_tool'})},
+          metadata: expect.objectContaining({
+            failure: expect.objectContaining({class: 'unknown_tool'}),
+            evidenceReceipt: expect.objectContaining({outcome: 'failure'}),
+          }),
         }),
       }),
     ]));
@@ -600,7 +603,10 @@ describe('AgentRunner', () => {
         type: 'tool_result',
         result: expect.objectContaining({
           ok: false,
-          metadata: {failure: expect.objectContaining({class: 'contract_required'})},
+          metadata: expect.objectContaining({
+            failure: expect.objectContaining({class: 'contract_required'}),
+            evidenceReceipt: expect.objectContaining({outcome: 'failure'}),
+          }),
         }),
       }),
     ]));
@@ -1307,6 +1313,9 @@ describe('AgentRunner', () => {
     });
     await expect(readFile(join(root, 'must-not-exist.txt'), 'utf8')).rejects.toMatchObject({code: 'ENOENT'});
     expect(events[0]?.content).toContain('token budget');
+    expect(events[0]?.metadata).toMatchObject({
+      evidenceReceipt: {toolCallId: 'over-budget-write', tool: 'write_file', outcome: 'failure'},
+    });
     expect(session.messages.at(-1)?.role).toBe('tool');
     expect(session.usage.inputTokens + session.usage.outputTokens).toBe(10_500);
   });

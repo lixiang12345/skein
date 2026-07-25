@@ -243,7 +243,10 @@ describe('tool output firewall', () => {
     expect(result?.ok).toBe(false);
     expect(result?.content).toContain('ERROR_HEAD');
     expect(result?.content).toContain('ERROR_TAIL');
-    expect(result?.metadata).toMatchObject({toolOutput: {truncated: true, artifact: {toolCallId: 'thrown-call'}}});
+    expect(result?.metadata).toMatchObject({
+      toolOutput: {truncated: true, artifact: {toolCallId: 'thrown-call'}},
+      evidenceReceipt: {toolCallId: 'thrown-call', tool: 'failing_tool', outcome: 'failure'},
+    });
   });
 
   it('fails closed on corrupt artifact storage without blocking the coding session', async () => {

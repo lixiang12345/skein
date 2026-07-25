@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.30",
+  "version": "0.3.31",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,6 +16,12 @@
   },
   "skein": {
     "releaseNotes": [
+      "Team Run v3 replaces text-prefix reviewer acceptance with a strict ReviewVerdict bound to the semantic Task Contract, exact artifact SHA-256, reviewer route, and content-addressed verdict body",
+      "Every required criterion must cite a supplied evidence handle; missing, duplicate, unknown, fenced, prose-wrapped, or malformed reviewer output fails closed, while deterministic failures can never be overridden by model acceptance",
+      "Every executed, rejected, skipped, or failed tool result now receives a canonical content-addressed receipt without retaining command arguments, output, source, or credential text",
+      "Council report bundles are persisted as verified content-addressed artifacts per review round, and writer patches run HEAD, clean-target, path, and git-apply preflight before spending a Reviewer call",
+      "Legacy Team Run v1/v2 manifests remain inspectable but v2 text reviews cannot authorize writer integration; Task Contract or artifact changes invalidate prior verdicts",
+      "Agents show, stream JSON, and the Team Workbench expose accept, revise, escalate, pass, fail, and unknown state without duplicating raw reviewer JSON in terminal text",
       "Named primary connections now target third-party compatible relays only, use explicit env or none authentication, and resolve one complete profile automatically while requiring an explicit choice for ambiguity",
       "OpenAI Responses is the recommended new transport with POST /responses, store false, typed SSE, normalized tools and usage, and bounded exact output-item replay for stateless reasoning continuation",
       "OpenAI Chat Completions and Anthropic Messages remain explicit relay transports without cross-protocol retries; inference and OpenAI-style model catalog base URLs are configured independently",

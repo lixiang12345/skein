@@ -564,7 +564,10 @@ describe('SkeinApp completion flows', () => {
         options?.onEvent?.({type: 'agent_start', id: 'agent-1', profile: 'architect', provider: 'anthropic', model: 'claude', task: 'Inspect boundaries', phase: 'work'});
         options?.onEvent?.({type: 'agent_update', id: 'agent-1', profile: 'architect', stage: 'response', detail: 'final report ready', inputTokens: 120, outputTokens: 40});
         options?.onEvent?.({type: 'agent_done', id: 'agent-1', profile: 'architect', ok: true, summary: 'Boundary report ready.', provider: 'anthropic', model: 'claude', phase: 'work', durationMs: 12, usage: {inputTokens: 120, outputTokens: 40}, toolCalls: 2});
-        options?.onEvent?.({type: 'team_done', id: 'run-1', accepted: true, reviewRounds: 1});
+        options?.onEvent?.({
+          type: 'team_done', id: 'run-1', accepted: true, reviewRounds: 1,
+          review: {decision: 'accept', pass: 3, fail: 0, unknown: 0},
+        });
         return session;
       },
     });
@@ -573,6 +576,7 @@ describe('SkeinApp completion flows', () => {
     try {
       harness.stdin.write('review the delivery\r');
       await vi.waitFor(() => expect(harness.output()).toContain('Team run run-1 accepted'));
+      await vi.waitFor(() => expect(harness.output()).toContain('judge accept 3 pass 0 fail 0 unknown'));
       harness.stdin.write('\u0014');
       await vi.waitFor(() => expect(harness.output()).toContain('TEAM WORKBENCH'));
       harness.stdin.write('\u001B[C');

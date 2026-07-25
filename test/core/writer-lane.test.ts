@@ -5,6 +5,7 @@ import {afterEach, describe, expect, it} from 'vitest';
 import {CheckpointStore} from '../../src/checkpoint/store.js';
 import {defaultConfig} from '../../src/config.js';
 import {DelegationManager} from '../../src/agent/delegation.js';
+import {createDraftTaskContract} from '../../src/agent/task-contract.js';
 import {AgentProfileCatalog} from '../../src/agent/profiles.js';
 import {TeamRunStore} from '../../src/agent/team-store.js';
 import {WriterLane, WriterLaneApplyError} from '../../src/agent/writer-lane.js';
@@ -45,11 +46,12 @@ describe('isolated writer lane', () => {
 
     const metadata = run.metadata as {teamRunId: string; patchSha256: string};
     const persisted = await store.load(metadata.teamRunId);
-    expect(persisted.version).toBe(2);
-    expect(persisted.version === 2 ? persisted.writer : undefined).toMatchObject({
+    expect(persisted.version).toBe(3);
+    expect(persisted.version === 3 ? persisted.writer : undefined).toMatchObject({
       outcome: 'accepted',
       worktreeCleaned: true,
       files: ['added.txt', 'binary.bin', 'source.txt'],
+      verdict: {decision: 'accept'},
       integration: {status: 'ready'},
     });
 
@@ -63,7 +65,7 @@ describe('isolated writer lane', () => {
     expect(await readFile(join(root, 'binary.bin'))).toEqual(Buffer.from([0, 1, 2, 255]));
     const checkpointId = (integrated.metadata as {checkpointId: string}).checkpointId;
     const afterIntegration = await store.load(metadata.teamRunId);
-    expect(afterIntegration.version === 2 ? afterIntegration.writer?.integration : undefined)
+    expect(afterIntegration.version === 3 ? afterIntegration.writer?.integration : undefined)
       .toMatchObject({status: 'integrated', checkpoint: {sessionId: session.id, checkpointId}});
 
     await new CheckpointStore(root).restore(session.id, checkpointId);
@@ -156,7 +158,7 @@ describe('isolated writer lane', () => {
     expect(result.content).toContain('review was cancelled');
     const runId = (result.metadata as {teamRunId: string}).teamRunId;
     const persisted = await store.load(runId);
-    expect(persisted.version === 2 ? persisted.writer?.outcome : undefined).toBe('cancelled');
+    expect(persisted.version === 3 ? persisted.writer?.outcome : undefined).toBe('cancelled');
     expect(await auxiliaryWorktrees(root)).toEqual([]);
   });
 
@@ -188,7 +190,138 @@ describe('isolated writer lane', () => {
     expect(conflict.content).toContain('uncommitted main-workspace changes');
     expect(await readFile(join(root, 'source.txt'), 'utf8')).toBe('user change\n');
     const persisted = await store.load(metadata.teamRunId);
-    expect(persisted.version === 2 ? persisted.writer?.integration?.status : undefined).toBe('conflict');
+    expect(persisted.version === 3 ? persisted.writer?.integration?.status : undefined).toBe('conflict');
+  });
+
+  it('keeps legacy v2 writer manifests readable but never integrable', async () => {
+    const root = await repository('before\n');
+    const cfg = writerConfig(root);
+    const context = contextProvider();
+    const session = createSession({workspace: root, provider: 'compatible', model: 'test'});
+    const store = new TeamRunStore(root);
+    const manager = await writerManager(root, cfg, context, store, async ({workspace}) => {
+      await writeFile(join(workspace, 'source.txt'), 'writer\n');
+      return {summary: 'Updated source.'};
+    });
+    const run = await manager.writerTool().execute({task: 'Update source.'},
+      executionContext(root, cfg, context, session));
+    const metadata = run.metadata as {teamRunId: string; patchSha256: string};
+    const manifestPath = join(store.directory, metadata.teamRunId, 'manifest.json');
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+      version: number;
+      reviews?: unknown;
+      contract?: unknown;
+      writer: {contract?: unknown; verdict?: unknown};
+    };
+    manifest.version = 2;
+    delete manifest.reviews;
+    delete manifest.contract;
+    delete manifest.writer.contract;
+    delete manifest.writer.verdict;
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+    await expect(store.load(metadata.teamRunId)).resolves.toMatchObject({version: 2});
+    await expect(manager.writerIntegrateTool().execute({
+      run_id: metadata.teamRunId, patch_sha256: metadata.patchSha256,
+    }, executionContext(root, cfg, context, session))).rejects.toThrow('lacks a structured v3 writer verdict');
+    expect(await readFile(join(root, 'source.txt'), 'utf8')).toBe('before\n');
+  });
+
+  it('invalidates an accepted verdict when the Task Contract changes before integration', async () => {
+    const root = await repository('before\n');
+    const cfg = writerConfig(root);
+    const context = contextProvider();
+    const session = createSession({workspace: root, provider: 'compatible', model: 'test'});
+    session.taskContract = createDraftTaskContract(
+      'Update the source, preserve compatibility, add verification, and keep the change bounded.',
+    );
+    session.taskContract.state = 'active';
+    const store = new TeamRunStore(root);
+    const manager = await writerManager(root, cfg, context, store, async ({workspace}) => {
+      await writeFile(join(workspace, 'source.txt'), 'writer\n');
+      return {summary: 'Updated source.'};
+    });
+    const run = await manager.writerTool().execute({task: 'Update source.'},
+      executionContext(root, cfg, context, session));
+    expect(run.ok, run.content).toBe(true);
+    const metadata = run.metadata as {teamRunId: string; patchSha256: string};
+    session.taskContract.constraints.push('Preserve a newly discovered public API boundary.');
+
+    await expect(manager.writerIntegrateTool().execute({
+      run_id: metadata.teamRunId,
+      patch_sha256: metadata.patchSha256,
+    }, executionContext(root, cfg, context, session))).rejects.toThrow('Task Contract changed after review');
+    expect(await readFile(join(root, 'source.txt'), 'utf8')).toBe('before\n');
+  });
+
+  it('fails closed on invalid reviewer JSON and leaves no integrable writer state', async () => {
+    const root = await repository('before\n');
+    const cfg = writerConfig(root);
+    const context = contextProvider();
+    const session = createSession({workspace: root, provider: 'compatible', model: 'test'});
+    const store = new TeamRunStore(root);
+    const manager = await writerManager(root, cfg, context, store, async ({workspace}) => {
+      await writeFile(join(workspace, 'source.txt'), 'writer\n');
+      return {summary: 'Updated source.'};
+    }, undefined, async () => ({content: 'VERDICT: ACCEPT', toolCalls: []}));
+
+    const run = await manager.writerTool().execute({task: 'Update source.'},
+      executionContext(root, cfg, context, session));
+    expect(run.ok).toBe(false);
+    expect(run.content).toContain('decision is escalate');
+    const metadata = run.metadata as {teamRunId: string; patchSha256: string};
+    const persisted = await store.load(metadata.teamRunId);
+    expect(persisted.version === 3 ? persisted.writer : undefined).toMatchObject({
+      outcome: 'rejected', verdict: {decision: 'escalate'}, integration: {status: 'ready'},
+    });
+    await expect(manager.writerIntegrateTool().execute({
+      run_id: metadata.teamRunId, patch_sha256: metadata.patchSha256,
+    }, executionContext(root, cfg, context, session))).rejects.toThrow('not accepted');
+    expect(await readFile(join(root, 'source.txt'), 'utf8')).toBe('before\n');
+  });
+
+  it('records reviewer execution failure without persisting an accepted verdict', async () => {
+    const root = await repository('before\n');
+    const cfg = writerConfig(root);
+    const context = contextProvider();
+    const store = new TeamRunStore(root);
+    const manager = await writerManager(root, cfg, context, store, async ({workspace}) => {
+      await writeFile(join(workspace, 'source.txt'), 'writer\n');
+      return {summary: 'Updated source.'};
+    }, undefined, async () => { throw new Error('review provider unavailable'); });
+
+    const run = await manager.writerTool().execute({task: 'Update source.'},
+      executionContext(root, cfg, context));
+    expect(run.ok).toBe(false);
+    expect(run.content).toContain('review provider unavailable');
+    const persisted = await store.load((run.metadata as {teamRunId: string}).teamRunId);
+    expect(persisted.version === 3 ? persisted.writer : undefined).toMatchObject({outcome: 'failed'});
+    expect(persisted.version === 3 ? persisted.writer?.verdict : undefined).toBeUndefined();
+  });
+
+  it('does not invoke the model reviewer after deterministic preflight fails', async () => {
+    const root = await repository('before\n');
+    const cfg = writerConfig(root);
+    const context = contextProvider();
+    const store = new TeamRunStore(root);
+    let reviewerCalls = 0;
+    const manager = await writerManager(root, cfg, context, store, async ({workspace}) => {
+      await writeFile(join(workspace, 'source.txt'), 'writer\n');
+      return {summary: 'Updated source.'};
+    }, new PreflightConflictLane(root), async () => {
+      reviewerCalls += 1;
+      return {content: 'should not run', toolCalls: []};
+    });
+
+    const run = await manager.writerTool().execute({task: 'Update source.'},
+      executionContext(root, cfg, context));
+    expect(run.ok).toBe(false);
+    expect(run.content).toContain('failed before model review');
+    expect(reviewerCalls).toBe(0);
+    const persisted = await store.load((run.metadata as {teamRunId: string}).teamRunId);
+    expect(persisted.version === 3 ? persisted.writer : undefined).toMatchObject({
+      outcome: 'rejected', integration: {status: 'conflict'},
+    });
   });
 
   it('restores the mandatory checkpoint after a simulated partial apply failure', async () => {
@@ -287,7 +420,7 @@ async function writerManager(
         const prompt = messages.map((message) => message.content).join('\n');
         return {
           content: prompt.includes('Review a proposed isolated-writer patch')
-            ? 'VERDICT: ACCEPT\nThe patch is scoped and reviewable.\nVerify the changed files.'
+            ? structuredReview(prompt, 'accept')
             : 'Completed.',
           toolCalls: [],
         };
@@ -300,6 +433,40 @@ async function writerManager(
     writerRunner,
     ...(writerLane ? {writerLane} : {}),
   });
+}
+
+function structuredReview(
+  prompt: string,
+  decision: 'accept' | 'revise' | 'escalate',
+  conflicts: string[] = [],
+): string {
+  const input = reviewInput(prompt, '\n\nBase commit:');
+  const evidenceRefs = input.evidence.filter((item) => item.status !== 'failed').map((item) => item.id);
+  return JSON.stringify({
+    decision,
+    criteria: input.contract.criteria.map((criterion, index) => ({
+      id: criterion.id,
+      status: decision === 'escalate' ? 'unknown' : decision === 'revise' && index === 0 ? 'fail' : 'pass',
+      evidence_refs: decision === 'escalate' ? [] : evidenceRefs,
+      finding: decision === 'accept' ? 'Supported by the reviewed patch and deterministic preflight.' : 'Revision required.',
+    })),
+    residual_risks: [],
+    conflicts,
+  });
+}
+
+function reviewInput(prompt: string, endMarker: string): {
+  contract: {criteria: Array<{id: string}>};
+  evidence: Array<{id: string; status: string}>;
+} {
+  const startMarker = 'Review input:\n';
+  const start = prompt.indexOf(startMarker);
+  const end = prompt.indexOf(endMarker, start + startMarker.length);
+  if (start < 0 || end < 0) throw new Error('structured review input missing');
+  return JSON.parse(prompt.slice(start + startMarker.length, end)) as {
+    contract: {criteria: Array<{id: string}>};
+    evidence: Array<{id: string; status: string}>;
+  };
 }
 
 class SimulatedPartialApplyLane extends WriterLane {
@@ -316,6 +483,20 @@ class SimulatedPartialApplyLane extends WriterLane {
       files,
       applied: false,
       attempted: true,
+    };
+  }
+}
+
+class PreflightConflictLane extends WriterLane {
+  constructor(root: string) {
+    super(root, [root]);
+  }
+
+  override async checkIntegration(input: Parameters<WriterLane['checkIntegration']>[0]) {
+    return {
+      status: 'conflict' as const,
+      detail: 'Simulated deterministic patch conflict.',
+      files: input.expectedFiles ?? [],
     };
   }
 }

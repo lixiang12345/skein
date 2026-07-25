@@ -10,6 +10,15 @@ import {
 } from '../utils/namespace.js';
 import {withNamespaceLease} from '../utils/namespace-lease.js';
 import {assertNoSymlinkPath, ensureWorkspaceStorageDirectory} from '../utils/storage.js';
+import {
+  reviewContractSchema,
+  reviewContractIntegrityValid,
+  reviewVerdictSchema,
+  reviewVerdictBindingValid,
+  reviewVerdictAccepted,
+  type ReviewContract,
+  type ReviewVerdict,
+} from './review-verdict.js';
 
 const runIdSchema = z.string().uuid();
 const hashSchema = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -59,7 +68,7 @@ const writerIntegrationSchema = z.object({
   integratedAt: z.string().optional(),
 }).strict();
 
-const writerLaneSchema = z.object({
+const writerLaneV2Schema = z.object({
   profile: z.string(),
   reviewer: z.string(),
   baseCommit: z.string().regex(/^[a-f0-9]{40,64}$/u),
@@ -69,6 +78,16 @@ const writerLaneSchema = z.object({
   worktreeCleaned: z.boolean(),
   review: artifactSchema.optional(),
   integration: writerIntegrationSchema.optional(),
+}).strict();
+
+const writerLaneV3Schema = writerLaneV2Schema.extend({
+  contract: reviewContractSchema,
+  verdict: reviewVerdictSchema.optional(),
+}).strict();
+
+const reviewRecordSchema = z.object({
+  artifact: artifactSchema,
+  verdict: reviewVerdictSchema,
 }).strict();
 
 const manifestFields = {
@@ -93,16 +112,26 @@ const manifestV1Schema = z.object({
 const manifestV2Schema = z.object({
   version: z.literal(2),
   ...manifestFields,
-  writer: writerLaneSchema.optional(),
+  writer: writerLaneV2Schema.optional(),
 }).strict();
 
-const manifestSchema = z.discriminatedUnion('version', [manifestV1Schema, manifestV2Schema]);
+const manifestV3Schema = z.object({
+  version: z.literal(3),
+  ...manifestFields,
+  reviews: z.array(reviewRecordSchema).max(4),
+  contract: reviewContractSchema.optional(),
+  writer: writerLaneV3Schema.optional(),
+}).strict();
+
+const manifestSchema = z.discriminatedUnion('version', [manifestV1Schema, manifestV2Schema, manifestV3Schema]);
 
 export type TeamRunManifest = z.infer<typeof manifestSchema>;
 export type TeamRunAgentRecord = z.infer<typeof agentRecordSchema>;
 export type TeamRunMessageRecord = z.infer<typeof messageRecordSchema>;
-export type TeamRunWriterRecord = z.infer<typeof writerLaneSchema>;
+export type TeamRunWriterRecord = z.infer<typeof writerLaneV2Schema> | z.infer<typeof writerLaneV3Schema>;
+export type TeamRunWriterV3Record = z.infer<typeof writerLaneV3Schema>;
 export type TeamRunWriterIntegration = z.infer<typeof writerIntegrationSchema>;
+export type TeamRunReviewRecord = z.infer<typeof reviewRecordSchema>;
 
 export interface TeamRunSummary {
   id: string;
@@ -135,7 +164,7 @@ export class TeamRunStore {
   async create(input: {objective: string; reviewer: string; maxReviewRounds: number}): Promise<TeamRunManifest> {
     const now = new Date().toISOString();
     const manifest = manifestSchema.parse({
-      version: 2,
+      version: 3,
       id: randomUUID(),
       workspace: this.workspace,
       objective: input.objective,
@@ -147,6 +176,7 @@ export class TeamRunStore {
       reviewRounds: 0,
       agents: [],
       messages: [],
+      reviews: [],
     });
     await this.queueWrite(async () => this.withManagedLease(() => this.writeManifest(manifest)));
     return manifest;
@@ -182,11 +212,13 @@ export class TeamRunStore {
     patch: string;
     files: string[];
     worktreeCleaned: boolean;
+    contract: ReviewContract;
+    verdict?: ReviewVerdict;
     review?: string;
     integration?: TeamRunWriterIntegration;
   }): Promise<void> {
     await this.update(runId, async (manifest) => {
-      if (manifest.version !== 2) throw new Error('Writer lane records require a Team Run v2 manifest.');
+      if (manifest.version !== 3) throw new Error('Writer lane records require a Team Run v3 manifest.');
       const patch = await this.writeArtifact(runId, input.patch, false);
       const review = input.review === undefined
         ? undefined
@@ -201,6 +233,8 @@ export class TeamRunStore {
           patch,
           files: [...input.files],
           worktreeCleaned: input.worktreeCleaned,
+          contract: input.contract,
+          ...(input.verdict ? {verdict: input.verdict} : {}),
           ...(review ? {review} : {}),
           ...(input.integration ? {integration: input.integration} : {}),
         },
@@ -208,14 +242,41 @@ export class TeamRunStore {
     });
   }
 
+  async recordReviewVerdict(
+    runId: string,
+    contract: ReviewContract,
+    verdict: ReviewVerdict,
+    artifact: string,
+  ): Promise<void> {
+    await this.update(runId, async (manifest) => {
+      if (manifest.version !== 3) throw new Error('Structured review verdicts require a Team Run v3 manifest.');
+      if (!reviewVerdictBindingValid(contract, verdict.artifactSha256, verdict)) {
+        throw new Error('Structured review verdict does not match its contract or artifact binding.');
+      }
+      if (manifest.contract && manifest.contract.sha256 !== contract.sha256) {
+        throw new Error('A Team Run cannot change its review contract after review starts.');
+      }
+      const artifactReference = await this.writeArtifact(runId, artifact, false);
+      if (artifactReference.sha256 !== verdict.artifactSha256) {
+        throw new Error('Structured review artifact content does not match the verdict binding.');
+      }
+      return {
+        ...manifest,
+        contract,
+        reviews: [...manifest.reviews, {artifact: artifactReference, verdict}].slice(-4),
+      };
+    });
+  }
+
   async recordWriterIntegration(runId: string, integration: TeamRunWriterIntegration): Promise<void> {
     await this.update(runId, async (manifest) => {
-      if (manifest.version !== 2 || !manifest.writer) {
-        throw new Error('Writer lane integration requires a Team Run v2 writer record.');
+      if ((manifest.version !== 2 && manifest.version !== 3) || !manifest.writer) {
+        throw new Error('Writer lane integration requires a Team Run writer record.');
       }
       if (manifest.writer.integration?.status === 'integrated' && integration.status !== 'integrated') {
         throw new Error('An integrated writer record cannot be downgraded.');
       }
+      if (manifest.version === 2) return {...manifest, writer: {...manifest.writer, integration}};
       return {...manifest, writer: {...manifest.writer, integration}};
     });
   }
@@ -238,11 +299,13 @@ export class TeamRunStore {
     if (manifest.id !== runId || resolve(manifest.workspace) !== this.workspace) {
       throw new Error('Team run manifest identity does not match its location.');
     }
+    assertStructuredManifestIntegrity(manifest);
     if (verify) {
       for (const artifact of [
         ...manifest.agents.map((agent) => agent.report),
         ...manifest.messages.map((message) => message.content),
-        ...(manifest.version === 2 && manifest.writer
+        ...(manifest.version === 3 ? manifest.reviews.map((review) => review.artifact) : []),
+        ...((manifest.version === 2 || manifest.version === 3) && manifest.writer
           ? [manifest.writer.patch, ...(manifest.writer.review ? [manifest.writer.review] : [])]
           : []),
       ]) await this.verifyArtifact(runId, artifact);
@@ -301,6 +364,7 @@ export class TeamRunStore {
     await this.queueWrite(async () => this.withManagedLease(async () => {
       const current = await this.loadUnlocked(runId);
       const next = manifestSchema.parse({...await operation(current), updatedAt: new Date().toISOString()});
+      assertStructuredManifestIntegrity(next);
       await this.writeManifest(next);
     }));
   }
@@ -315,7 +379,9 @@ export class TeamRunStore {
     await this.assertRunDirectory(runId);
     const path = join(this.runDirectory(runId), 'manifest.json');
     await this.assertRegularFile(path);
-    return manifestSchema.parse(JSON.parse(await readFile(path, 'utf8')) as unknown);
+    const manifest = manifestSchema.parse(JSON.parse(await readFile(path, 'utf8')) as unknown);
+    assertStructuredManifestIntegrity(manifest);
+    return manifest;
   }
 
   private async writeManifest(manifest: TeamRunManifest): Promise<void> {
@@ -390,6 +456,35 @@ export class TeamRunStore {
     await assertNoSymlinkPath(this.workspace, resolve(path, '..'));
     const info = await lstat(path);
     if (!info.isFile() || info.isSymbolicLink()) throw new Error(`Team run file is not a regular file: ${path}`);
+  }
+}
+
+function assertStructuredManifestIntegrity(manifest: TeamRunManifest): void {
+  if (manifest.version !== 3) return;
+  if (manifest.contract && (!reviewContractIntegrityValid(manifest.contract) ||
+    manifest.reviews.some((review) => !reviewVerdictBindingValid(
+      manifest.contract as ReviewContract,
+      review.artifact.sha256,
+      review.verdict,
+    )))) {
+    throw new Error('Team run structured review integrity check failed.');
+  }
+  if (manifest.reviews.length && !manifest.contract) {
+    throw new Error('Team run structured reviews are missing their contract.');
+  }
+  if (manifest.writer && (!reviewContractIntegrityValid(manifest.writer.contract) ||
+    (manifest.writer.verdict && !reviewVerdictBindingValid(
+      manifest.writer.contract,
+      manifest.writer.patch.sha256,
+      manifest.writer.verdict,
+    )) || (manifest.writer.outcome === 'accepted' &&
+      (!manifest.writer.verdict || !reviewVerdictAccepted(
+        manifest.writer.contract,
+        manifest.writer.patch.sha256,
+        manifest.writer.verdict,
+      ))) || (manifest.writer.integration?.status === 'integrated' &&
+      manifest.writer.outcome !== 'accepted'))) {
+    throw new Error('Team run writer verdict integrity check failed.');
   }
 }
 

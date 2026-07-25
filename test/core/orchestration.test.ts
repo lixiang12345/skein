@@ -90,12 +90,12 @@ describe('bounded orchestration', () => {
           name: model.model,
           async complete(messages) {
             const text = messages.map((message) => message.content).join('\n');
-            if (text.includes('Start the response with exactly VERDICT')) reviews += 1;
+            if (text.includes('Return exactly one JSON object matching output_schema')) reviews += 1;
             return {
-              content: text.includes('Start the response with exactly VERDICT')
+              content: text.includes('Return exactly one JSON object matching output_schema')
                 ? reviews === 1
-                  ? 'VERDICT: REVISE\nAdd concrete file evidence.'
-                  : 'VERDICT: ACCEPT\nEvidence and acceptance criteria agree.'
+                  ? structuredReview(text, 'revise')
+                  : structuredReview(text, 'accept')
                 : 'Architecture evidence with file boundaries.',
               toolCalls: [],
               usage: {inputTokens: 100, outputTokens: 20},
@@ -116,14 +116,20 @@ describe('bounded orchestration', () => {
       emit: (event) => { events.push(event); },
     });
     expect(result.ok).toBe(true);
-    expect(result.content).toContain('VERDICT: ACCEPT');
+    expect(result.content).toContain('Decision: accept');
     const persistedRunId = (result.metadata as {teamRunId?: string}).teamRunId;
     expect(persistedRunId).toMatch(/^[0-9a-f-]{36}$/u);
-    const persisted = await new TeamRunStore(root).load(persistedRunId!);
+    const persistedStore = new TeamRunStore(root);
+    const persisted = await persistedStore.load(persistedRunId!);
     expect(persisted.status).toBe('accepted');
     expect(persisted.agents.length).toBeGreaterThanOrEqual(4);
     expect(persisted.messages.length).toBeGreaterThanOrEqual(2);
     expect(persisted.agents.every((agent) => (agent.usage?.inputTokens ?? 0) >= 100)).toBe(true);
+    expect(persisted.version === 3 ? persisted.reviews : []).toHaveLength(2);
+    if (persisted.version !== 3) throw new Error('Expected a v3 Team Run.');
+    expect(new Set(persisted.reviews.map((review) => review.artifact.sha256)).size).toBe(2);
+    await expect(Promise.all(persisted.reviews.map((review) =>
+      persistedStore.readArtifact(persisted.id, review.artifact)))).resolves.toHaveLength(2);
     expect(created).toEqual([
       'compatible/planner-model/key',
       'compatible/judge-model/key',
@@ -166,9 +172,11 @@ describe('bounded orchestration', () => {
         parentTools: createDefaultToolRegistry(),
         profiles,
         externalRunner: async (request) => {
-          if (request.prompt.includes('Start the response with exactly VERDICT')) {
+          if (request.prompt.includes('Return exactly one JSON object matching output_schema')) {
             return {
-              content: 'VERDICT: REVISE\nCONFLICTS: architect recommends enabling the cache; backend recommends disabling it.\nResolve the configuration evidence.',
+              content: structuredReview(request.prompt, 'escalate', [
+                'architect recommends enabling the cache; backend recommends disabling it.',
+              ]),
               runtime: request.runtime,
               model: request.model,
               durationMs: 1,
@@ -777,6 +785,33 @@ describe('bounded orchestration', () => {
     expect(seen.join('\n')).toContain('&lt;secret&gt;');
   });
 });
+
+function structuredReview(
+  prompt: string,
+  decision: 'accept' | 'revise' | 'escalate',
+  conflicts: string[] = [],
+): string {
+  const startMarker = 'Review input:\n';
+  const start = prompt.indexOf(startMarker);
+  const end = prompt.indexOf('\n\n<untrusted-worker-reports', start + startMarker.length);
+  if (start < 0 || end < 0) throw new Error('structured review input missing');
+  const input = JSON.parse(prompt.slice(start + startMarker.length, end)) as {
+    contract: {criteria: Array<{id: string}>};
+    evidence: Array<{id: string; status: string}>;
+  };
+  const evidenceRefs = input.evidence.filter((item) => item.status !== 'failed').map((item) => item.id);
+  return JSON.stringify({
+    decision,
+    criteria: input.contract.criteria.map((criterion, index) => ({
+      id: criterion.id,
+      status: decision === 'revise' && index === 0 ? 'fail' : decision === 'escalate' && !conflicts.length ? 'unknown' : 'pass',
+      evidence_refs: decision === 'escalate' && !conflicts.length ? [] : evidenceRefs,
+      finding: decision === 'accept' ? 'Supported by worker report artifacts.' : 'Further review is required.',
+    })),
+    residual_risks: [],
+    conflicts,
+  });
+}
 
 function config(root: string): MosaicConfig {
   return {

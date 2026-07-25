@@ -612,6 +612,12 @@ export interface TeamRunSummary {
   startedAt?: number;
   accepted?: boolean;
   reviewRounds?: number;
+  review?: {
+    decision: 'accept' | 'revise' | 'escalate';
+    pass: number;
+    fail: number;
+    unknown: number;
+  };
 }
 
 export function TeamWorkbench({items, tasks, width = 80, glyphMode = 'auto', view = 'agents', selectedIndex = 0, expanded = false, run, notice}: {
@@ -640,6 +646,7 @@ export function TeamWorkbench({items, tasks, width = 80, glyphMode = 'auto', vie
   const status = run?.accepted === true ? 'accepted' : run?.accepted === false ? 'rejected' : running ? 'running' : agents.length ? 'complete' : 'idle';
   const summary = [
     `${status}${run?.reviewRounds !== undefined ? ` ${glyphs.separator} review ${run.reviewRounds}` : ''}`,
+    run?.review ? `judge ${run.review.decision} ${run.review.pass}/${run.review.fail}/${run.review.unknown}` : '',
     `${completed}/${agents.length} done`,
     cancelled ? `${cancelled} cancelled` : '',
     `${formatTokens(totalTokens)} tok`,

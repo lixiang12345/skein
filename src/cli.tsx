@@ -17,7 +17,7 @@ import {
 } from './config.js';
 import {ContextEngine, formatContextHits} from './context/context-engine.js';
 import {AgentRunner} from './agent/index.js';
-import {AgentProfileCatalog, listConnectionModels, TeamRunStore} from './agent/index.js';
+import {AgentProfileCatalog, formatReviewVerdict, listConnectionModels, TeamRunStore} from './agent/index.js';
 import {resolveAgentModelRoute} from './agent/model-route.js';
 import {createAgentConnectionSetup, mergeAgentSetup} from './agent/model-setup.js';
 import {
@@ -689,23 +689,35 @@ agentsCommand
       ...message,
       contentText: await store.readArtifact(run.id, message.content),
     })));
-    const writer = run.version === 2 && run.writer ? {
+    const writer = (run.version === 2 || run.version === 3) && run.writer ? {
       ...run.writer,
       ...(run.writer.review ? {reviewText: await store.readArtifact(run.id, run.writer.review)} : {}),
     } : undefined;
     if (options.json) printObject({...run, agents, messages, writer}, true);
     else {
       process.stdout.write(`Team run ${run.id}\n${run.status}  ${run.createdAt}\n\n${run.objective}\n\n`);
+      const hasStructuredReviews = run.version === 3 && (
+        run.reviews.length > 0 || Boolean(writer && 'verdict' in writer && writer.verdict)
+      );
       for (const agent of agents) {
         const tokens = (agent.usage?.inputTokens ?? 0) + (agent.usage?.outputTokens ?? 0);
-        process.stdout.write(`## ${agent.profile} ${agent.phase} ${agent.provider}/${agent.model} ${agent.ok ? 'ok' : 'failed'}  ${tokens} tok  ${agent.toolCalls ?? 0} tools  ${agent.durationMs ?? 0}ms\n${agent.reportText}\n\n`);
+        const report = hasStructuredReviews && agent.phase === 'review'
+          ? '[Structured reviewer output is normalized below; use --json for the raw report.]'
+          : agent.reportText;
+        process.stdout.write(`## ${agent.profile} ${agent.phase} ${agent.provider}/${agent.model} ${agent.ok ? 'ok' : 'failed'}  ${tokens} tok  ${agent.toolCalls ?? 0} tools  ${agent.durationMs ?? 0}ms\n${report}\n\n`);
       }
       if (writer) {
         process.stdout.write(`Writer patch ${writer.patch.sha256}  ${writer.outcome}  ${writer.files.length} files  cleanup ${writer.worktreeCleaned ? 'verified' : 'failed'}\n`);
         if (writer.integration) process.stdout.write(`Integration ${writer.integration.status}: ${writer.integration.detail}\n`);
-        if (writer.reviewText) process.stdout.write(`\nWriter review\n${writer.reviewText}\n`);
+        if ('verdict' in writer && writer.verdict) process.stdout.write(`\nStructured writer verdict\n${formatReviewVerdict(writer.verdict)}\n`);
+        if (writer.reviewText && (!('verdict' in writer) || !writer.verdict)) {
+          process.stdout.write(`\nWriter review\n${writer.reviewText}\n`);
+        }
         process.stdout.write('\n');
       }
+      if (run.version === 3) run.reviews.forEach((review, index) => {
+        process.stdout.write(`Structured council verdict ${index + 1}/${run.reviews.length}\n${formatReviewVerdict(review.verdict)}\n\n`);
+      });
       if (messages.length) {
         process.stdout.write('Peer handoffs\n');
         for (const message of messages) process.stdout.write(`- ${message.from} -> ${message.to}: ${message.contentText.replace(/\s+/gu, ' ').slice(0, 400)}\n`);

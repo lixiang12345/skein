@@ -751,10 +751,24 @@ export type VerificationKind =
 
 export interface VerificationEvidence {
   toolCallId: string;
+  /** Content-addressed audit receipt; optional only for sessions written before v0.3.31. */
+  receiptId?: string;
   tool: 'shell' | 'git';
   command: string;
   kind: VerificationKind;
   ok: boolean;
+}
+
+export interface DeterministicEvidenceReceipt {
+  version: 1;
+  id: string;
+  sha256: string;
+  toolCallId: string;
+  tool: string;
+  outcome: 'success' | 'failure';
+  inputSha256: string;
+  outputSha256: string;
+  changedFilesSha256?: string;
 }
 
 export interface RunCompletion {
@@ -871,7 +885,12 @@ export type AgentEvent =
   | {type: 'agent_update'; id: string; profile: string; stage: 'context' | 'thinking' | 'tool' | 'response' | 'review'; detail?: string; tool?: string; toolCalls?: number; inputTokens?: number; outputTokens?: number}
   | {type: 'agent_cancelled'; id: string; profile: string; phase?: AgentPhase; reason: string; queued: boolean}
   | {type: 'team_start'; id: string; objective: string}
-  | {type: 'team_done'; id: string; accepted: boolean; reviewRounds: number}
+  | {type: 'team_done'; id: string; accepted: boolean; reviewRounds: number; review?: {
+    decision: 'accept' | 'revise' | 'escalate';
+    pass: number;
+    fail: number;
+    unknown: number;
+  }}
   | {type: 'agent_done'; id: string; profile: string; ok: boolean; summary: string; provider?: string; model?: string; phase?: AgentPhase; durationMs?: number; toolCalls?: number; usage?: {inputTokens: number; outputTokens: number}}
   | {type: 'writer_lane'; id: string; status: WriterLaneStatus; detail: string; files?: string[]; checkpointId?: string}
   | {type: 'workflow'; name: string; step: string; status: TaskStatus}

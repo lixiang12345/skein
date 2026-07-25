@@ -70,8 +70,8 @@ flowchart LR
     L --> A["Independent specialists"]
     A --> B["Bounded shared reports"]
     B --> R["Reviewer model"]
-    R -->|"ACCEPT"| L
-    R -->|"REVISE, max N rounds"| A
+    R -->|"Structured accept"| L
+    R -->|"Structured revise, max N rounds"| A
     L --> W["Single writer implementation"]
     W --> V["Deterministic tests and checks"]
 ```
@@ -80,8 +80,10 @@ This is intentionally not a free-form infinite group chat. Every run has an
 objective, bounded specialists, a reviewer, a revision cap, cancellation
 propagation, and a deterministic return value. By default, Skein persists a
 local Team Run manifest under the active namespace's `team-runs/` directory.
-Reports and peer handoffs are content-addressed blobs; the manifest stores
-hashes, phases, providers, models, and acceptance status.
+Reports and peer handoffs are content-addressed blobs. Team Run v3 also stores
+the semantic Review Contract, each exact Council report bundle, the artifact and
+verdict hashes, evidence receipts, per-criterion pass/fail/unknown results,
+reviewer route, conflicts, residual risks, and final decision.
 
 Inspect or remove runs with:
 
@@ -123,10 +125,16 @@ profiles, and recursive agents remain unavailable. The reviewer must also use
 an API route so it receives the complete patch. The patch is rejected rather
 than truncated above `maxWriterPatchBytes` (60,000 by default; 120,000 maximum).
 
-The worktree is removed and pruned before the tool returns. Team Run v2 stores
+The worktree is removed and pruned before the tool returns. Team Run v3 stores
 the Git `--binary` text patch, SHA-256, base commit, file list, writer and
-reviewer reports, cleanup result, and integration state. `skein agents show
-<run-id>` displays that evidence.
+reviewer reports, cleanup result, deterministic preflight, semantic Review
+Contract, structured verdict, and integration state. A Reviewer must return one
+strict JSON object. Every pass or fail cites a supplied evidence handle; missing
+or unknown handles, duplicate or omitted criteria, prose, code fences, invalid
+JSON, deterministic failures, and contract/artifact drift fail closed.
+`skein agents show <run-id>` displays normalized evidence; `--json` retains raw
+review artifacts for machine audit. Team Run v1/v2 remains readable, but its
+text review cannot authorize integration.
 
 `writer_integrate` is a separate main-agent action. It requires the accepted
 Team Run ID and patch SHA, reparses and bounds every path, requires the same
@@ -456,7 +464,8 @@ activity, and reviewer decisions are the explainable artifacts.
 
 1. Add provider-native search/tool adapters so a research route can use live
    search without granting arbitrary shell/network authority.
-2. Persist a content-addressed team blackboard and compact provenance bundle.
+2. Add a local Capability Registry with configured priors, observed outcomes,
+   route epochs, uncertainty bounds, and shadow-only route recommendations.
 3. Add per-route cost accounting and user-confirmed spend controls.
 4. Add dependency-aware parallel writer worktrees after conflict-rate and
    rollback evidence justify relaxing the single-lane gate.

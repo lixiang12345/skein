@@ -58,6 +58,7 @@ import {
 import {
   buildRunCompletion,
   captureVerification,
+  createDeterministicEvidenceReceipt,
   completionRecoveryDirective,
   verificationDiagnosticPaths,
   type CapturedVerification,
@@ -537,8 +538,8 @@ export class AgentRunner {
         if (this.session.usage.inputTokens + this.session.usage.outputTokens >=
           this.config.agent.maxSessionTokens) {
           for (const call of response.toolCalls) {
-            const skipped = failedResult(call,
-              'Tool call skipped because the session token budget was reached.');
+            const skipped = this.withEvidenceReceipt(call, failedResult(call,
+              'Tool call skipped because the session token budget was reached.'));
             this.session.messages.push(message('tool', skipped.content, {
               toolCallId: skipped.toolCallId,
               name: skipped.name,
@@ -692,7 +693,8 @@ export class AgentRunner {
     const preflight = recovery.preflight(call);
     if (preflight) {
       const result = await this.protectToolResult(
-        failedResult(call, 'Tool call rejected by the recovery circuit.', preflight),
+        this.withEvidenceReceipt(call,
+          failedResult(call, 'Tool call rejected by the recovery circuit.', preflight)),
       );
       this.recordToolResult(result);
       await emit({type: 'tool_result', result});
@@ -701,7 +703,8 @@ export class AgentRunner {
     if (visibleToolNames && !visibleToolNames.has(call.name)) {
       const receipt = recovery.recordFailure(call, 'unknown_tool');
       const result = await this.protectToolResult(
-        failedResult(call, `Tool is not exposed for this turn: ${call.name}`, receipt),
+        this.withEvidenceReceipt(call,
+          failedResult(call, `Tool is not exposed for this turn: ${call.name}`, receipt)),
       );
       this.recordToolResult(result);
       await emit({type: 'tool_result', result});
@@ -710,7 +713,9 @@ export class AgentRunner {
     const tool = this.tools.get(call.name);
     if (!tool) {
       const receipt = recovery.recordFailure(call, 'unknown_tool');
-      const result = await this.protectToolResult(failedResult(call, `Unknown tool: ${call.name}`, receipt));
+      const result = await this.protectToolResult(
+        this.withEvidenceReceipt(call, failedResult(call, `Unknown tool: ${call.name}`, receipt)),
+      );
       this.recordToolResult(result);
       await emit({type: 'tool_result', result});
       return result;
@@ -723,7 +728,9 @@ export class AgentRunner {
     } catch (error) {
       const failureClass = classifyThrownToolFailure(error, options.signal);
       const receipt = recovery.recordFailure(call, failureClass);
-      const result = await this.protectToolResult(failedResult(call, formatToolError(error), receipt));
+      const result = await this.protectToolResult(
+        this.withEvidenceReceipt(call, failedResult(call, formatToolError(error), receipt)),
+      );
       this.recordToolResult(result, tool.definition.category);
       await emit({type: 'tool_result', result});
       return result;
@@ -731,7 +738,8 @@ export class AgentRunner {
     if (categories.some((category) => category !== 'read') && this.session.taskContract?.state === 'draft') {
       const receipt = recovery.recordFailure(call, 'contract_required');
       const result = await this.protectToolResult(
-        failedResult(call, 'Potentially mutating work is paused until the draft Task Contract is activated.', receipt),
+        this.withEvidenceReceipt(call,
+          failedResult(call, 'Potentially mutating work is paused until the draft Task Contract is activated.', receipt)),
       );
       this.recordToolResult(result, tool.definition.category);
       await emit({type: 'tool_result', result});
@@ -742,7 +750,8 @@ export class AgentRunner {
       if (!allowed) {
         const receipt = recovery.recordFailure(call, 'permission_denied');
         const result = await this.protectToolResult(
-          failedResult(call, `Permission denied for ${category} operation.`, receipt),
+          this.withEvidenceReceipt(call,
+            failedResult(call, `Permission denied for ${category} operation.`, receipt)),
         );
         this.recordToolResult(result, category);
         await emit({type: 'tool_result', result});
@@ -898,6 +907,14 @@ export class AgentRunner {
         metadata,
       });
       if (evidenceProgress) metadata.evidenceProgress = evidenceProgress;
+      metadata.evidenceReceipt = createDeterministicEvidenceReceipt({
+        toolCallId: call.id,
+        tool: call.name,
+        arguments: call.arguments,
+        ok,
+        content: completeContent,
+        ...(changedFiles.length ? {changedFiles} : {}),
+      });
       if (changedFiles.length && this.contextEngine.invalidate) {
         this.contextEngine.invalidate(changedFiles);
         if (this.contextEngine.flushDirty) {
@@ -933,7 +950,9 @@ export class AgentRunner {
       const normalized = toError(error);
       const failureClass = classifyThrownToolFailure(normalized, options.signal);
       const receipt = recovery.recordFailure(call, failureClass);
-      const result = await this.protectToolResult(failedResult(call, formatToolError(error), receipt));
+      const result = await this.protectToolResult(
+        this.withEvidenceReceipt(call, failedResult(call, formatToolError(error), receipt)),
+      );
       this.recordToolResult(result, tool.definition.category);
       await emit({type: 'tool_result', result});
       return result;
@@ -1020,6 +1039,26 @@ export class AgentRunner {
       ...(!result.ok ? {reason: result.content.slice(0, 500)} : {}),
       ...(result.metadata ? {metadata: result.metadata} : {}),
     });
+  }
+
+  private withEvidenceReceipt(call: ToolCall, result: ToolResult): ToolResult {
+    const changedFiles = Array.isArray(result.metadata?.changedFiles)
+      ? result.metadata.changedFiles.filter((path): path is string => typeof path === 'string')
+      : [];
+    return {
+      ...result,
+      metadata: {
+        ...(result.metadata ?? {}),
+        evidenceReceipt: createDeterministicEvidenceReceipt({
+          toolCallId: call.id,
+          tool: call.name,
+          arguments: call.arguments,
+          ok: result.ok,
+          content: result.content,
+          ...(changedFiles.length ? {changedFiles} : {}),
+        }),
+      },
+    };
   }
 
   private appendAudit(
