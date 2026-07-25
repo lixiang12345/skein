@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import {lstat, mkdtemp, realpath, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {isAbsolute, join, resolve} from 'node:path';
-import {runIsolatedGit} from '../tools/git.js';
+import {runIsolatedGit} from '../utils/git.js';
 import {WorkspaceAccess} from '../tools/workspace.js';
 import {acquireNamespaceLease} from '../utils/namespace-lease.js';
 import {resolveExecutableRuntime, type ExecutableRuntime} from '../utils/process.js';

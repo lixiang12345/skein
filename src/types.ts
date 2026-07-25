@@ -258,6 +258,7 @@ export interface ContextScoreBreakdown {
   symbol: number;
   phrase: number;
   graph: number;
+  recency: number;
   total: number;
 }
 

@@ -1,10 +1,11 @@
-import {mkdtemp, mkdir, readFile, rm, stat, utimes, writeFile} from 'node:fs/promises';
+import {chmod, mkdtemp, mkdir, readFile, rm, stat, utimes, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {describe, expect, it} from 'vitest';
 import {ContextEngine, formatContextHits} from '../../src/context/context-engine.js';
 import {LocalContextIndex} from '../../src/context/local-index.js';
 import {defaultConfig} from '../../src/config.js';
+import {runProcess} from '../../src/utils/process.js';
 
 describe('local context engine', () => {
   it('indexes multilingual source and ranks exact symbols and paths', async () => {
@@ -18,7 +19,7 @@ describe('local context engine', () => {
       const hits = await engine.search('verifySessionToken');
 
       expect(hits[0]).toMatchObject({path: join(root, 'src', 'auth.ts'), symbol: 'verifySessionToken'});
-      expect(hits[0]?.source).toBe('local-bm25+path+symbol+graph');
+      expect(hits[0]?.source).toBe('local-bm25+path+symbol+graph+recency');
       const chinese = await engine.search('验证会话');
       expect(chinese.some((hit) => hit.path.endsWith('配置.py'))).toBe(true);
     } finally {
@@ -72,12 +73,16 @@ describe('local context engine', () => {
       expect(definition?.provenance).toMatchObject({
         generation: expect.any(String),
         contentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
-        score: {bm25: expect.any(Number), graph: expect.any(Number), total: expect.any(Number)},
+        score: {
+          bm25: expect.any(Number), graph: expect.any(Number), recency: expect.any(Number),
+          total: expect.any(Number),
+        },
       });
       expect(caller?.provenance?.score.graph).toBeGreaterThan(0);
       expect(caller?.provenance?.matchedTerms).toEqual([]);
-      expect(caller?.source).toBe('local-bm25+path+symbol+graph');
+      expect(caller?.source).toBe('local-bm25+path+symbol+graph+recency');
       expect(formatContextHits(hits, [root])).toContain('graph=');
+      expect(formatContextHits(hits, [root])).toContain('recency=');
       expect(formatContextHits(hits, [root])).toContain('hash=');
 
       if (definition?.provenance) definition.provenance.score.total = 0;
@@ -100,6 +105,93 @@ describe('local context engine', () => {
           score: expect.objectContaining({graph: expect.any(Number)}),
         })}),
       ]));
+    } finally {
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
+  it('uses bounded Git recency only to break near-equal retrieval scores', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-local-recency-'));
+    try {
+      const older = join(root, 'a-older.ts');
+      const recent = join(root, 'z-recent.ts');
+      const content = 'export const recencyNeedle = true;\n';
+      await runGit(root, ['init', '--quiet']);
+      await writeFile(older, content);
+      await runGit(root, ['add', 'a-older.ts']);
+      await commit(root, 'older');
+      await writeFile(recent, content);
+      await runGit(root, ['add', 'z-recent.ts']);
+      await commit(root, 'recent');
+      const index = new LocalContextIndex([root]);
+
+      const first = await index.search('recencyNeedle', 10);
+      expect(first.map((hit) => hit.path)).toEqual([recent, older]);
+      expect(first[0]?.provenance?.score.recency).toBe(0.001);
+      expect(first[1]?.provenance?.score.recency).toBe(0.0005);
+      await index.search('recencyNeedle', 10);
+      expect(index.status()).toMatchObject({queryCacheHits: 1, queryCacheMisses: 1});
+
+      await writeFile(join(root, '.gitignore'), 'ignored/\n');
+      await runGit(root, ['add', '.gitignore']);
+      await commit(root, 'ranking generation');
+      const afterHeadChange = await index.search('recencyNeedle', 10);
+      expect(afterHeadChange[0]?.provenance?.score.recency).toBeLessThan(0.001);
+      expect(index.status()).toMatchObject({queryCacheHits: 1, queryCacheMisses: 2});
+    } finally {
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
+  it('preserves lexical retrieval outside Git worktrees', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-local-recency-fallback-'));
+    try {
+      await writeFile(join(root, 'source.ts'), 'export const fallbackNeedle = true;\n');
+      const index = new LocalContextIndex([root]);
+
+      const hits = await index.search('fallbackNeedle');
+
+      expect(hits).toHaveLength(1);
+      expect(hits[0]?.provenance?.score.recency).toBe(0);
+    } finally {
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
+  it('never returns a Git-recent file for a query with no lexical or graph match', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-local-recency-noise-'));
+    try {
+      await runGit(root, ['init', '--quiet']);
+      const recent = join(root, 'recent.ts');
+      await writeFile(recent, 'export const unrelatedRecent = true;\n');
+      await runGit(root, ['add', 'recent.ts']);
+      await commit(root, 'recent');
+      const index = new LocalContextIndex([root]);
+
+      await expect(index.search('missingQueryTerm')).resolves.toEqual([]);
+    } finally {
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
+  it('does not execute repository Git helpers while collecting recency', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-local-recency-isolation-'));
+    try {
+      const marker = join(root, 'helper-ran');
+      const helper = join(root, 'malicious-helper.sh');
+      await runGit(root, ['init', '--quiet']);
+      await writeFile(join(root, 'source.ts'), 'export const isolatedNeedle = true;\n');
+      await runGit(root, ['add', 'source.ts']);
+      await commit(root, 'initial');
+      await writeFile(helper, `#!/bin/sh\nprintf ran > "${marker}"\n`);
+      await chmod(helper, 0o700);
+      await runGit(root, ['config', 'core.fsmonitor', helper]);
+      await runGit(root, ['config', 'diff.skein.textconv', helper]);
+      await writeFile(join(root, '.gitattributes'), '*.ts diff=skein\n');
+      const index = new LocalContextIndex([root]);
+
+      await expect(index.search('isolatedNeedle')).resolves.toHaveLength(1);
+      await expect(stat(marker)).rejects.toMatchObject({code: 'ENOENT'});
     } finally {
       await rm(root, {recursive: true, force: true});
     }
@@ -491,3 +583,19 @@ ${functionBody}
     }
   });
 });
+
+async function commit(root: string, message: string): Promise<void> {
+  await runGit(root, [
+    '-c', 'user.name=Skein Test',
+    '-c', 'user.email=skein@example.test',
+    'commit', '--quiet', '-m', message,
+  ]);
+}
+
+async function runGit(root: string, args: string[]): Promise<string> {
+  const result = await runProcess('git', args, {cwd: root, timeoutMs: 30_000});
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr || result.stdout || `git exited ${result.exitCode}`);
+  }
+  return result.stdout;
+}

@@ -102,6 +102,7 @@ export function runProcess(
     unsetEnvPrefixes?: string[];
     stdin?: string;
     maxOutputBytes?: number;
+    stopOnOutputLimit?: boolean;
     signal?: AbortSignal;
     inheritEnv?: boolean;
     onStdout?: (chunk: string) => void;
@@ -132,6 +133,7 @@ export function runProcess(
     let stdoutObservedBytes = 0;
     let stderrObservedBytes = 0;
     let timedOut = false;
+    let outputLimitReached = false;
     let callbackError: unknown;
     const stdoutDecoder = new StringDecoder('utf8');
     const stderrDecoder = new StringDecoder('utf8');
@@ -162,6 +164,10 @@ export function runProcess(
     };
     child.stdout.on('data', (chunk: Buffer) => {
       stdoutObservedBytes += chunk.length;
+      if (options.stopOnOutputLimit && stdoutObservedBytes > maxBytes && !outputLimitReached) {
+        outputLimitReached = true;
+        child.kill('SIGTERM');
+      }
       const appended = append(stdoutDecoder, chunk, stdoutBytes);
       stdout += appended.text;
       stdoutBytes = appended.usedBytes;
@@ -169,6 +175,10 @@ export function runProcess(
     });
     child.stderr.on('data', (chunk: Buffer) => {
       stderrObservedBytes += chunk.length;
+      if (options.stopOnOutputLimit && stderrObservedBytes > maxBytes && !outputLimitReached) {
+        outputLimitReached = true;
+        child.kill('SIGTERM');
+      }
       const appended = append(stderrDecoder, chunk, stderrBytes);
       stderr += appended.text;
       stderrBytes = appended.usedBytes;

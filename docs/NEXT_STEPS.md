@@ -75,8 +75,10 @@ SQL, CJK, Markdown, and mixed-language cases across ten files. The first
 expanded run failed its preselected useful-token threshold at `0.348`; the
 implementation reached `0.729` while Recall@5/10/20 and MRR remained `1.0`,
 stale-hit rate stayed `0`, warm p95 was below 10 ms, and incremental indexing
-reused every fixture file. Git-recency, diagnostics ranking, broader language
-AST adapters, and production-scale calibration remain follow-up slices.
+reused every fixture file. Git-recency is now a bounded, isolated tie-break
+with exact HEAD-bound cache invalidation and non-Git degradation. Diagnostics
+ranking, broader language AST adapters, and production-scale calibration remain
+follow-up slices.
 
 ### P0-E: Token Economy measurement and bounded schema disclosure
 

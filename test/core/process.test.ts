@@ -71,4 +71,22 @@ describe('process runner', () => {
     expect(Buffer.byteLength(unicode.stdout)).toBeLessThanOrEqual(1);
     expect(unicode.stdout).not.toContain('\uFFFD');
   });
+
+  it('can terminate a process after its output exceeds the retained limit', async () => {
+    const result = await runProcess(process.execPath, [
+      '-e',
+      'process.stdout.write("x".repeat(100_000)); setTimeout(() => {}, 10_000)',
+    ], {
+      cwd: process.cwd(),
+      maxOutputBytes: 1_024,
+      stopOnOutputLimit: true,
+      timeoutMs: 5_000,
+    });
+
+    expect(result.stdout).toHaveLength(1_024);
+    expect(result.stdoutTruncated).toBe(true);
+    expect(result.timedOut).toBe(false);
+    expect(result.durationMs).toBeLessThan(5_000);
+    expect(result.exitCode).not.toBe(0);
+  });
 });

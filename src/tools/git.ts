@@ -2,9 +2,9 @@ import {join} from 'node:path';
 import {z} from 'zod';
 import {
   resolveExecutableRuntime,
-  runProcess,
   type ExecutableRuntime,
 } from '../utils/process.js';
+import {runIsolatedGit} from '../utils/git.js';
 import type {AgentTool} from './types.js';
 import {jsonSchema} from './types.js';
 
@@ -53,50 +53,6 @@ const knownCommands = new Set([
   ...networkCommands,
   ...workspaceMutationCommands,
 ]);
-
-const unsafeInheritedGitEnvironment = [
-  'GIT_DIR',
-  'GIT_WORK_TREE',
-  'GIT_COMMON_DIR',
-  'GIT_INDEX_FILE',
-  'GIT_OBJECT_DIRECTORY',
-  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
-  'GIT_NAMESPACE',
-  'GIT_CEILING_DIRECTORIES',
-  'GIT_DISCOVERY_ACROSS_FILESYSTEM',
-  'GIT_EXTERNAL_DIFF',
-  'GIT_DIFF_OPTS',
-  'GIT_SSH',
-  'GIT_SSH_COMMAND',
-  'GIT_PROXY_COMMAND',
-  'GIT_ASKPASS',
-  'SSH_ASKPASS',
-  'GIT_EXEC_PATH',
-  'GIT_TEMPLATE_DIR',
-  'GIT_CONFIG',
-  'GIT_CONFIG_PARAMETERS',
-  'GIT_QUARANTINE_PATH',
-  'Path',
-];
-
-const isolatedGitEnvironment: NodeJS.ProcessEnv = {
-  GIT_TERMINAL_PROMPT: '0',
-  GIT_CONFIG_NOSYSTEM: '1',
-  GIT_CONFIG_GLOBAL: '/dev/null',
-  GIT_CONFIG_SYSTEM: '/dev/null',
-  GIT_PAGER: 'cat',
-  GIT_EDITOR: 'true',
-  GIT_SEQUENCE_EDITOR: 'true',
-  GIT_CONFIG_COUNT: '4',
-  GIT_CONFIG_KEY_0: 'core.hooksPath',
-  GIT_CONFIG_VALUE_0: '/dev/null',
-  GIT_CONFIG_KEY_1: 'core.fsmonitor',
-  GIT_CONFIG_VALUE_1: 'false',
-  GIT_CONFIG_KEY_2: 'credential.helper',
-  GIT_CONFIG_VALUE_2: '',
-  GIT_CONFIG_KEY_3: 'protocol.ext.allow',
-  GIT_CONFIG_VALUE_3: 'never',
-};
 
 const diffCommands = new Set(['diff', 'log', 'show', 'whatchanged']);
 
@@ -152,13 +108,9 @@ export const gitTool: AgentTool = {
     // intentionally not guessed; the checkpoint remains explicit about paths.
     const runtime = await resolveExecutableRuntime('git', cwd, context.workspace.roots);
     if (!runtime) throw new Error('Git executable was not found outside the configured workspace roots.');
-    const status = await runProcess(runtime.executable, ['status', '--porcelain=v1', '-z', '--untracked-files=all'], {
-      cwd,
+    const status = await runIsolatedGit(runtime, ['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd, {
       timeoutMs: 15_000,
       maxOutputBytes: 2_000_000,
-      env: {...isolatedGitEnvironment, PATH: runtime.path},
-      unsetEnv: unsafeInheritedGitEnvironment,
-      unsetEnvPrefixes: ['GIT_'],
     });
     if (status.exitCode === 0) {
       for (const record of status.stdout.split('\0')) {
@@ -191,15 +143,11 @@ export const gitTool: AgentTool = {
     const before = worktreeTrackingCommands.has(command)
       ? await captureGitState(runtime, cwd)
       : undefined;
-    const result = await runProcess(runtime.executable, protectedGitArguments(input.args, command), {
-      cwd,
+    const result = await runIsolatedGit(runtime, protectedGitArguments(input.args, command), cwd, {
       timeoutMs: input.timeout_ms ?? 120_000,
       maxOutputBytes: 2_000_000,
       ...(input.stdin !== undefined ? {stdin: input.stdin} : {}),
       ...(context.signal ? {signal: context.signal} : {}),
-      env: {...isolatedGitEnvironment, PATH: runtime.path},
-      unsetEnv: unsafeInheritedGitEnvironment,
-      unsetEnvPrefixes: ['GIT_'],
     });
     const changedFiles = before
       ? await collectGitChanges(before, await captureGitState(runtime, cwd), runtime, cwd, context)
@@ -285,29 +233,6 @@ function parsePorcelainStatus(output: string): Map<string, string> {
     }
   }
   return status;
-}
-
-export function runIsolatedGit(
-  runtime: ExecutableRuntime,
-  args: string[],
-  cwd: string,
-  options: {
-    timeoutMs?: number;
-    maxOutputBytes?: number;
-    stdin?: string;
-    signal?: AbortSignal;
-  } = {},
-) {
-  return runProcess(runtime.executable, args, {
-    cwd,
-    timeoutMs: options.timeoutMs ?? 15_000,
-    maxOutputBytes: options.maxOutputBytes ?? 2_000_000,
-    env: {...isolatedGitEnvironment, PATH: runtime.path},
-    unsetEnv: unsafeInheritedGitEnvironment,
-    unsetEnvPrefixes: ['GIT_'],
-    ...(options.stdin !== undefined ? {stdin: options.stdin} : {}),
-    ...(options.signal ? {signal: options.signal} : {}),
-  });
 }
 
 function validateGitArguments(args: string[]): void {

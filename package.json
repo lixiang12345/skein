@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.19",
+  "version": "0.3.20",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -36,7 +36,8 @@
       "Prompt and timeline diagnostics expose the repository-first reuse ladder without blocking legitimate writes",
       "Known tool changes refresh only their affected local-index paths before the next model turn",
       "File ctime closes same-size and restored-mtime zero-hit freshness gaps without full-content scans",
-      "Repeated empty or unchanged search calls stop through the existing recovery circuit"
+      "Repeated empty or unchanged search calls stop through the existing recovery circuit",
+      "Git recency is an isolated, bounded tie-break with exact HEAD-bound cache invalidation and non-Git degradation"
     ]
   },
   "bin": {

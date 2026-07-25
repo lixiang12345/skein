@@ -17,6 +17,7 @@ import {
 } from '../utils/namespace.js';
 import {withNamespaceLease} from '../utils/namespace-lease.js';
 import {extractFunctionFingerprints} from './function-fingerprint.js';
+import {GitRecencyCollector} from './git-recency.js';
 
 interface IndexedChunk {
   id: string;
@@ -158,6 +159,7 @@ export class LocalContextIndex {
   private index?: LocalIndexFile;
   private readonly workspace: WorkspaceAccess;
   private readonly queryCache = new Map<string, ContextHit[]>();
+  private readonly gitRecency: GitRecencyCollector;
   private queryCacheHits = 0;
   private queryCacheMisses = 0;
   private fingerprintCache: DuplicationBaseline | undefined;
@@ -169,6 +171,7 @@ export class LocalContextIndex {
   constructor(private readonly roots: string[]) {
     this.roots = roots.map((root) => resolve(root));
     this.workspace = new WorkspaceAccess(this.roots);
+    this.gitRecency = new GitRecencyCollector(this.roots);
     this.indexPath = join(resolveProjectNamespaceSync(this.roots[0] ?? process.cwd()).active, 'index.json');
   }
 
@@ -277,16 +280,18 @@ export class LocalContextIndex {
     await this.flushDirty();
     await this.ensureCurrentIndex();
     const limit = Math.max(1, Math.floor(topK));
-    const cached = this.getCachedHits(query, limit);
-    let hits = cached ?? this.rank(query, limit);
+    let recency = await this.gitRecency.collect();
+    const cached = this.getCachedHits(query, limit, recency.generation);
+    let hits = cached ?? this.rank(query, limit, recency.scores);
     if (!(await this.hitsAreCurrent(hits))) {
       // A candidate may change without a reliable mtime/size signal. Rehashing
       // the full manifest once keeps stale bytes out of both cache and prompts.
       await this.buildWithOptions(undefined, true);
-      hits = this.rank(query, limit);
+      recency = await this.gitRecency.collect();
+      hits = this.rank(query, limit, recency.scores);
       if (!(await this.hitsAreCurrent(hits))) return [];
     }
-    this.cacheHits(query, limit, hits);
+    this.cacheHits(query, limit, recency.generation, hits);
     return cloneHits(hits);
   }
 
@@ -503,6 +508,7 @@ export class LocalContextIndex {
       {requireActiveNamespace: true},
     );
     await atomicWrite(this.indexPath, `${JSON.stringify(this.index)}\n`, 0o600);
+    await this.gitRecency.collect();
     onProgress?.({phase: 'done', completed: files.length, total: files.length});
     return {
       files: files.length,
@@ -630,7 +636,11 @@ export class LocalContextIndex {
     return matches.length === 1 ? {root, path, absolutePath} : undefined;
   }
 
-  private rank(query: string, topK: number): ContextHit[] {
+  private rank(
+    query: string,
+    topK: number,
+    recencyScores: ReadonlyMap<string, number>,
+  ): ContextHit[] {
     const index = this.index;
     const files = index?.files ?? [];
     const chunks = files.flatMap((file) => file.chunks);
@@ -662,16 +672,20 @@ export class LocalContextIndex {
           averageLength,
         );
         const graph = graphBoosts.get(chunk.absolutePath)?.score ?? 0;
-        const score = lexical.bm25 + lexical.path + lexical.symbol + lexical.phrase + graph;
-        return {chunk, lexical, graph, score};
+        const recency = recencyScores.get(chunk.absolutePath) ?? 0;
+        const score = lexical.bm25 + lexical.path + lexical.symbol + lexical.phrase + graph + recency;
+        return {chunk, lexical, graph, recency, score};
       })
-      .filter(({score}) => score > 0)
+      // Recency is a tie-break only. It must never turn an otherwise
+      // irrelevant file into a retrieval candidate.
+      .filter(({lexical, graph}) =>
+        lexical.bm25 + lexical.path + lexical.symbol + lexical.phrase + graph > 0)
       .sort((left, right) => right.score - left.score || left.chunk.absolutePath.localeCompare(right.chunk.absolutePath));
     const covered = scored.filter(({lexical, graph}) =>
       graph > 0 || hasSufficientQueryCoverage(lexical.matchedTerms, coverageTerms));
     return (covered.length ? covered : scored)
       .slice(0, topK)
-      .map(({chunk, lexical, graph, score}) => {
+      .map(({chunk, lexical, graph, recency, score}) => {
         const file = filesByPath.get(chunk.absolutePath);
         const breakdown: ContextScoreBreakdown = {
           bm25: roundScore(lexical.bm25),
@@ -679,6 +693,7 @@ export class LocalContextIndex {
           symbol: roundScore(lexical.symbol),
           phrase: roundScore(lexical.phrase),
           graph: roundScore(graph),
+          recency: roundScore(recency),
           total: roundScore(score),
         };
         const provenance: ContextHitProvenance = {
@@ -694,7 +709,7 @@ export class LocalContextIndex {
           endLine: chunk.endLine,
           content: chunk.content,
           score,
-          source: 'local-bm25+path+symbol+graph',
+          source: 'local-bm25+path+symbol+graph+recency',
           ...(chunk.symbol ? {symbol: chunk.symbol} : {}),
           provenance,
         };
@@ -722,13 +737,17 @@ export class LocalContextIndex {
     return true;
   }
 
-  private getCachedHits(query: string, topK: number): ContextHit[] | undefined {
+  private getCachedHits(
+    query: string,
+    topK: number,
+    rankingGeneration: string,
+  ): ContextHit[] | undefined {
     const generation = this.index?.generation;
     if (!generation) {
       this.queryCacheMisses += 1;
       return undefined;
     }
-    const key = `${generation}\u0000${topK}\u0000${query}`;
+    const key = `${generation}\u0000${rankingGeneration}\u0000${topK}\u0000${query}`;
     const cached = this.queryCache.get(key);
     if (!cached) {
       this.queryCacheMisses += 1;
@@ -740,11 +759,16 @@ export class LocalContextIndex {
     return cloneHits(cached);
   }
 
-  private cacheHits(query: string, topK: number, hits: ContextHit[]): void {
+  private cacheHits(
+    query: string,
+    topK: number,
+    rankingGeneration: string,
+    hits: ContextHit[],
+  ): void {
     if (!hits.length) return;
     const generation = this.index?.generation;
     if (!generation) return;
-    const key = `${generation}\u0000${topK}\u0000${query}`;
+    const key = `${generation}\u0000${rankingGeneration}\u0000${topK}\u0000${query}`;
     this.queryCache.delete(key);
     this.queryCache.set(key, cloneHits(hits));
     while (this.queryCache.size > MAX_QUERY_CACHE_ENTRIES) {
@@ -851,7 +875,7 @@ export function packContextHits(
     const shownPath = workspaceAliasPath(hit.path, roots);
     const symbol = hit.symbol ? ` symbol="${escapeAttribute(hit.symbol)}"` : '';
     const provenance = hit.provenance
-      ? ` source="${escapeAttribute(hit.source)}" hash="${hit.provenance.contentHash.slice(0, 12)}" graph-score="${hit.provenance.score.graph.toFixed(3)}"`
+      ? ` source="${escapeAttribute(hit.source)}" hash="${hit.provenance.contentHash.slice(0, 12)}" graph-score="${hit.provenance.score.graph.toFixed(3)}" recency-score="${hit.provenance.score.recency.toFixed(6)}"`
       : '';
     return `<code path="${escapeAttribute(shownPath)}" lines="${hit.startLine}-${hit.endLine}" score="${hit.score.toFixed(3)}"${symbol}${provenance}>\n${hit.content}\n</code>`;
   }).join('\n\n');
