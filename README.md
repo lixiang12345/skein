@@ -441,10 +441,24 @@ npm run benchmark:context -- \
 ```
 
 It reports Recall@5/10/20, MRR, useful-token ratio, stale-hit rate, and cold,
-incremental, and warm-query latency. The included fixture only validates the
-metric pipeline; it is not evidence for performance on a production repository.
-`--fresh-index` deletes and rebuilds that workspace's local index, so use it only
-where rebuilding the index is intended.
+incremental, and warm-query latency. `context-benchmark-v2` covers TypeScript,
+Python, SQL, CJK, Markdown, mixed-language queries, and a TypeScript import
+neighbor that has no direct lexical match. Its checked-in thresholds fail the
+command instead of allowing a retrieval change to lower the quality bar.
+
+The persisted local index now stores content-addressed TypeScript compiler AST
+facts for definitions, calls, and relative imports. Matching definitions can
+expand a query and import/call neighbors may receive a bounded graph score;
+Python and SQL continue to use explicit syntax-aware fallbacks. Search and
+context JSON expose the index generation, file hash, matched/expanded terms,
+and bm25/path/symbol/phrase/graph breakdown without persisting the query or an
+additional copy of source. Index schema v2 artifacts rebuild as v3 rather than
+being trusted after the parser contract changes.
+
+The included fixture is a deterministic regression gate, not evidence for
+performance on every production repository. `--fresh-index` deletes and
+rebuilds that workspace's local index, so use it only where rebuilding the
+index is intended.
 
 ## Safety model
 

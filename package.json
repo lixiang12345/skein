@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.18",
+  "version": "0.3.19",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,6 +16,9 @@
   },
   "skein": {
     "releaseNotes": [
+      "Local index v3 records TypeScript AST definitions, calls, and relative import adjacency for graph-assisted retrieval",
+      "Context hits expose generation, content hash, matched terms, and bm25/path/symbol/phrase/graph score provenance",
+      "Context benchmark v2 locks multilingual recall, MRR, useful-token, stale-hit, incremental-index, and warm-latency gates",
       "Large MCP catalogs now disclose at most eight request-relevant schemas per run while preserving network permissions",
       "Token Ledger receipts report deferred progressive schemas and selected definitions remain stable across tool turns",
       "A deterministic Token Economy replay benchmark guards evidence, output-firewall, and no-progress invariants",
@@ -81,6 +84,7 @@
     "react": "^19.2.3",
     "string-width": "^8.2.2",
     "strip-ansi": "^7.2.0",
+    "typescript": "^5.9.3",
     "yaml": "^2.8.2",
     "zod": "^4.4.3"
   },
@@ -90,7 +94,6 @@
     "@types/react": "^19.2.7",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3",
     "vitest": "^4.0.18"
   },
   "overrides": {

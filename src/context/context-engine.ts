@@ -142,6 +142,11 @@ export function formatContextHits(hits: ContextHit[], roots: string[]): string {
   return hits.map((hit) => {
     const path = workspaceAliasPath(hit.path, roots);
     const symbol = hit.symbol ? ` ${hit.symbol}` : '';
-    return `[${hit.source} ${hit.score.toFixed(3)}]${symbol} ${path}:${hit.startLine}-${hit.endLine}`;
+    const score = hit.provenance?.score;
+    const breakdown = score
+      ? ` bm25=${score.bm25.toFixed(2)} path=${score.path.toFixed(2)} symbol=${score.symbol.toFixed(2)} graph=${score.graph.toFixed(2)}`
+      : '';
+    const hash = hit.provenance?.contentHash.slice(0, 12);
+    return `[${hit.source} ${hit.score.toFixed(3)}${breakdown}${hash ? ` hash=${hash}` : ''}]${symbol} ${path}:${hit.startLine}-${hit.endLine}`;
   }).join('\n');
 }

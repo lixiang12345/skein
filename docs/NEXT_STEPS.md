@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.18`.
+- Current repository version: `0.3.19`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -41,8 +41,8 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.18.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.18.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.19.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.19.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
@@ -53,6 +53,30 @@ short-height case. The current full-suite count is recorded from the latest
 `npm run check` in the release evidence.
 
 ## Recommended Order
+
+### P0-C: Local Context Engine v2 foundations
+
+Version `0.3.19` moves the persisted local index to schema v3 and records
+TypeScript compiler AST definitions, calls, and relative import facts beside
+each content hash. Old schema v2 indexes rebuild instead of crossing the parser
+contract. Python and SQL remain offline through bounded syntax-aware fallbacks;
+this release does not claim equivalent AST coverage for those languages.
+
+Matching definitions expand the lexical query, NodeNext `.js` imports resolve
+to indexed TypeScript sources, and import/call neighbors receive a bounded graph
+score. A minimum informative-term coverage removes low-value one-word matches,
+with a fallback to the original ranked candidates when no sufficiently covered
+result exists. Each hit carries generation, SHA-256 content hash, matched and
+expanded terms, and a bm25/path/symbol/phrase/graph score breakdown. Query-cache
+hits and misses are visible while cache entries remain generation-bound.
+
+The checked-in `context-benchmark-v2` fixture covers eight TypeScript, Python,
+SQL, CJK, Markdown, and mixed-language cases across ten files. The first
+expanded run failed its preselected useful-token threshold at `0.348`; the
+implementation reached `0.729` while Recall@5/10/20 and MRR remained `1.0`,
+stale-hit rate stayed `0`, warm p95 was below 10 ms, and incremental indexing
+reused every fixture file. Git-recency, diagnostics ranking, broader language
+AST adapters, and production-scale calibration remain follow-up slices.
 
 ### P0-E: Token Economy measurement and bounded schema disclosure
 
@@ -192,12 +216,12 @@ Implementation progress:
   concrete paths involved. `skein doctor` surfaces this as `legacyCompatibility`
   so users see the removal timeline before aliases disappear.
 
-### P1: Local Context Engine Reliability And Benchmarking
+### P0-C: Local Context Engine Reliability And Benchmarking
 
 Keep retrieval local and measurable as the repository grows. Content hashes,
-generation-keyed query caching, overlap-aware packing, adaptive budgets, and
-targeted known-change refresh are now implemented. The next retrieval slice is
-language adapters and the expanded multilingual benchmark.
+generation-keyed query caching, overlap-aware packing, adaptive budgets,
+targeted known-change refresh, TypeScript AST facts, import adjacency, score
+provenance, and the expanded multilingual benchmark are now implemented.
 
 Definition of done:
 
@@ -218,8 +242,9 @@ Implementation progress:
   atomically persist before the next turn in TUI or headless mode.
 - Size/mtime/ctime reconciliation closes the direct-new-query zero-hit window;
   repeated empty or unchanged searches stop through the recovery circuit.
-- Remaining work is broader language adapters and production-scale benchmark
-  calibration; the reproducible benchmark pipeline already exists.
+- The v2 fixture is an enforced regression test, including a graph-only import
+  neighbor and a no-stale-hit gate. Remaining work is git-recency/diagnostics
+  signals, broader language AST adapters, and production-scale calibration.
 
 ### P1: Multi-Agent Scheduler And Team UX
 

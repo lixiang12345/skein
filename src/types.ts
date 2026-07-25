@@ -248,6 +248,25 @@ export interface ContextHit {
   score: number;
   source: string;
   symbol?: string;
+  /** Bounded, content-free ranking evidence for diagnostics and `/context --json`. */
+  provenance?: ContextHitProvenance;
+}
+
+export interface ContextScoreBreakdown {
+  bm25: number;
+  path: number;
+  symbol: number;
+  phrase: number;
+  graph: number;
+  total: number;
+}
+
+export interface ContextHitProvenance {
+  generation: string;
+  contentHash: string;
+  matchedTerms: string[];
+  expandedTerms: string[];
+  score: ContextScoreBreakdown;
 }
 
 export type ReuseDecision = 'reuse' | 'extend' | 'new' | 'unresolved';

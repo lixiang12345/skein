@@ -2,7 +2,7 @@ import {mkdtemp, mkdir, readFile, rm, stat, utimes, writeFile} from 'node:fs/pro
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {describe, expect, it} from 'vitest';
-import {ContextEngine} from '../../src/context/context-engine.js';
+import {ContextEngine, formatContextHits} from '../../src/context/context-engine.js';
 import {LocalContextIndex} from '../../src/context/local-index.js';
 import {defaultConfig} from '../../src/config.js';
 
@@ -18,7 +18,7 @@ describe('local context engine', () => {
       const hits = await engine.search('verifySessionToken');
 
       expect(hits[0]).toMatchObject({path: join(root, 'src', 'auth.ts'), symbol: 'verifySessionToken'});
-      expect(hits[0]?.source).toBe('local-bm25+path+symbol');
+      expect(hits[0]?.source).toBe('local-bm25+path+symbol+graph');
       const chinese = await engine.search('验证会话');
       expect(chinese.some((hit) => hit.path.endsWith('配置.py'))).toBe(true);
     } finally {
@@ -40,6 +40,66 @@ describe('local context engine', () => {
         symbol: '处理订单',
         startLine: 22,
       });
+    } finally {
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
+  it('uses TypeScript AST import adjacency and exposes content-free score provenance', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-local-graph-'));
+    try {
+      await mkdir(join(root, 'src', 'security'), {recursive: true});
+      await writeFile(join(root, 'src', 'security', 'token.ts'), [
+        'export default function resolveCredentialEnvelope(value: string) {',
+        "  return value.startsWith('credential_');",
+        '}',
+        '',
+      ].join('\n'));
+      await writeFile(join(root, 'src', 'middleware.ts'), [
+        "import validate from './security/token.js';",
+        'export function authorizeRequest(value: string) {',
+        '  return validate(value);',
+        '}',
+        '',
+      ].join('\n'));
+      await writeFile(join(root, 'src', 'unrelated.ts'), 'export const unrelated = true;\n');
+      const index = new LocalContextIndex([root]);
+
+      const hits = await index.search('resolveCredentialEnvelope', 10);
+      const definition = hits.find((hit) => hit.path.endsWith('/security/token.ts'));
+      const caller = hits.find((hit) => hit.path.endsWith('/middleware.ts'));
+
+      expect(definition?.provenance).toMatchObject({
+        generation: expect.any(String),
+        contentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        score: {bm25: expect.any(Number), graph: expect.any(Number), total: expect.any(Number)},
+      });
+      expect(caller?.provenance?.score.graph).toBeGreaterThan(0);
+      expect(caller?.provenance?.matchedTerms).toEqual([]);
+      expect(caller?.source).toBe('local-bm25+path+symbol+graph');
+      expect(formatContextHits(hits, [root])).toContain('graph=');
+      expect(formatContextHits(hits, [root])).toContain('hash=');
+
+      if (definition?.provenance) definition.provenance.score.total = 0;
+      const cached = await index.search('resolveCredentialEnvelope', 10);
+      expect(cached.find((hit) => hit.path.endsWith('/security/token.ts'))?.provenance?.score.total)
+        .toBeGreaterThan(0);
+      expect(index.status()).toMatchObject({queryCacheEntries: 1, queryCacheHits: 1, queryCacheMisses: 1});
+
+      await writeFile(join(root, 'src', 'security', 'token.ts'), [
+        'export default function parseOpaqueInput(value: string) {',
+        "  return value.startsWith('credential_');",
+        '}',
+        '',
+      ].join('\n'));
+      const refreshed = await index.search('resolveCredentialEnvelope', 10);
+      expect(refreshed.every((hit) => !hit.path.endsWith('/middleware.ts'))).toBe(true);
+      await expect(index.search('parseOpaqueInput', 10)).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({path: join(root, 'src', 'security', 'token.ts')}),
+        expect.objectContaining({path: join(root, 'src', 'middleware.ts'), provenance: expect.objectContaining({
+          score: expect.objectContaining({graph: expect.any(Number)}),
+        })}),
+      ]));
     } finally {
       await rm(root, {recursive: true, force: true});
     }
@@ -391,6 +451,9 @@ ${functionBody}
         size: 1,
         contentHash: '0'.repeat(64),
         chunks: [],
+        definitions: [],
+        references: [],
+        imports: [],
       });
       await writeFile(index.indexPath, `${JSON.stringify(parsed)}\n`);
 

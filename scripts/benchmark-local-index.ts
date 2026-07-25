@@ -1,12 +1,78 @@
 import {readFile, rm} from 'node:fs/promises';
 import {performance} from 'node:perf_hooks';
 import {relative, resolve, sep} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {LocalContextIndex} from '../src/context/local-index.js';
+import {estimateTokens} from '../src/utils/tokens.js';
 
-interface BenchmarkCase {
+export interface BenchmarkCase {
   id: string;
+  language: string;
   query: string;
   relevant: string[];
+}
+
+export interface BenchmarkThresholds {
+  recallAt5: number;
+  recallAt10: number;
+  meanReciprocalRank: number;
+  usefulTokenRatio: number;
+  staleHitRate: number;
+  warmQueryP95Ms: number;
+  incrementalIndexMs: number;
+}
+
+interface BenchmarkFixture {
+  version: string;
+  thresholds?: BenchmarkThresholds;
+  cases: BenchmarkCase[];
+}
+
+export interface LocalIndexBenchmarkOptions {
+  workspace: string;
+  cases: string;
+  topK?: number;
+  freshIndex?: boolean;
+}
+
+export interface LocalIndexBenchmarkReport {
+  fixtureVersion: string;
+  workspace: string;
+  caseFile: string;
+  topK: number;
+  caseCount: number;
+  languages: string[];
+  index: {
+    cold: Record<string, unknown>;
+    incremental: Record<string, unknown>;
+  };
+  aggregate: {
+    recallAt5: number;
+    recallAt10: number;
+    recallAt20: number;
+    meanReciprocalRank: number;
+    usefulTokenRatio: number;
+    staleHitRate: number;
+    warmQueryLatencyMs: {p50: number; p95: number};
+  };
+  thresholds?: BenchmarkThresholds;
+  thresholdChecks?: Record<keyof BenchmarkThresholds, boolean>;
+  thresholdsPassed?: boolean;
+  results: Array<{
+    id: string;
+    language: string;
+    query: string;
+    relevant: string[];
+    returned: string[];
+    recallAt5: number;
+    recallAt10: number;
+    recallAt20: number;
+    reciprocalRank: number;
+    usefulTokenRatio: number;
+    staleHits: number;
+    graphHits: number;
+    latencyMs: number;
+  }>;
 }
 
 interface ParsedArguments {
@@ -16,79 +82,106 @@ interface ParsedArguments {
   freshIndex: boolean;
 }
 
-const args = parseArguments(process.argv.slice(2));
-const cases = await loadCases(args.cases);
-const index = new LocalContextIndex([args.workspace]);
-if (args.freshIndex) await rm(index.indexPath, {force: true});
-
-const coldStartedAt = performance.now();
-const coldIndex = await index.build();
-const coldIndexMs = performance.now() - coldStartedAt;
-const queryLatencies: number[] = [];
-const rows: Array<Record<string, unknown>> = [];
-let staleHits = 0;
-let totalHits = 0;
-let usefulTokens = 0;
-let totalTokens = 0;
-
-for (const benchmark of cases) {
-  const startedAt = performance.now();
-  const hits = await index.search(benchmark.query, args.topK);
-  const durationMs = performance.now() - startedAt;
-  queryLatencies.push(durationMs);
-  const relevant = new Set(benchmark.relevant.map(normalizePath));
-  const paths = hits.map((hit) => normalizePath(relative(args.workspace, hit.path)));
-  const firstRelevant = paths.findIndex((path) => relevant.has(path));
-  const tokenCount = hits.reduce((sum, hit) => sum + estimateTokens(hit.content), 0);
-  const useful = hits
-    .filter((hit) => relevant.has(normalizePath(relative(args.workspace, hit.path))))
-    .reduce((sum, hit) => sum + estimateTokens(hit.content), 0);
-  const stale = await countStaleHits(hits);
-  staleHits += stale;
-  totalHits += hits.length;
-  usefulTokens += useful;
-  totalTokens += tokenCount;
-  rows.push({
-    id: benchmark.id,
-    query: benchmark.query,
-    relevant: benchmark.relevant,
-    returned: paths,
-    recallAt5: recallAt(paths, relevant, 5),
-    recallAt10: recallAt(paths, relevant, 10),
-    recallAt20: recallAt(paths, relevant, 20),
-    reciprocalRank: firstRelevant < 0 ? 0 : 1 / (firstRelevant + 1),
-    usefulTokenRatio: tokenCount ? useful / tokenCount : 0,
-    staleHits: stale,
-    latencyMs: round(durationMs),
-  });
+const entryPath = process.argv[1] ? resolve(process.argv[1]) : '';
+if (entryPath === fileURLToPath(import.meta.url)) {
+  const args = parseArguments(process.argv.slice(2));
+  const report = await runLocalIndexBenchmark(args);
+  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  if (report.thresholdsPassed === false) process.exitCode = 1;
 }
 
-const incrementalStartedAt = performance.now();
-const incrementalIndex = await index.build();
-const incrementalIndexMs = performance.now() - incrementalStartedAt;
+export async function runLocalIndexBenchmark(
+  options: LocalIndexBenchmarkOptions,
+): Promise<LocalIndexBenchmarkReport> {
+  const workspace = resolve(options.workspace);
+  const caseFile = resolve(options.cases);
+  const topK = options.topK ?? 20;
+  const fixture = await loadFixture(caseFile);
+  const index = new LocalContextIndex([workspace]);
+  if (options.freshIndex) await rm(index.indexPath, {force: true});
 
-process.stdout.write(`${JSON.stringify({
-  workspace: args.workspace,
-  caseFile: args.cases,
-  topK: args.topK,
-  index: {
-    cold: {...coldIndex, durationMs: round(coldIndexMs)},
-    incremental: {...incrementalIndex, durationMs: round(incrementalIndexMs)},
-  },
-  aggregate: {
-    recallAt5: mean(rows, 'recallAt5'),
-    recallAt10: mean(rows, 'recallAt10'),
-    recallAt20: mean(rows, 'recallAt20'),
-    meanReciprocalRank: mean(rows, 'reciprocalRank'),
-    usefulTokenRatio: totalTokens ? usefulTokens / totalTokens : 0,
-    staleHitRate: totalHits ? staleHits / totalHits : 0,
+  const coldStartedAt = performance.now();
+  const coldIndex = await index.build();
+  const coldIndexMs = performance.now() - coldStartedAt;
+  const queryLatencies: number[] = [];
+  const results: LocalIndexBenchmarkReport['results'] = [];
+  let staleHits = 0;
+  let totalHits = 0;
+  let usefulTokens = 0;
+  let totalTokens = 0;
+
+  for (const benchmark of fixture.cases) {
+    const startedAt = performance.now();
+    const hits = await index.search(benchmark.query, topK);
+    const durationMs = performance.now() - startedAt;
+    queryLatencies.push(durationMs);
+    const relevant = new Set(benchmark.relevant.map(normalizePath));
+    const paths = hits.map((hit) => normalizePath(relative(workspace, hit.path)));
+    const firstRelevant = paths.findIndex((path) => relevant.has(path));
+    const tokenCount = hits.reduce((sum, hit) => sum + estimateTokens(hit.content), 0);
+    const useful = hits
+      .filter((hit) => relevant.has(normalizePath(relative(workspace, hit.path))))
+      .reduce((sum, hit) => sum + estimateTokens(hit.content), 0);
+    const stale = await countStaleHits(hits);
+    staleHits += stale;
+    totalHits += hits.length;
+    usefulTokens += useful;
+    totalTokens += tokenCount;
+    results.push({
+      id: benchmark.id,
+      language: benchmark.language,
+      query: benchmark.query,
+      relevant: benchmark.relevant,
+      returned: paths,
+      recallAt5: recallAt(paths, relevant, 5),
+      recallAt10: recallAt(paths, relevant, 10),
+      recallAt20: recallAt(paths, relevant, 20),
+      reciprocalRank: firstRelevant < 0 ? 0 : 1 / (firstRelevant + 1),
+      usefulTokenRatio: tokenCount ? useful / tokenCount : 0,
+      staleHits: stale,
+      graphHits: hits.filter((hit) => (hit.provenance?.score.graph ?? 0) > 0).length,
+      latencyMs: round(durationMs),
+    });
+  }
+
+  const incrementalStartedAt = performance.now();
+  const incrementalIndex = await index.build();
+  const incrementalIndexMs = performance.now() - incrementalStartedAt;
+  const aggregate = {
+    recallAt5: round(mean(results, 'recallAt5')),
+    recallAt10: round(mean(results, 'recallAt10')),
+    recallAt20: round(mean(results, 'recallAt20')),
+    meanReciprocalRank: round(mean(results, 'reciprocalRank')),
+    usefulTokenRatio: round(totalTokens ? usefulTokens / totalTokens : 0),
+    staleHitRate: round(totalHits ? staleHits / totalHits : 0),
     warmQueryLatencyMs: {
       p50: percentile(queryLatencies, 0.5),
       p95: percentile(queryLatencies, 0.95),
     },
-  },
-  results: rows,
-}, null, 2)}\n`);
+  };
+  const thresholdChecks = fixture.thresholds
+    ? evaluateThresholds(fixture.thresholds, aggregate, incrementalIndexMs)
+    : undefined;
+  return {
+    fixtureVersion: fixture.version,
+    workspace,
+    caseFile,
+    topK,
+    caseCount: fixture.cases.length,
+    languages: [...new Set(fixture.cases.map((item) => item.language))].sort(),
+    index: {
+      cold: {...coldIndex, durationMs: round(coldIndexMs)},
+      incremental: {...incrementalIndex, durationMs: round(incrementalIndexMs)},
+    },
+    aggregate,
+    ...(fixture.thresholds ? {thresholds: fixture.thresholds} : {}),
+    ...(thresholdChecks ? {
+      thresholdChecks,
+      thresholdsPassed: Object.values(thresholdChecks).every(Boolean),
+    } : {}),
+    results,
+  };
+}
 
 function parseArguments(values: string[]): ParsedArguments {
   const defaults: ParsedArguments = {
@@ -123,20 +216,60 @@ function parseArguments(values: string[]): ParsedArguments {
   return defaults;
 }
 
-async function loadCases(path: string): Promise<BenchmarkCase[]> {
+async function loadFixture(path: string): Promise<BenchmarkFixture> {
   const parsed: unknown = JSON.parse(await readFile(path, 'utf8'));
-  if (!Array.isArray(parsed) || !parsed.length) throw new Error('Benchmark cases must be a non-empty JSON array.');
-  return parsed.map((entry, index) => {
+  if (Array.isArray(parsed)) {
+    return {version: 'context-benchmark-v1', cases: validateCases(parsed)};
+  }
+  if (!parsed || typeof parsed !== 'object') throw new Error('Benchmark fixture must be an object.');
+  const value = parsed as {version?: unknown; thresholds?: unknown; cases?: unknown};
+  if (typeof value.version !== 'string' || !value.version) throw new Error('Benchmark fixture requires a version.');
+  const cases = validateCases(value.cases);
+  const thresholds = value.thresholds === undefined ? undefined : validateThresholds(value.thresholds);
+  return {version: value.version, cases, ...(thresholds ? {thresholds} : {})};
+}
+
+function validateCases(value: unknown): BenchmarkCase[] {
+  if (!Array.isArray(value) || !value.length) throw new Error('Benchmark cases must be a non-empty array.');
+  return value.map((entry, index) => {
     if (!entry || typeof entry !== 'object') throw new Error(`Case ${index + 1} must be an object.`);
-    const value = entry as Partial<BenchmarkCase>;
-    if (typeof value.id !== 'string' || !value.id ||
-      typeof value.query !== 'string' || !value.query ||
-      !Array.isArray(value.relevant) || !value.relevant.length ||
-      value.relevant.some((path) => typeof path !== 'string' || !path)) {
-      throw new Error(`Case ${index + 1} requires id, query, and one or more relevant paths.`);
+    const item = entry as Partial<BenchmarkCase>;
+    if (typeof item.id !== 'string' || !item.id ||
+      typeof item.language !== 'string' || !item.language ||
+      typeof item.query !== 'string' || !item.query ||
+      !Array.isArray(item.relevant) || !item.relevant.length ||
+      item.relevant.some((path) => typeof path !== 'string' || !path)) {
+      throw new Error(`Case ${index + 1} requires id, language, query, and one or more relevant paths.`);
     }
-    return {id: value.id, query: value.query, relevant: value.relevant};
+    return item as BenchmarkCase;
   });
+}
+
+function validateThresholds(value: unknown): BenchmarkThresholds {
+  if (!value || typeof value !== 'object') throw new Error('Benchmark thresholds must be an object.');
+  const thresholds = value as Partial<BenchmarkThresholds>;
+  for (const key of ['recallAt5', 'recallAt10', 'meanReciprocalRank', 'usefulTokenRatio', 'staleHitRate', 'warmQueryP95Ms', 'incrementalIndexMs'] as const) {
+    if (typeof thresholds[key] !== 'number' || !Number.isFinite(thresholds[key])) {
+      throw new Error(`Benchmark threshold ${key} must be a finite number.`);
+    }
+  }
+  return thresholds as BenchmarkThresholds;
+}
+
+function evaluateThresholds(
+  thresholds: BenchmarkThresholds,
+  aggregate: LocalIndexBenchmarkReport['aggregate'],
+  incrementalIndexMs: number,
+): Record<keyof BenchmarkThresholds, boolean> {
+  return {
+    recallAt5: aggregate.recallAt5 >= thresholds.recallAt5,
+    recallAt10: aggregate.recallAt10 >= thresholds.recallAt10,
+    meanReciprocalRank: aggregate.meanReciprocalRank >= thresholds.meanReciprocalRank,
+    usefulTokenRatio: aggregate.usefulTokenRatio >= thresholds.usefulTokenRatio,
+    staleHitRate: aggregate.staleHitRate <= thresholds.staleHitRate,
+    warmQueryP95Ms: aggregate.warmQueryLatencyMs.p95 <= thresholds.warmQueryP95Ms,
+    incrementalIndexMs: incrementalIndexMs <= thresholds.incrementalIndexMs,
+  };
 }
 
 async function countStaleHits(hits: Array<{path: string; startLine: number; endLine: number; content: string}>): Promise<number> {
@@ -159,10 +292,6 @@ function recallAt(paths: string[], relevant: Set<string>, limit: number): number
 
 function normalizePath(path: string): string {
   return path.replaceAll(sep, '/').replace(/^\.\//u, '');
-}
-
-function estimateTokens(content: string): number {
-  return Math.ceil(content.length / 4);
 }
 
 function mean(rows: Array<Record<string, unknown>>, key: string): number {

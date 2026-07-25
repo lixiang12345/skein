@@ -1,22 +1,62 @@
-[
-  {
-    "id": "typescript-symbol",
-    "query": "verifySessionToken",
-    "relevant": ["src/session.ts"]
+{
+  "version": "context-benchmark-v2",
+  "thresholds": {
+    "recallAt5": 0.95,
+    "recallAt10": 1,
+    "meanReciprocalRank": 0.8,
+    "usefulTokenRatio": 0.4,
+    "staleHitRate": 0,
+    "warmQueryP95Ms": 250,
+    "incrementalIndexMs": 2000
   },
-  {
-    "id": "python-unicode-symbol",
-    "query": "验证会话",
-    "relevant": ["src/配置.py"]
-  },
-  {
-    "id": "markdown-heading",
-    "query": "retry policy",
-    "relevant": ["docs/retry.md"]
-  },
-  {
-    "id": "sql-statement",
-    "query": "expired session cleanup",
-    "relevant": ["db/cleanup.sql"]
-  }
-]
+  "cases": [
+    {
+      "id": "typescript-symbol",
+      "language": "typescript",
+      "query": "verifySessionToken",
+      "relevant": ["src/session.ts"]
+    },
+    {
+      "id": "typescript-import-adjacency",
+      "language": "typescript",
+      "query": "resolveCredentialEnvelope",
+      "relevant": ["src/security/token.ts", "src/middleware.ts"]
+    },
+    {
+      "id": "python-unicode-symbol",
+      "language": "python",
+      "query": "验证会话",
+      "relevant": ["src/配置.py"]
+    },
+    {
+      "id": "cjk-word-order",
+      "language": "cjk",
+      "query": "会话验证",
+      "relevant": ["src/配置.py"]
+    },
+    {
+      "id": "python-mixed-query",
+      "language": "mixed",
+      "query": "加载 timeout 默认配置",
+      "relevant": ["src/配置.py"]
+    },
+    {
+      "id": "markdown-heading",
+      "language": "markdown",
+      "query": "retry policy",
+      "relevant": ["docs/retry.md"]
+    },
+    {
+      "id": "sql-statement",
+      "language": "sql",
+      "query": "expired session cleanup",
+      "relevant": ["db/cleanup.sql"]
+    },
+    {
+      "id": "sql-audit-report",
+      "language": "sql",
+      "query": "daily session audit report",
+      "relevant": ["db/session-report.sql", "src/report.ts"]
+    }
+  ]
+}

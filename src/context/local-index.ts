@@ -1,9 +1,10 @@
 import {createHash} from 'node:crypto';
 import {lstat, readFile, stat} from 'node:fs/promises';
-import {basename, dirname, extname, isAbsolute, join, relative, resolve, sep} from 'node:path';
+import {basename, dirname, extname, isAbsolute, join, posix, relative, resolve, sep} from 'node:path';
 import fg from 'fast-glob';
+import ts from 'typescript';
 import {z} from 'zod';
-import type {ContextHit, DuplicationBaseline, PackedContext} from '../types.js';
+import type {ContextHit, ContextHitProvenance, ContextScoreBreakdown, DuplicationBaseline, PackedContext} from '../types.js';
 import {WorkspaceAccess} from '../tools/workspace.js';
 import {atomicWrite} from '../tools/write.js';
 import {assertNoSymlinkPath, ensureWorkspaceStorageDirectory} from '../utils/storage.js';
@@ -38,10 +39,13 @@ interface IndexedFile {
   size: number;
   contentHash: string;
   chunks: IndexedChunk[];
+  definitions: string[];
+  references: string[];
+  imports: string[];
 }
 
 interface LocalIndexFile {
-  version: 2;
+  version: 3;
   createdAt: string;
   generation: string;
   roots: string[];
@@ -83,10 +87,13 @@ const indexedFileSchema = z.object({
   size: z.number().nonnegative(),
   contentHash: contentHashSchema,
   chunks: z.array(indexedChunkSchema),
+  definitions: z.array(z.string()),
+  references: z.array(z.string()),
+  imports: z.array(z.string()),
 }).strict();
 
 const localIndexSchema = z.object({
-  version: z.literal(2),
+  version: z.literal(3),
   createdAt: z.string(),
   generation: z.string().min(1),
   roots: z.array(z.string()),
@@ -106,6 +113,8 @@ export interface LocalIndexStatus {
   files: number;
   chunks: number;
   queryCacheEntries: number;
+  queryCacheHits: number;
+  queryCacheMisses: number;
   refreshState: 'current' | 'dirty' | 'refreshing' | 'degraded';
   dirtyPaths: number;
   refreshError?: string;
@@ -149,6 +158,8 @@ export class LocalContextIndex {
   private index?: LocalIndexFile;
   private readonly workspace: WorkspaceAccess;
   private readonly queryCache = new Map<string, ContextHit[]>();
+  private queryCacheHits = 0;
+  private queryCacheMisses = 0;
   private fingerprintCache: DuplicationBaseline | undefined;
   private readonly dirtyPaths = new Set<string>();
   private refreshState: LocalIndexStatus['refreshState'] = 'current';
@@ -323,7 +334,7 @@ export class LocalContextIndex {
           .sort((left, right) => left.absolutePath.localeCompare(right.absolutePath));
         const generation = createGeneration(nextFiles);
         this.index = {
-          version: 2,
+          version: 3,
           createdAt: new Date().toISOString(),
           generation,
           roots: this.roots,
@@ -378,6 +389,8 @@ export class LocalContextIndex {
       files: this.index?.files.length ?? 0,
       chunks: this.index?.files.reduce((total, file) => total + file.chunks.length, 0) ?? 0,
       queryCacheEntries: this.queryCache.size,
+      queryCacheHits: this.queryCacheHits,
+      queryCacheMisses: this.queryCacheMisses,
       refreshState: this.refreshState,
       dirtyPaths: this.dirtyPaths.size,
       ...(this.refreshError ? {refreshError: this.refreshError} : {}),
@@ -470,11 +483,12 @@ export class LocalContextIndex {
         size: info.size,
         contentHash,
         chunks: chunkFile(safeItem, content),
+        ...extractSourceFacts(safeItem.path, content),
       });
     }
     const generation = createGeneration(files);
     this.index = {
-      version: 2,
+      version: 3,
       createdAt: new Date().toISOString(),
       generation,
       roots: this.roots,
@@ -544,6 +558,7 @@ export class LocalContextIndex {
         size: info.size,
         contentHash: hashContent(content),
         chunks: chunkFile(safeItem, content),
+        ...extractSourceFacts(safeItem.path, content),
       };
     } catch {
       return undefined;
@@ -569,7 +584,11 @@ export class LocalContextIndex {
           path: file.path,
           absolutePath: file.absolutePath,
         }, content);
-        if (!chunksMatch(expectedChunks, file.chunks)) return false;
+        const expectedFacts = extractSourceFacts(file.path, content);
+        if (!chunksMatch(expectedChunks, file.chunks) ||
+          !sameStrings(expectedFacts.definitions, file.definitions) ||
+          !sameStrings(expectedFacts.references, file.references) ||
+          !sameStrings(expectedFacts.imports, file.imports)) return false;
       } catch {
         return false;
       }
@@ -612,10 +631,14 @@ export class LocalContextIndex {
   }
 
   private rank(query: string, topK: number): ContextHit[] {
-    const chunks = (this.index?.files ?? []).flatMap((file) => file.chunks);
+    const index = this.index;
+    const files = index?.files ?? [];
+    const chunks = files.flatMap((file) => file.chunks);
     if (!chunks.length) return [];
-    const terms = [...new Set(tokenize(query))];
-    if (!terms.length) return [];
+    const directTerms = [...new Set(tokenize(query))];
+    if (!directTerms.length || !index) return [];
+    const expandedTerms = expandQueryTerms(files, directTerms);
+    const terms = [...new Set([...directTerms, ...expandedTerms])];
     const queryTerms = new Set(terms);
     const documentFrequency = new Map([...queryTerms].map((term) => [term, 0]));
     for (const chunk of chunks) {
@@ -625,27 +648,57 @@ export class LocalContextIndex {
     }
     const averageLength = chunks.reduce((sum, chunk) => sum + chunk.tokens.length, 0)
       / Math.max(chunks.length, 1);
-    return chunks
-      .map((chunk) => ({chunk, score: scoreChunk(
-        chunk,
-        terms,
-        query,
-        documentFrequency,
-        chunks.length,
-        averageLength,
-      )}))
+    const filesByPath = new Map(files.map((file) => [file.absolutePath, file]));
+    const graphBoosts = buildGraphBoosts(files, directTerms);
+    const coverageTerms = directTerms.filter((term) => !retrievalStopWords.has(term));
+    const scored = chunks
+      .map((chunk) => {
+        const lexical = scoreChunk(
+          chunk,
+          terms,
+          query,
+          documentFrequency,
+          chunks.length,
+          averageLength,
+        );
+        const graph = graphBoosts.get(chunk.absolutePath)?.score ?? 0;
+        const score = lexical.bm25 + lexical.path + lexical.symbol + lexical.phrase + graph;
+        return {chunk, lexical, graph, score};
+      })
       .filter(({score}) => score > 0)
-      .sort((left, right) => right.score - left.score || left.chunk.absolutePath.localeCompare(right.chunk.absolutePath))
+      .sort((left, right) => right.score - left.score || left.chunk.absolutePath.localeCompare(right.chunk.absolutePath));
+    const covered = scored.filter(({lexical, graph}) =>
+      graph > 0 || hasSufficientQueryCoverage(lexical.matchedTerms, coverageTerms));
+    return (covered.length ? covered : scored)
       .slice(0, topK)
-      .map(({chunk, score}) => ({
-        path: chunk.absolutePath,
-        startLine: chunk.startLine,
-        endLine: chunk.endLine,
-        content: chunk.content,
-        score,
-        source: 'local-bm25+path+symbol',
-        ...(chunk.symbol ? {symbol: chunk.symbol} : {}),
-      }));
+      .map(({chunk, lexical, graph, score}) => {
+        const file = filesByPath.get(chunk.absolutePath);
+        const breakdown: ContextScoreBreakdown = {
+          bm25: roundScore(lexical.bm25),
+          path: roundScore(lexical.path),
+          symbol: roundScore(lexical.symbol),
+          phrase: roundScore(lexical.phrase),
+          graph: roundScore(graph),
+          total: roundScore(score),
+        };
+        const provenance: ContextHitProvenance = {
+          generation: index.generation,
+          contentHash: file?.contentHash ?? hashContent(chunk.content),
+          matchedTerms: lexical.matchedTerms.slice(0, 16),
+          expandedTerms: expandedTerms.slice(0, 16),
+          score: breakdown,
+        };
+        return {
+          path: chunk.absolutePath,
+          startLine: chunk.startLine,
+          endLine: chunk.endLine,
+          content: chunk.content,
+          score,
+          source: 'local-bm25+path+symbol+graph',
+          ...(chunk.symbol ? {symbol: chunk.symbol} : {}),
+          provenance,
+        };
+      });
   }
 
   private async hitsAreCurrent(hits: ContextHit[]): Promise<boolean> {
@@ -671,10 +724,17 @@ export class LocalContextIndex {
 
   private getCachedHits(query: string, topK: number): ContextHit[] | undefined {
     const generation = this.index?.generation;
-    if (!generation) return undefined;
+    if (!generation) {
+      this.queryCacheMisses += 1;
+      return undefined;
+    }
     const key = `${generation}\u0000${topK}\u0000${query}`;
     const cached = this.queryCache.get(key);
-    if (!cached) return undefined;
+    if (!cached) {
+      this.queryCacheMisses += 1;
+      return undefined;
+    }
+    this.queryCacheHits += 1;
     this.queryCache.delete(key);
     this.queryCache.set(key, cached);
     return cloneHits(cached);
@@ -724,6 +784,10 @@ function chunksMatch(expected: IndexedChunk[], actual: IndexedChunk[]): boolean 
       chunk.tokens.length === candidate.tokens.length &&
       chunk.tokens.every((token, tokenIndex) => token === candidate.tokens[tokenIndex]);
   });
+}
+
+function sameStrings(expected: string[], actual: string[]): boolean {
+  return expected.length === actual.length && expected.every((value, index) => value === actual[index]);
 }
 
 function existingBuildResult(status: LocalIndexStatus, started: number): IndexBuildResult {
@@ -786,7 +850,10 @@ export function packContextHits(
   const text = selected.map((hit) => {
     const shownPath = workspaceAliasPath(hit.path, roots);
     const symbol = hit.symbol ? ` symbol="${escapeAttribute(hit.symbol)}"` : '';
-    return `<code path="${escapeAttribute(shownPath)}" lines="${hit.startLine}-${hit.endLine}" score="${hit.score.toFixed(3)}"${symbol}>\n${hit.content}\n</code>`;
+    const provenance = hit.provenance
+      ? ` source="${escapeAttribute(hit.source)}" hash="${hit.provenance.contentHash.slice(0, 12)}" graph-score="${hit.provenance.score.graph.toFixed(3)}"`
+      : '';
+    return `<code path="${escapeAttribute(shownPath)}" lines="${hit.startLine}-${hit.endLine}" score="${hit.score.toFixed(3)}"${symbol}${provenance}>\n${hit.content}\n</code>`;
   }).join('\n\n');
   return {
     text,
@@ -801,7 +868,17 @@ export function packContextHits(
 }
 
 function cloneHits(hits: ContextHit[]): ContextHit[] {
-  return hits.map((hit) => ({...hit}));
+  return hits.map((hit) => ({
+    ...hit,
+    ...(hit.provenance ? {
+      provenance: {
+        ...hit.provenance,
+        matchedTerms: [...hit.provenance.matchedTerms],
+        expandedTerms: [...hit.provenance.expandedTerms],
+        score: {...hit.provenance.score},
+      },
+    } : {}),
+  }));
 }
 
 function cloneDuplicationBaseline(baseline: DuplicationBaseline): DuplicationBaseline {
@@ -930,6 +1007,129 @@ function detectSymbol(lines: string[]): string | undefined {
   return undefined;
 }
 
+interface SourceFacts {
+  definitions: string[];
+  references: string[];
+  imports: string[];
+}
+
+/**
+ * Extracts bounded, content-addressed structural facts used only for local
+ * ranking. TypeScript/JavaScript uses the compiler AST; the other indexed
+ * languages retain deterministic syntax-aware fallbacks so retrieval stays
+ * fully offline without a language-server dependency.
+ */
+function extractSourceFacts(path: string, content: string): SourceFacts {
+  const extension = extname(path).toLocaleLowerCase();
+  if (['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'].includes(extension)) {
+    return extractTypeScriptFacts(path, content);
+  }
+  if (extension === '.py') return extractPythonFacts(content);
+  if (extension === '.sql') return extractSqlFacts(content);
+  return {definitions: [], references: [], imports: []};
+}
+
+function extractTypeScriptFacts(path: string, content: string): SourceFacts {
+  const definitions = new Set<string>();
+  const references = new Set<string>();
+  const imports = new Set<string>();
+  const source = ts.createSourceFile(path, content, ts.ScriptTarget.Latest, false, scriptKind(path));
+  const addName = (name: ts.BindingName | ts.DeclarationName | undefined): void => {
+    if (!name) return;
+    if (ts.isIdentifier(name)) definitions.add(name.text);
+    else if (ts.isStringLiteralLike(name) || ts.isNumericLiteral(name)) definitions.add(name.text);
+    else if (ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)) {
+      for (const element of name.elements) if (ts.isBindingElement(element)) addName(element.name);
+    }
+  };
+  const addCallReference = (expression: ts.LeftHandSideExpression): void => {
+    if (ts.isIdentifier(expression)) references.add(expression.text);
+    else if (ts.isPropertyAccessExpression(expression)) references.add(expression.name.text);
+    else if (ts.isElementAccessExpression(expression) && ts.isIdentifier(expression.expression)) {
+      references.add(expression.expression.text);
+    }
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      if (node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) imports.add(node.moduleSpecifier.text);
+    } else if (ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference) &&
+      node.moduleReference.expression && ts.isStringLiteral(node.moduleReference.expression)) {
+      imports.add(node.moduleReference.expression.text);
+    } else if (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node) ||
+      ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node) ||
+      ts.isEnumDeclaration(node) || ts.isModuleDeclaration(node)) {
+      addName(node.name);
+    } else if (ts.isVariableDeclaration(node) || ts.isBindingElement(node) ||
+      ts.isMethodDeclaration(node) || ts.isPropertyDeclaration(node) ||
+      ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) {
+      addName(node.name);
+    } else if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+      addCallReference(node.expression);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return {
+    definitions: sortedValues(definitions),
+    references: sortedValues(references),
+    imports: sortedValues(imports),
+  };
+}
+
+function scriptKind(path: string): ts.ScriptKind {
+  switch (extname(path).toLocaleLowerCase()) {
+    case '.tsx': return ts.ScriptKind.TSX;
+    case '.jsx': return ts.ScriptKind.JSX;
+    case '.js':
+    case '.mjs':
+    case '.cjs': return ts.ScriptKind.JS;
+    default: return ts.ScriptKind.TS;
+  }
+}
+
+function extractPythonFacts(content: string): SourceFacts {
+  const definitions = new Set<string>();
+  const references = new Set<string>();
+  const imports = new Set<string>();
+  for (const line of content.split('\n')) {
+    const definition = line.match(/^\s*(?:async\s+)?(?:def|class)\s+([\p{L}_][\p{L}\p{N}_]*)/u);
+    if (definition?.[1]) definitions.add(definition[1]);
+    const imported = line.match(/^\s*(?:from\s+([\w.]+)\s+import|import\s+([\w.]+))/u);
+    if (imported?.[1] || imported?.[2]) imports.add(imported[1] ?? imported[2] ?? '');
+    for (const call of line.matchAll(/([\p{L}_][\p{L}\p{N}_]*)\s*\(/gu)) {
+      if (call[1] && !['def', 'class', 'if', 'for', 'while'].includes(call[1])) references.add(call[1]);
+    }
+  }
+  for (const definition of definitions) references.delete(definition);
+  return {
+    definitions: sortedValues(definitions),
+    references: sortedValues(references),
+    imports: sortedValues(imports),
+  };
+}
+
+function extractSqlFacts(content: string): SourceFacts {
+  const definitions = new Set<string>();
+  const references = new Set<string>();
+  const imports = new Set<string>();
+  for (const definition of content.matchAll(/\bcreate\s+(?:table|view|function|procedure)\s+(?:if\s+not\s+exists\s+)?([\w.]+)/giu)) {
+    if (definition[1]) definitions.add(definition[1]);
+  }
+  for (const reference of content.matchAll(/\b(?:from|join|update|into)\s+([\w.]+)/giu)) {
+    if (reference[1]) references.add(reference[1]);
+  }
+  return {
+    definitions: sortedValues(definitions),
+    references: sortedValues(references),
+    imports: sortedValues(imports),
+  };
+}
+
+function sortedValues(values: Set<string>): string[] {
+  return [...values].filter(Boolean).sort((left, right) => left.localeCompare(right));
+}
+
 export function tokenize(input: string): string[] {
   const normalized = input
     .replace(/([a-z\d])([A-Z])/g, '$1 $2')
@@ -949,6 +1149,98 @@ export function tokenize(input: string): string[] {
   return output;
 }
 
+interface LexicalScore {
+  bm25: number;
+  path: number;
+  symbol: number;
+  phrase: number;
+  matchedTerms: string[];
+}
+
+interface GraphScore {
+  score: number;
+}
+
+const retrievalStopWords = new Set([
+  'add', 'audit', 'change', 'code', 'create', 'explain', 'find', 'fix', 'implement',
+  'inspect', 'review', 'show', 'test', 'the', 'update', 'where', 'with',
+  '修改', '修复', '实现', '审查', '查找', '解释', '测试', '更新',
+]);
+
+function hasSufficientQueryCoverage(matchedTerms: string[], coverageTerms: string[]): boolean {
+  if (!coverageTerms.length) return matchedTerms.length > 0;
+  const matched = new Set(matchedTerms);
+  const covered = [...new Set(coverageTerms)].filter((term) => matched.has(term)).length;
+  return covered >= Math.min(2, new Set(coverageTerms).size);
+}
+
+function expandQueryTerms(files: IndexedFile[], directTerms: string[]): string[] {
+  const expanded = new Set<string>();
+  for (const file of files) {
+    for (const definition of file.definitions) {
+      const definitionTerms = [...new Set(tokenize(definition))];
+      if (!definitionMatchesQuery(definitionTerms, directTerms)) continue;
+      for (const term of definitionTerms) if (!directTerms.includes(term)) expanded.add(term);
+    }
+  }
+  return [...expanded].sort((left, right) => left.localeCompare(right)).slice(0, 24);
+}
+
+function buildGraphBoosts(files: IndexedFile[], directTerms: string[]): Map<string, GraphScore> {
+  const anchors = new Map<string, Set<string>>();
+  for (const file of files) {
+    for (const definition of file.definitions) {
+      if (!definitionMatchesQuery(tokenize(definition), directTerms)) continue;
+      const values = anchors.get(file.absolutePath) ?? new Set<string>();
+      values.add(definition.toLocaleLowerCase());
+      anchors.set(file.absolutePath, values);
+    }
+  }
+  if (!anchors.size) return new Map();
+
+  const boosts = new Map<string, GraphScore>();
+  const addBoost = (path: string, score: number): void => {
+    boosts.set(path, {score: (boosts.get(path)?.score ?? 0) + score});
+  };
+  const anchorSymbols = new Set([...anchors.values()].flatMap((symbols) => [...symbols]));
+  for (const file of files) {
+    if (file.references.some((reference) => anchorSymbols.has(reference.toLocaleLowerCase()))) {
+      addBoost(file.absolutePath, 1.5);
+    }
+    for (const specifier of file.imports) {
+      for (const target of resolveImportTargets(file, specifier, files)) {
+        if (anchors.has(target)) addBoost(file.absolutePath, 1.25);
+        if (anchors.has(file.absolutePath)) addBoost(target, 0.75);
+      }
+    }
+  }
+  return boosts;
+}
+
+function definitionMatchesQuery(definitionTerms: string[], queryTerms: string[]): boolean {
+  const definitions = new Set(definitionTerms);
+  const shared = [...new Set(queryTerms)].filter((term) => definitions.has(term));
+  const required = Math.min(2, Math.max(1, Math.min(definitions.size, queryTerms.length)));
+  return shared.length >= required;
+}
+
+function resolveImportTargets(importer: IndexedFile, specifier: string, files: IndexedFile[]): string[] {
+  if (!specifier.startsWith('.')) return [];
+  const base = posix.normalize(posix.join(posix.dirname(importer.path), specifier));
+  const extensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
+  const importedExtension = posix.extname(base);
+  const extensionless = extensions.includes(importedExtension)
+    ? base.slice(0, -importedExtension.length)
+    : base;
+  const candidates = new Set([
+    base,
+    ...extensions.map((extension) => `${extensionless}${extension}`),
+    ...extensions.map((extension) => posix.join(extensionless, `index${extension}`)),
+  ]);
+  return files.filter((file) => file.root === importer.root && candidates.has(file.path))
+    .map((file) => file.absolutePath);
+}
+
 function scoreChunk(
   chunk: IndexedChunk,
   terms: string[],
@@ -956,25 +1248,33 @@ function scoreChunk(
   documentFrequency: Map<string, number>,
   documentCount: number,
   averageLength: number,
-): number {
+): LexicalScore {
   const frequencies = new Map<string, number>();
   for (const token of chunk.tokens) frequencies.set(token, (frequencies.get(token) ?? 0) + 1);
   const k1 = 1.2;
   const b = 0.75;
-  let score = 0;
+  let bm25 = 0;
+  let path = 0;
+  let symbol = 0;
+  const matchedTerms: string[] = [];
   for (const term of terms) {
     const frequency = frequencies.get(term) ?? 0;
     if (!frequency) continue;
+    matchedTerms.push(term);
     const df = documentFrequency.get(term) ?? 0;
     const idf = Math.log(1 + (documentCount - df + 0.5) / (df + 0.5));
-    score += idf * ((frequency * (k1 + 1)) /
+    bm25 += idf * ((frequency * (k1 + 1)) /
       (frequency + k1 * (1 - b + b * chunk.tokens.length / averageLength)));
-    if (chunk.path.toLocaleLowerCase().includes(term)) score += 1.5;
-    if (chunk.symbol?.toLocaleLowerCase().includes(term)) score += 2.5;
+    if (chunk.path.toLocaleLowerCase().includes(term)) path += 1.5;
+    if (chunk.symbol?.toLocaleLowerCase().includes(term)) symbol += 2.5;
   }
   const phrase = rawQuery.trim().toLocaleLowerCase();
-  if (phrase.length > 3 && chunk.content.toLocaleLowerCase().includes(phrase)) score += 3;
-  return score;
+  const phraseScore = phrase.length > 3 && chunk.content.toLocaleLowerCase().includes(phrase) ? 3 : 0;
+  return {bm25, path, symbol, phrase: phraseScore, matchedTerms};
+}
+
+function roundScore(value: number): number {
+  return Number(value.toFixed(6));
 }
 
 export function defaultIndexName(root: string): string {
