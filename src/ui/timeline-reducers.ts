@@ -42,6 +42,11 @@ export function toolMetaSummary(metadata?: Record<string, unknown>): string | un
     if (status === 'warning') parts.push(`duplicates ${matches} (warning)`);
     else if (status === 'unresolved') parts.push('duplicates incomplete');
   }
+  const suppression = metadata.duplicationSuppression;
+  if (suppression && typeof suppression === 'object') {
+    const matchId = (suppression as {matchId?: unknown}).matchId;
+    if (typeof matchId === 'string') parts.push(`duplicate ${matchId.slice(0, 8)} suppressed`);
+  }
   const hooks = metadata.hooks;
   if (hooks && typeof hooks === 'object') {
     const before = Number((hooks as {before?: unknown}).before ?? 0);

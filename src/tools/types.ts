@@ -37,6 +37,8 @@ export interface ToolExecutionContext {
   readonly emit?: (event: AgentEvent) => void | Promise<void>;
   /** Pre-write checkpoint captured by the parent runner, when enabled. */
   readonly checkpointId?: string;
+  /** Runtime tool-call id for content-free session-local receipts. */
+  readonly toolCallId?: string;
 }
 
 export interface ToolExecution {

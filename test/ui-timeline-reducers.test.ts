@@ -11,6 +11,8 @@ describe('timeline reducers', () => {
     })).toBe('reuse extend (warning) · duplicates 2 (warning)');
     expect(toolMetaSummary({duplicationAudit: {status: 'unresolved', matches: []}}))
       .toBe('duplicates incomplete');
+    expect(toolMetaSummary({duplicationSuppression: {matchId: 'abcdef0123456789abcdef01'}}))
+      .toBe('duplicate abcdef01 suppressed');
   });
 
   it('keeps one Contract row and removes it after acceptance', () => {

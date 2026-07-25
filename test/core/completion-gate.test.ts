@@ -3,6 +3,7 @@ import {
   buildRunCompletion,
   captureVerification,
   classifyVerificationCommand,
+  completionRecoveryDirective,
 } from '../../src/agent/completion-gate.js';
 import type {SessionAuditEvent, TaskContract, ToolCall, ToolResult} from '../../src/types.js';
 
@@ -252,6 +253,35 @@ describe('completion gate', () => {
       ],
     );
     expect(report).toMatchObject({status: 'unverified', acceptance: {state: 'active', satisfied: 1}});
+  });
+
+  it('attaches warning-only duplication evidence without changing verified status', () => {
+    const verification = captureVerification(
+      shellCall('verify-duplicate', 'npm test'), result('verify-duplicate', true), 1, [],
+    );
+    const report = buildRunCompletion(
+      ['/workspace/src/copy.ts'],
+      verification ? [verification] : [],
+      1,
+      'complete',
+      undefined,
+      [],
+      {
+        enforcement: 'warning', status: 'warning', warningCount: 1,
+        unresolvedCount: 0, suppressedCount: 0,
+        matches: [{
+          matchId: 'abcdef0123456789abcdef01',
+          changedPath: '/workspace/src/copy.ts', changedSymbol: 'copy',
+          candidatePath: '/workspace/src/helper.ts', candidateSymbol: 'helper',
+          kind: 'type-1-or-2', similarity: 1,
+        }],
+      },
+    );
+    expect(report).toMatchObject({
+      status: 'verified',
+      duplication: {enforcement: 'warning', status: 'warning', warningCount: 1},
+    });
+    expect(completionRecoveryDirective(report)).not.toContain('duplication');
   });
 });
 

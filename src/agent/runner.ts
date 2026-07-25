@@ -76,6 +76,11 @@ import {
 } from '../context/context-sources.js';
 import {evaluateReuseGate} from './reuse-gate.js';
 import {auditChangedFunctions} from './duplication-audit.js';
+import {
+  activeDuplicationMatchIds,
+  buildDuplicationCompletion,
+  hasDuplicationActivity,
+} from './duplication-state.js';
 
 export interface AgentRunnerOptions {
   config: MosaicConfig;
@@ -165,6 +170,7 @@ export class AgentRunner {
       await options.onEvent?.(event);
     };
     const changeSequenceAtStart = this.changeSequence;
+    const runStartedAt = new Date().toISOString();
     const runChangedFiles = new Set<string>();
     const verificationEvidence: CapturedVerification[] = [];
     const toolRecovery = new ToolRecoveryController();
@@ -195,6 +201,12 @@ export class AgentRunner {
         mutationTracking,
         activeRunContract,
         this.session.audit ?? [],
+        hasDuplicationActivity(this.session.audit ?? [], runStartedAt)
+          ? buildDuplicationCompletion(
+            this.session.audit ?? [],
+            this.session.duplicationSuppressions ?? [],
+          )
+          : undefined,
       );
       if (completion.acceptance && activeRunContract && activeRunContract.state !== 'draft') {
         activeRunContract.state = completion.acceptance.state;
@@ -333,6 +345,10 @@ export class AgentRunner {
           options.askMode === true,
           contractEnabled,
           this.hasReadableToolArtifact(),
+          activeDuplicationMatchIds(
+            this.session.audit ?? [],
+            this.session.duplicationSuppressions ?? [],
+          ).size > 0,
         );
         const estimatedInputTokens = estimateMessages(messages) + estimateToolDefinitions(visibleTools);
         if (availableTokens <= 0 || estimatedInputTokens >= availableTokens) {
@@ -647,6 +663,7 @@ export class AgentRunner {
       toolArtifactStore: this.toolArtifactStore,
       emit,
       ...(options.signal ? {signal: options.signal} : {}),
+      toolCallId: call.id,
     };
     try {
       let reuseReceipt: Awaited<ReturnType<typeof evaluateReuseGate>>['receipt'];
@@ -702,11 +719,23 @@ export class AgentRunner {
       throwIfAborted(options.signal);
       const execution = await tool.execute(call.arguments, toolExecutionContext);
       const changedFiles = await this.acceptChangedFiles(execution.changedFiles ?? []);
+      const activeDuplicateFunctions = new Set(
+        buildDuplicationCompletion(
+          this.session.audit ?? [],
+          [],
+        )?.matches.map((match) => `${match.changedPath}\u0000${match.changedSymbol}`) ?? [],
+      );
+      const activeDuplicatePaths = new Set(
+        buildDuplicationCompletion(this.session.audit ?? [], [])?.matches
+          .map((match) => match.changedPath) ?? [],
+      );
       const duplicationAudit = duplicationAuditEnabled
         ? await auditChangedFunctions({
           ...(duplicationBaseline ? {baseline: duplicationBaseline} : {}),
           changedFiles,
           changeSequence: this.changeSequence,
+          recheckFunctions: activeDuplicateFunctions,
+          recheckPaths: activeDuplicatePaths,
         })
         : undefined;
       const tasksBefore = JSON.stringify(this.session.tasks);
@@ -1305,11 +1334,13 @@ function visibleToolDefinitions(
   askMode: boolean,
   contractEnabled: boolean,
   artifactReadAvailable: boolean,
+  duplicationAvailable: boolean,
 ): ReturnType<ToolRegistry['definitions']> {
   return tools.definitions().filter((tool) =>
     (!askMode || tool.category === 'read') &&
     (contractEnabled || tool.name !== 'task_contract') &&
-    (artifactReadAvailable || tool.name !== 'read_tool_artifact'),
+    (artifactReadAvailable || tool.name !== 'read_tool_artifact') &&
+    (duplicationAvailable || tool.name !== 'duplication_audit'),
   );
 }
 

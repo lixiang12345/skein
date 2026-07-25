@@ -7,6 +7,7 @@ import type {
   ToolResult,
   VerificationEvidence,
   VerificationKind,
+  DuplicationCompletionSummary,
 } from '../types.js';
 import {eventsSinceContract} from './task-contract.js';
 import {commandForCall} from '../tools/permissions.js';
@@ -49,6 +50,7 @@ export function buildRunCompletion(
   mutationTracking: 'complete' | 'unknown' = 'complete',
   taskContract?: TaskContract,
   audit: SessionAuditEvent[] = [],
+  duplication?: DuplicationCompletionSummary,
 ): RunCompletion {
   const files = [...new Set(changedFiles)];
   const acceptance = taskContract
@@ -63,6 +65,7 @@ export function buildRunCompletion(
         ? `Workspace changes were observed, but a dynamic shell command prevented complete mutation tracking for ${fileCount(files.length)}.`
         : 'A dynamic shell command may have changed workspace files, but reliable mutation tracking was unavailable.',
       mutationTracking,
+      ...(duplication ? {duplication} : {}),
       ...(acceptance ? {acceptance: acceptanceForCompletion(acceptance, 'unverified')} : {}),
     };
   }
@@ -74,6 +77,7 @@ export function buildRunCompletion(
         checks: [],
         detail: acceptanceDetail(acceptance),
         acceptance: acceptanceForCompletion(acceptance, 'unverified'),
+        ...(duplication ? {duplication} : {}),
       };
     }
     return {
@@ -82,6 +86,7 @@ export function buildRunCompletion(
       checks: [],
       detail: 'No workspace files changed in this run.',
       ...(acceptance ? {acceptance: acceptanceForCompletion(acceptance, 'no_changes')} : {}),
+      ...(duplication ? {duplication} : {}),
     };
   }
 
@@ -99,6 +104,7 @@ export function buildRunCompletion(
       checks,
       detail: `No successful verification was recorded after the last change to ${fileCount(files.length)}.`,
       ...(acceptance ? {acceptance: acceptanceForCompletion(acceptance, 'unverified')} : {}),
+      ...(duplication ? {duplication} : {}),
     };
   }
   const failures = checks.filter((check) => !check.ok);
@@ -109,6 +115,7 @@ export function buildRunCompletion(
       checks,
       detail: `${failures.length} of ${checks.length} current verification ${checks.length === 1 ? 'check' : 'checks'} failed.`,
       ...(acceptance ? {acceptance: acceptanceForCompletion(acceptance, 'verification_failed')} : {}),
+      ...(duplication ? {duplication} : {}),
     };
   }
   if (acceptance && acceptanceUnresolved(acceptance)) {
@@ -118,6 +125,7 @@ export function buildRunCompletion(
       checks,
       detail: acceptanceDetail(acceptance),
       acceptance: acceptanceForCompletion(acceptance, 'unverified'),
+      ...(duplication ? {duplication} : {}),
     };
   }
   return {
@@ -126,6 +134,7 @@ export function buildRunCompletion(
     checks,
     detail: `${checks.length} current verification ${checks.length === 1 ? 'check' : 'checks'} passed for ${fileCount(files.length)}.`,
     ...(acceptance ? {acceptance: acceptanceForCompletion(acceptance, 'verified')} : {}),
+    ...(duplication ? {duplication} : {}),
   };
 }
 

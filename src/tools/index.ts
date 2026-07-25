@@ -10,6 +10,7 @@ import {shellTool} from './shell.js';
 import {taskTool} from './task.js';
 import {taskContractTool} from './task-contract.js';
 import {workingMemoryTool} from './working-memory.js';
+import {duplicationTool} from './duplication.js';
 import {writeFileTool} from './write.js';
 
 export interface DefaultToolRegistryOptions {
@@ -31,6 +32,7 @@ export function createDefaultToolRegistry(
     gitTool,
     taskTool,
     taskContractTool,
+    duplicationTool,
     workingMemoryTool,
   ]);
 }

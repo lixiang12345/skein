@@ -92,7 +92,7 @@ To build, verify, and install a local package artifact from this checkout:
 
 ```bash
 npm run verify:package -- --output-dir artifacts/package
-npm install -g ./artifacts/package/skein-code-cli-0.3.15.tgz
+npm install -g ./artifacts/package/skein-code-cli-0.3.16.tgz
 ```
 
 To install the published package from npm:

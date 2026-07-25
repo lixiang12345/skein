@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.15",
+  "version": "0.3.16",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,6 +16,9 @@
   },
   "skein": {
     "releaseNotes": [
+      "Duplication warnings now aggregate into the single completion receipt without changing verified status",
+      "Exact match ids support bounded, reason-coded suppression with audit and credential/code-block safeguards",
+      "Duplication audit tools are disclosed only when active warnings exist and repaired paths clear stale matches",
       "Warning-only TS/JS duplication audit compares new functions with the pre-write index generation",
       "Deterministic Type-1/2 and Type-3 receipts retain only hashes, locations, scores, and bounded counts",
       "Ordinary edits, renames, moves, deletions, small functions, tests, generated paths, and failed writes stay quiet",

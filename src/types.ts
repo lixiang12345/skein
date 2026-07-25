@@ -301,6 +301,8 @@ export interface DuplicationAuditReceipt {
   checkedFunctions: number;
   skippedSmallFunctions: number;
   matches: Array<{
+    /** Added in session schema 0.3.16; older 0.3.15 receipts omit it. */
+    matchId?: string;
     changedPath: string;
     changedSymbol: string;
     candidatePath: string;
@@ -309,6 +311,23 @@ export interface DuplicationAuditReceipt {
     similarity: number;
   }>;
   rationale: string;
+}
+
+export interface DuplicationSuppressionReceipt {
+  matchId: string;
+  reasonCode: 'separate-boundary' | 'protocol-required' | 'generated-contract' | 'false-positive' | 'other';
+  reason: string;
+  createdAt: string;
+  toolCallId: string;
+}
+
+export interface DuplicationCompletionSummary {
+  enforcement: 'warning';
+  status: 'clear' | 'warning' | 'unresolved' | 'suppressed';
+  warningCount: number;
+  unresolvedCount: number;
+  suppressedCount: number;
+  matches: Array<DuplicationAuditReceipt['matches'][number] & {matchId: string}>;
 }
 
 export type ContextBudgetTier = 'none' | 'focused' | 'standard' | 'broad' | 'maximum';
@@ -468,6 +487,7 @@ export interface RunCompletion {
   checks: VerificationEvidence[];
   detail: string;
   mutationTracking?: 'complete' | 'unknown';
+  duplication?: DuplicationCompletionSummary;
   acceptance?: {
     state: TaskContractState;
     total: number;
@@ -543,6 +563,7 @@ export interface Session {
   contextSources?: ContextSource[];
   toolArtifacts?: ToolArtifactReference[];
   taskContract?: TaskContract;
+  duplicationSuppressions?: DuplicationSuppressionReceipt[];
   lastRun?: SessionRunRecord;
   /** Recent privacy-safe request receipts; no prompt or source text is retained. */
   tokenLedger?: TokenLedgerEntry[];

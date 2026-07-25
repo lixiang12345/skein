@@ -263,9 +263,17 @@ describe('AgentRunner', () => {
       event.type === 'tool_result' && event.result.name === 'write_file');
     expect(result?.result.metadata?.duplicationAudit).toMatchObject({
       status: 'warning', baselineGeneration: 'g-before', warningOnly: true,
-      matches: [{kind: 'type-1-or-2', candidateSymbol: 'original', changedSymbol: 'copy'}],
+      matches: [{
+        matchId: expect.stringMatching(/^[a-f0-9]{24}$/),
+        kind: 'type-1-or-2', candidateSymbol: 'original', changedSymbol: 'copy',
+      }],
     });
     expect(result?.result.content).toContain('Duplication audit (warning-only)');
+    expect(runner.getSession().lastRun?.duplication).toMatchObject({
+      enforcement: 'warning', status: 'warning', warningCount: 1,
+    });
+    expect(provider.seenTools[0]).not.toContain('duplication_audit');
+    expect(provider.seenTools[1]).toContain('duplication_audit');
   });
 
   it('does not emit a duplication receipt or refresh the index after a failed write', async () => {

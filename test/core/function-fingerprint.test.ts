@@ -122,7 +122,10 @@ ${body('located', 'values', 10).trimStart()}`;
       });
       expect(receipt).toMatchObject({
         status: 'warning', warningOnly: true, baselineGeneration: 'g-before',
-        matches: [{kind: 'type-1-or-2', candidateSymbol: 'original', changedSymbol: 'copy'}],
+        matches: [{
+          matchId: expect.stringMatching(/^[a-f0-9]{24}$/),
+          kind: 'type-1-or-2', candidateSymbol: 'original', changedSymbol: 'copy',
+        }],
       });
       expect(JSON.stringify(receipt)).not.toContain('invalid total');
       expect(JSON.stringify(receipt)).not.toContain('renamed');
@@ -216,6 +219,49 @@ ${body('located', 'values', 10).trimStart()}`;
         baseline: {generation: 'rename', functions: baseline},
         changedFiles: [path], changeSequence: 6,
       })).resolves.toBeUndefined();
+    } finally {
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
+  it('returns clear when an active warning path is rechecked after repair', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-duplicate-recheck-'));
+    try {
+      const path = join(root, 'repair.ts');
+      const baseline = extractFunctionFingerprints(path, body('before', 'values', 10)).map(contentFree);
+      await writeFile(path, body('before', 'values', 10, `
+  const sorted = values.slice().sort((left, right) => left - right);
+  const unique = sorted.filter((item, index) => sorted.indexOf(item) === index);
+  if (unique.length > 100) unique.reverse();
+  return {values: unique, total: unique.length};
+`));
+      const receipt = await auditChangedFunctions({
+        baseline: {generation: 'repair', functions: baseline},
+        changedFiles: [path], changeSequence: 11, recheckFunctions: new Set([`${path}\u0000before`]),
+      });
+      expect(receipt).toMatchObject({status: 'clear', checkedFunctions: 1, matches: []});
+    } finally {
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
+  it('clears an active warning when its function is deleted or becomes small', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-duplicate-clear-small-'));
+    try {
+      const path = join(root, 'repair.ts');
+      const baseline = extractFunctionFingerprints(path, body('before', 'values', 10)).map(contentFree);
+      await writeFile(path, 'export function before() { return 1; }\n');
+      await expect(auditChangedFunctions({
+        baseline: {generation: 'small', functions: baseline},
+        changedFiles: [path], changeSequence: 12,
+        recheckPaths: new Set([path]), recheckFunctions: new Set([`${path}\u0000before`]),
+      })).resolves.toMatchObject({status: 'clear', skippedSmallFunctions: 1});
+      await rm(path);
+      await expect(auditChangedFunctions({
+        baseline: {generation: 'deleted', functions: baseline},
+        changedFiles: [path], changeSequence: 13,
+        recheckPaths: new Set([path]), recheckFunctions: new Set([`${path}\u0000before`]),
+      })).resolves.toMatchObject({status: 'clear', checkedFunctions: 0});
     } finally {
       await rm(root, {recursive: true, force: true});
     }

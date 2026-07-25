@@ -98,6 +98,16 @@ exact hash, and winnowed hashes. The generation cache is cleared on load, full
 build, targeted upsert, and deletion. Audit receipts never retain source,
 normalized tokens, literal contents, prompts, or raw retrieval failures.
 
+Duplication findings are folded into the existing completion record rather than
+creating a parallel completion state. The enforcement is explicitly
+warning-only until fixture benchmarks establish the required precision. Active
+matches receive stable, bounded ids; the optional `duplication_audit` read tool
+is exposed only while unsuppressed findings exist. Suppression is exact-match,
+reason-coded, and persisted as a content-free audit receipt. Repaired/deleted/
+small functions produce a `clear` receipt for paths that previously carried an
+active finding, so the summary cannot retain stale warnings. Legacy receipts
+without ids remain readable and are never suppressible.
+
 ### Prompt layers
 
 The runner keeps the cacheable system prefix separate from mutable task state:

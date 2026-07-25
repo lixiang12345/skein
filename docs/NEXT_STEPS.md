@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.15`.
+- Current repository version: `0.3.16`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -41,8 +41,8 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.15.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.15.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.16.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.16.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
@@ -57,7 +57,7 @@ short-height case. The current full-suite count is recorded from the latest
 ### P0-D: Warning-only repository reuse and duplication audit
 
 Version `0.3.14` added the prompt ladder and pre-write `ReuseReceipt`. Version
-`0.3.15` adds a post-write deterministic audit for ordinary TS/TSX/JS/JSX/MJS/
+`0.3.15` added a post-write deterministic audit for ordinary TS/TSX/JS/JSX/MJS/
 CJS functions. The audit captures a content-free baseline before mutation,
 normalizes identifiers plus literals, uses exact hashes and 10-token
 shingle/winnowing Jaccard matching, and runs before changed-path index refresh.
@@ -70,6 +70,16 @@ Type-1/2 and Type-3 remain warning-only; unavailable evidence is `unresolved`,
 never a false pass. The next slice is completion-gate suppression UX and
 deterministic benchmark/threshold calibration. Type-4 semantic equivalence is
 not promised.
+
+Version `0.3.16` keeps the same warning-only enforcement while integrating
+duplication summaries into the single completion receipt and every output
+surface. Active matches receive stable 24-character ids. The read-only
+`duplication_audit` tool is disclosed only when unsuppressed matches exist and
+can suppress one exact match with a reason code plus a bounded explanation;
+wildcard/global suppression, credentials, and code-block reasons are rejected.
+Suppression is an audit event, never a verification bypass. A repaired,
+deleted, or below-threshold function emits a clear receipt so old warnings do
+not persist. Older `0.3.15` receipts without match ids remain readable.
 
 ### P0: Continuous Integration And Release Reproducibility
 

@@ -221,6 +221,7 @@ describe('HeadlessReporter', () => {
       checkedFunctions: 1,
       skippedSmallFunctions: 0,
       matches: [{
+        matchId: 'abcdef0123456789abcdef01',
         changedPath: '/tmp/reporter-test/copy.ts', changedSymbol: 'copy',
         candidatePath: '/tmp/reporter-test/helper.ts', candidateSymbol: 'helper',
         kind: 'type-1-or-2' as const, similarity: 1,
@@ -305,5 +306,23 @@ describe('HeadlessReporter', () => {
       if (previous === undefined) delete process.env.SKEIN_GLYPHS;
       else process.env.SKEIN_GLYPHS = previous;
     }
+  });
+
+  it('prints warning-only duplication status without downgrading verified completion', () => {
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const reporter = new HeadlessReporter({format: 'text', color: false});
+    reporter.onEvent({
+      type: 'done', reason: 'completed',
+      completion: {
+        status: 'verified', changedFiles: ['/tmp/reporter-test/copy.ts'], checks: [],
+        detail: 'Verification passed.',
+        duplication: {
+          enforcement: 'warning', status: 'warning', warningCount: 1,
+          unresolvedCount: 0, suppressedCount: 0, matches: [],
+        },
+      },
+    });
+    expect(stderr.mock.calls.map(([chunk]) => String(chunk)).join(''))
+      .toContain('verified · Verification passed. · duplication warning (1 warning, 0 incomplete, 0 suppressed)');
   });
 });

@@ -197,20 +197,24 @@ export class HeadlessReporter {
     if (!completion || completion.status === 'no_changes') return;
     const checks = completion.checks.map((check) => check.command).join(', ');
     const suffix = checks ? ` ${this.glyphs.separator} ${checks}` : '';
+    const duplication = completion.duplication;
+    const duplicateSuffix = duplication
+      ? ` ${this.glyphs.separator} duplication ${duplication.status} (${duplication.warningCount} warning, ${duplication.unresolvedCount} incomplete, ${duplication.suppressedCount} suppressed)`
+      : '';
     if (completion.status === 'verified') {
       process.stderr.write(this.paint.green(
-        `${this.glyphs.success} verified ${this.glyphs.separator} ${completion.detail}${suffix}\n`,
+        `${this.glyphs.success} verified ${this.glyphs.separator} ${completion.detail}${suffix}${duplicateSuffix}\n`,
       ));
       return;
     }
     if (completion.status === 'verification_failed') {
       process.stderr.write(this.paint.red(
-        `${this.glyphs.error} verification failed ${this.glyphs.separator} ${completion.detail}${suffix}\n`,
+        `${this.glyphs.error} verification failed ${this.glyphs.separator} ${completion.detail}${suffix}${duplicateSuffix}\n`,
       ));
       return;
     }
     process.stderr.write(this.paint.yellow(
-      `${this.glyphs.warning} unverified ${this.glyphs.separator} ${completion.detail}\n`,
+      `${this.glyphs.warning} unverified ${this.glyphs.separator} ${completion.detail}${duplicateSuffix}\n`,
     ));
   }
 }

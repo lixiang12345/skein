@@ -68,6 +68,16 @@ const reuseReceiptSchema = z.object({
   warningOnly: z.literal(true),
 }).strict();
 
+const duplicationMatchSchema = z.object({
+  matchId: z.string().regex(/^[a-f0-9]{24}$/u).optional(),
+  changedPath: z.string(),
+  changedSymbol: z.string(),
+  candidatePath: z.string(),
+  candidateSymbol: z.string(),
+  kind: z.enum(['type-1-or-2', 'type-3']),
+  similarity: z.number().min(0).max(1),
+}).strict();
+
 const duplicationAuditSchema = z.object({
   baselineGeneration: z.string().min(1),
   changeSequence: z.number().int().nonnegative(),
@@ -75,15 +85,16 @@ const duplicationAuditSchema = z.object({
   warningOnly: z.literal(true),
   checkedFunctions: z.number().int().nonnegative(),
   skippedSmallFunctions: z.number().int().nonnegative(),
-  matches: z.array(z.object({
-    changedPath: z.string(),
-    changedSymbol: z.string(),
-    candidatePath: z.string(),
-    candidateSymbol: z.string(),
-    kind: z.enum(['type-1-or-2', 'type-3']),
-    similarity: z.number().min(0).max(1),
-  }).strict()).max(8),
+  matches: z.array(duplicationMatchSchema).max(8),
   rationale: z.string().max(500),
+}).strict();
+
+const duplicationSuppressionSchema = z.object({
+  matchId: z.string().regex(/^[a-f0-9]{24}$/u),
+  reasonCode: z.enum(['separate-boundary', 'protocol-required', 'generated-contract', 'false-positive', 'other']),
+  reason: z.string().min(12).max(240),
+  createdAt: z.string().datetime(),
+  toolCallId: z.string().min(1).max(512),
 }).strict();
 
 const auditMetadataSchema = z.record(z.string(), z.unknown()).superRefine((metadata, ctx) => {
@@ -94,6 +105,15 @@ const auditMetadataSchema = z.record(z.string(), z.unknown()).superRefine((metad
   const duplication = metadata.duplicationAudit;
   if (duplication !== undefined && !duplicationAuditSchema.safeParse(duplication).success) {
     ctx.addIssue({code: 'custom', message: 'Invalid duplication audit receipt'});
+  }
+  const suppression = metadata.duplicationSuppression;
+  if (suppression !== undefined && !duplicationSuppressionSchema.safeParse(suppression).success) {
+    ctx.addIssue({code: 'custom', message: 'Invalid duplication suppression receipt'});
+  }
+  const activeMatches = metadata.activeDuplicationMatches;
+  if (activeMatches !== undefined && !z.array(z.string().regex(/^[a-f0-9]{24}$/u)).max(8)
+    .safeParse(activeMatches).success) {
+    ctx.addIssue({code: 'custom', message: 'Invalid active duplication matches'});
   }
 });
 
@@ -139,6 +159,16 @@ const lastRunSchema = z.object({
   checks: z.array(verificationEvidenceSchema),
   detail: z.string(),
   mutationTracking: z.enum(['complete', 'unknown']).optional(),
+  duplication: z.object({
+    enforcement: z.literal('warning'),
+    status: z.enum(['clear', 'warning', 'unresolved', 'suppressed']),
+    warningCount: z.number().int().nonnegative(),
+    unresolvedCount: z.number().int().nonnegative(),
+    suppressedCount: z.number().int().nonnegative(),
+    matches: z.array(duplicationMatchSchema.extend({
+      matchId: z.string().regex(/^[a-f0-9]{24}$/u),
+    })).max(8),
+  }).strict().optional(),
   acceptance: z.object({
     state: z.enum(['draft', 'active', 'satisfied', 'blocked']),
     total: z.number().int().nonnegative(),
@@ -208,6 +238,7 @@ const sessionSchema = z.object({
   contextSources: z.array(contextSourceSchema).max(64).optional(),
   toolArtifacts: z.array(toolArtifactSchema).max(200).optional(),
   taskContract: taskContractSchema.optional(),
+  duplicationSuppressions: z.array(duplicationSuppressionSchema).max(64).optional(),
   lastRun: lastRunSchema.optional(),
   usage: z.object({
     inputTokens: z.number().nonnegative(),

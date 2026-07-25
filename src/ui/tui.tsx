@@ -458,6 +458,10 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         refreshSession();
         if (event.completion && event.completion.status !== 'no_changes') {
           const checks = event.completion.checks.map((check) => check.command).join(` ${separator} `);
+          const duplication = event.completion.duplication;
+          const duplicateDetail = duplication
+            ? `${separator} duplication ${duplication.status} (${duplication.warningCount} warning, ${duplication.unresolvedCount} incomplete, ${duplication.suppressedCount} suppressed)`
+            : '';
           append({
             id: nextId(),
             kind: 'notice',
@@ -468,10 +472,10 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
                 ? 'warning'
                 : 'error',
             text: event.completion.status === 'verified'
-              ? `Verified${separator}${event.completion.detail}${checks ? `${separator}${checks}` : ''}`
+              ? `Verified${separator}${event.completion.detail}${checks ? `${separator}${checks}` : ''}${duplicateDetail}`
               : event.completion.status === 'verification_failed'
-                ? `Verification failed${separator}${event.completion.detail}${checks ? `${separator}${checks}` : ''}`
-                : `Unverified${separator}${event.completion.detail}`,
+                ? `Verification failed${separator}${event.completion.detail}${checks ? `${separator}${checks}` : ''}${duplicateDetail}`
+                : `Unverified${separator}${event.completion.detail}${duplicateDetail}`,
           });
         }
         if (event.reason !== 'completed' &&

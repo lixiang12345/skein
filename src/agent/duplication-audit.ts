@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import type {
   DuplicationAuditReceipt,
@@ -18,6 +19,8 @@ export async function auditChangedFunctions(input: {
   baseline?: DuplicationBaseline;
   changedFiles: string[];
   changeSequence: number;
+  recheckFunctions?: ReadonlySet<string>;
+  recheckPaths?: ReadonlySet<string>;
 }): Promise<DuplicationAuditReceipt | undefined> {
   const auditableFiles = input.changedFiles.filter(supportsFunctionFingerprintPath);
   if (!auditableFiles.length) return undefined;
@@ -41,13 +44,19 @@ export async function auditChangedFunctions(input: {
   }
 
   const currentFunctions = reports.flatMap((report) => report.functions.map(withoutTokens));
-  if (!currentFunctions.length) return undefined;
+  if (!currentFunctions.length) {
+    return auditableFiles.some((path) => input.recheckPaths?.has(path)) && input.baseline
+      ? clear(input.baseline.generation, input.changeSequence, skippedSmallFunctions)
+      : undefined;
+  }
   if (!input.baseline) return unresolved(input.changeSequence);
   const lookup = createBaselineLookup(input.baseline.functions);
   const previousByCurrent = matchCurrentFunctions(input.baseline.functions, currentFunctions);
   const added = currentFunctions.flatMap((current) => {
     const previous = previousByCurrent.get(locationIdentity(current));
-    return !previous || current.tokenCount >= previous.tokenCount * 1.5
+    const recheck = input.recheckFunctions?.has(identity(current)) ||
+      (previous !== undefined && input.recheckFunctions?.has(identity(previous)));
+    return !previous || current.tokenCount >= previous.tokenCount * 1.5 || recheck
       ? [{current, previous}]
       : [];
   });
@@ -64,6 +73,7 @@ export async function auditChangedFunctions(input: {
     }
     if (!best) continue;
     matches.push({
+      matchId: matchId(input.baseline.generation, input.changeSequence, item, best.candidate, best.similarity),
       changedPath: item.path,
       changedSymbol: item.symbol,
       candidatePath: best.candidate.path,
@@ -86,6 +96,23 @@ export async function auditChangedFunctions(input: {
     rationale: bounded.length
       ? `${bounded.length} deterministic duplicate candidate${bounded.length === 1 ? '' : 's'} found; review for reuse.`
       : 'No deterministic duplicate candidate exceeded the warning threshold.',
+  };
+}
+
+function clear(
+  baselineGeneration: string,
+  changeSequence: number,
+  skippedSmallFunctions: number,
+): DuplicationAuditReceipt {
+  return {
+    baselineGeneration,
+    changeSequence,
+    status: 'clear',
+    warningOnly: true,
+    checkedFunctions: 0,
+    skippedSmallFunctions,
+    matches: [],
+    rationale: 'No active deterministic duplicate candidate remains on the rechecked path.',
   };
 }
 
@@ -207,4 +234,22 @@ function unresolved(changeSequence: number, generation = 'unavailable'): Duplica
 
 function round(value: number): number {
   return Math.round(value * 1_000) / 1_000;
+}
+
+function matchId(
+  generation: string,
+  changeSequence: number,
+  changed: FunctionFingerprint,
+  candidate: FunctionFingerprint,
+  similarity: number,
+): string {
+  return createHash('sha256').update([
+    generation,
+    String(changeSequence),
+    changed.path,
+    changed.symbol,
+    candidate.path,
+    candidate.symbol,
+    similarity === 1 ? 'type-1-or-2' : 'type-3',
+  ].join('\u0000')).digest('hex').slice(0, 24);
 }

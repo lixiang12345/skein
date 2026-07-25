@@ -56,6 +56,7 @@ describe('sessions and checkpoints', () => {
           checkedFunctions: 1,
           skippedSmallFunctions: 0,
           matches: [{
+            matchId: '0123456789abcdef01234567',
             changedPath: join(root, 'copy.ts'),
             changedSymbol: 'copy',
             candidatePath: join(root, 'helper.ts'),
@@ -67,12 +68,29 @@ describe('sessions and checkpoints', () => {
         },
       },
     });
+    session.duplicationSuppressions = [{
+      matchId: '0123456789abcdef01234567',
+      reasonCode: 'separate-boundary',
+      reason: 'Separate trust boundaries require this implementation.',
+      createdAt: '2026-07-25T00:00:01.000Z',
+      toolCallId: 'suppress-copy',
+    }];
+    session.lastRun = {
+      status: 'verified', changedFiles: [join(root, 'copy.ts')], checks: [],
+      detail: 'Verification passed.', reason: 'completed', finishedAt: '2026-07-25T00:00:02.000Z',
+      duplication: {
+        enforcement: 'warning', status: 'suppressed', warningCount: 0,
+        unresolvedCount: 0, suppressedCount: 1, matches: [],
+      },
+    };
     await store.save(session);
 
     const loaded = await store.load(session.id);
     expect(loaded.audit?.[0]?.metadata?.duplicationAudit).toEqual(
       session.audit?.[0]?.metadata?.duplicationAudit,
     );
+    expect(loaded.duplicationSuppressions).toEqual(session.duplicationSuppressions);
+    expect(loaded.lastRun?.duplication).toEqual(session.lastRun.duplication);
     const persisted = await readFile(join(store.directory, `${session.id}.json`), 'utf8');
     expect(persisted).not.toContain('function helper');
     expect(persisted).not.toContain('normalizedTokens');
@@ -101,6 +119,34 @@ describe('sessions and checkpoints', () => {
     const loaded = await new SessionStore(root, directory).load('legacy-039');
     expect(loaded.taskContract).toBeUndefined();
     expect(loaded.lastRun).toBeUndefined();
+  });
+
+  it('loads legacy 0.3.15 duplication receipts without match ids', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-session-legacy-duplication-'));
+    const directory = join(root, 'sessions');
+    roots.push(root);
+    await mkdir(directory, {recursive: true});
+    const session = createSession({
+      workspace: root, model: 'test', provider: 'compatible', id: 'legacy-duplication-0315',
+    });
+    session.audit?.push({
+      id: 'legacy-audit', createdAt: '2026-07-25T00:00:00.000Z',
+      type: 'tool', toolCallId: 'legacy-write', tool: 'write_file', outcome: 'success',
+      metadata: {duplicationAudit: {
+        baselineGeneration: 'legacy', changeSequence: 1, status: 'warning', warningOnly: true,
+        checkedFunctions: 1, skippedSmallFunctions: 0, rationale: 'Legacy warning.',
+        matches: [{
+          changedPath: join(root, 'copy.ts'), changedSymbol: 'copy',
+          candidatePath: join(root, 'helper.ts'), candidateSymbol: 'helper',
+          kind: 'type-1-or-2', similarity: 1,
+        }],
+      }},
+    });
+    await writeFile(join(directory, `${session.id}.json`), `${JSON.stringify(session)}\n`);
+    const loaded = await new SessionStore(root, directory).load(session.id);
+    expect(loaded.audit?.[0]?.metadata?.duplicationAudit).toMatchObject({
+      baselineGeneration: 'legacy', matches: [{changedSymbol: 'copy'}],
+    });
   });
 
   it('restores file bytes without touching the project Git history', async () => {
