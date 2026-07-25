@@ -125,6 +125,19 @@ const context: ContextProvider = {
   async search() { return []; },
 };
 
+function addCompactionHistory(session: ReturnType<typeof createSession>): void {
+  for (let index = 0; index < 7; index += 1) {
+    session.messages.push({
+      id: `compaction-user-${index}`, role: 'user', content: `request ${index}`,
+      createdAt: '2026-07-25T00:00:00.000Z',
+    });
+    session.messages.push({
+      id: `compaction-assistant-${index}`, role: 'assistant', content: `${'x'.repeat(400)} ${index}`,
+      createdAt: '2026-07-25T00:00:00.000Z',
+    });
+  }
+}
+
 describe('AgentRunner', () => {
   it('executes a tool, persists usage, and creates a checkpoint', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mosaic-runner-'));
@@ -194,6 +207,105 @@ describe('AgentRunner', () => {
     expect(result?.result.metadata).toMatchObject({
       contextRefresh: {status: 'current', generation: 'fresh-generation', paths: 1},
     });
+  });
+
+  it('accounts actual and estimated context compaction usage with content-free receipts', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-runner-compaction-usage-'));
+    roots.push(root);
+    const actualSession = createSession({workspace: root, model: 'test-model', provider: 'compatible'});
+    addCompactionHistory(actualSession);
+    const actualProvider = new QueueProvider([{
+      content: 'Narrative handoff.', toolCalls: [],
+      usage: {inputTokens: 120, outputTokens: 18, cachedInputTokens: 12, reasoningTokens: 4},
+    }]);
+    const actualRunner = new AgentRunner({
+      config: config(root), provider: actualProvider, contextEngine: context,
+      session: actualSession, persistSession: false,
+    });
+
+    const actual = await actualRunner.compactContext();
+
+    expect(actual.receipt).toMatchObject({
+      status: 'compacted', inputSource: 'actual', outputSource: 'actual',
+      actual: {inputTokens: 120, outputTokens: 18, cachedInputTokens: 12, reasoningTokens: 4},
+    });
+    expect(actualSession.usage).toMatchObject({
+      inputTokens: 120, outputTokens: 18, actualInputTokens: 120, actualOutputTokens: 18,
+      actualCachedInputTokens: 12, actualReasoningTokens: 4,
+      inputSource: 'actual', outputSource: 'actual', source: 'actual',
+    });
+    expect(JSON.stringify(actualSession.contextCompactionReceipts)).not.toContain('Narrative handoff');
+
+    const estimatedSession = createSession({workspace: root, model: 'test-model', provider: 'compatible'});
+    addCompactionHistory(estimatedSession);
+    const estimatedRunner = new AgentRunner({
+      config: config(root),
+      provider: new QueueProvider([{content: 'Estimated handoff.', toolCalls: []}]),
+      contextEngine: context,
+      session: estimatedSession,
+      persistSession: false,
+    });
+
+    const estimated = await estimatedRunner.compactContext();
+
+    expect(estimated.receipt).toMatchObject({inputSource: 'estimated', outputSource: 'estimated'});
+    expect(estimatedSession.usage).toMatchObject({
+      inputTokens: estimated.receipt.estimated.inputTokens,
+      outputTokens: estimated.receipt.estimated.outputTokens,
+      estimatedInputTokens: estimated.receipt.estimated.inputTokens,
+      estimatedOutputTokens: estimated.receipt.estimated.outputTokens,
+      inputSource: 'estimated', outputSource: 'estimated', source: 'estimated',
+    });
+  });
+
+  it('reports prompt partitions from the post-compaction state', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-runner-auto-compaction-prompt-'));
+    roots.push(root);
+    const session = createSession({workspace: root, model: 'test-model', provider: 'compatible'});
+    for (let index = 0; index < 7; index += 1) {
+      session.messages.push({
+        id: `auto-user-${index}`, role: 'user', content: `request ${index} ${'u'.repeat(8_000)}`,
+        createdAt: '2026-07-25T00:00:00.000Z',
+      });
+      session.messages.push({
+        id: `auto-assistant-${index}`, role: 'assistant', content: `response ${index} ${'a'.repeat(8_000)}`,
+        createdAt: '2026-07-25T00:00:00.000Z',
+      });
+    }
+    session.taskContract = {
+      version: 1, state: 'active', objective: 'Complete the long task.',
+      scope: ['workspace'], constraints: [], nonGoals: [],
+      acceptanceCriteria: [{
+        id: 'done', description: 'Task is complete.', required: true,
+        status: 'pending', evidenceRefs: [],
+      }],
+      verificationRequirements: [],
+      createdAt: '2026-07-25T00:00:00.000Z', updatedAt: '2026-07-25T00:00:00.000Z',
+    };
+    const provider = new QueueProvider([
+      {content: 'Compacted narrative.', toolCalls: [], usage: {inputTokens: 100, outputTokens: 10}},
+      {content: 'Current response.', toolCalls: [], usage: {inputTokens: 80, outputTokens: 8}},
+    ]);
+    const events: AgentEvent[] = [];
+    const runnerConfig = config(root);
+    runnerConfig.agent.maxSessionTokens = 100_000;
+    const runner = new AgentRunner({
+      config: runnerConfig, provider, contextEngine: context, session, persistSession: false,
+    });
+
+    await runner.run('continue the long task', {
+      maxTurns: 1,
+      onEvent: (event) => { events.push(event); },
+    });
+
+    const prompt = events.find((event): event is Extract<AgentEvent, {type: 'prompt'}> =>
+      event.type === 'prompt');
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({type: 'context_compacted'}),
+    ]));
+    expect(prompt?.sections).toContain('compaction-facts');
+    expect(prompt?.sections).toContain('session-summary');
+    expect(prompt?.sections).not.toContain('task-contract');
   });
 
   it('attaches a warning-only reuse receipt to the first substantive write', async () => {

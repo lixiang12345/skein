@@ -86,6 +86,35 @@ describe('sessions and checkpoints', () => {
     });
   });
 
+  it('round-trips privacy-safe context compaction receipts', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-session-compaction-receipt-'));
+    roots.push(root);
+    const store = new SessionStore(root);
+    const session = createSession({workspace: root, model: 'test', provider: 'compatible'});
+    session.contextCompactionReceipts = [{
+      id: '00000000-0000-4000-8000-000000000002',
+      recordedAt: '2026-07-25T00:00:00.000Z',
+      mode: 'automatic', status: 'compacted', reason: 'compacted',
+      omittedMessages: 8, compactedThroughMessageId: 'message-8', predictedReuses: 3,
+      estimated: {
+        inputTokens: 900, outputTokens: 120, predictedOutputTokens: 160,
+        outputAllowanceTokens: 1600, omittedTokens: 700,
+        priorSummaryTokens: 20, factsTokens: 100,
+        projectedGrossSavingsTokens: 1800, projectedNetSavingsTokens: 740,
+      },
+      actual: {inputTokens: 850, outputTokens: 110, cachedInputTokens: 100},
+      inputSource: 'actual', outputSource: 'actual', narrative: 'present',
+    }];
+
+    await store.save(session);
+    const loaded = await store.load(session.id);
+
+    expect(loaded.contextCompactionReceipts).toEqual(session.contextCompactionReceipts);
+    const persisted = await readFile(join(store.directory, `${session.id}.json`), 'utf8');
+    expect(persisted).not.toContain('prompt text');
+    expect(persisted).not.toContain('source code');
+  });
+
   it('round-trips content-free duplication audit receipts', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-session-duplication-'));
     roots.push(root);
@@ -171,6 +200,7 @@ describe('sessions and checkpoints', () => {
     const loaded = await new SessionStore(root, directory).load('legacy-039');
     expect(loaded.taskContract).toBeUndefined();
     expect(loaded.lastRun).toBeUndefined();
+    expect(loaded.contextCompactionReceipts).toBeUndefined();
   });
 
   it('loads legacy 0.3.15 duplication receipts without match ids', async () => {

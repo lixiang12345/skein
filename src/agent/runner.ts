@@ -303,11 +303,22 @@ export class AgentRunner {
         await emit({type: 'contract', contract: structuredClone(this.session.taskContract)});
       }
       activeRunContract = contractEnabled ? this.session.taskContract : undefined;
+      let verificationAttempted = false;
+      const maxTurns = options.maxTurns ?? this.config.agent.maxTurns;
+
+      const contextBudget = Math.max(24_000, Math.min(100_000, this.config.context.maxTokens * 3));
+      if (this.contextManager.shouldCompact(this.session, contextBudget)) {
+        const compacted = await this.compactContext(undefined, options.signal, 'automatic');
+        if (compacted.status === 'compacted') {
+          await emit({type: 'context_compacted', ...compacted});
+        }
+      }
       const promptSections = [
         `intent:${turnDirective.intent}`,
         ...(workspaceRules ? ['rules'] : []),
         ...(this.session.workingMemory ? ['working-memory'] : []),
-        ...(contractEnabled ? ['task-contract'] : []),
+        ...(contractEnabled && !this.session.compactedThroughMessageId ? ['task-contract'] : []),
+        ...(this.session.compactedThroughMessageId ? ['compaction-facts'] : []),
         ...(this.session.contextSummary ? ['session-summary'] : []),
         ...(!trivialTurn ? [`context:${packed.engine}`] : []),
         ...(packed.text ? [`code:${packed.engine}`] : []),
@@ -315,14 +326,6 @@ export class AgentRunner {
         ...(augmentation.skills?.length ? [`skills:${augmentation.skills.length}`] : []),
         ...(augmentation.memoryCount ? [`memory:${augmentation.memoryCount}`] : []),
       ];
-      let verificationAttempted = false;
-      const maxTurns = options.maxTurns ?? this.config.agent.maxTurns;
-
-      const contextBudget = Math.max(24_000, Math.min(100_000, this.config.context.maxTokens * 3));
-      if (this.contextManager.shouldCompact(this.session, contextBudget)) {
-        const compacted = await this.compactContext(undefined, options.signal);
-        await emit({type: 'context_compacted', ...compacted});
-      }
 
       for (let turn = 1; turn <= maxTurns; turn += 1) {
         throwIfAborted(options.signal);
@@ -1003,13 +1006,30 @@ export class AgentRunner {
     }
   }
 
-  async compactContext(instructions?: string, signal?: AbortSignal) {
+  async compactContext(
+    instructions?: string,
+    signal?: AbortSignal,
+    mode: 'automatic' | 'manual' = 'manual',
+  ) {
     const result = await this.contextManager.compact(
       this.session,
       this.provider,
       signal,
       instructions,
+      mode,
     );
+    if (result.status === 'compacted') {
+      recordTokenUsage(
+        this.session,
+        result.receipt.actual,
+        result.receipt.estimated.inputTokens,
+        result.receipt.estimated.outputTokens,
+      );
+    }
+    const receipts = this.session.contextCompactionReceipts ??
+      (this.session.contextCompactionReceipts = []);
+    receipts.push(result.receipt);
+    if (receipts.length > 64) receipts.splice(0, receipts.length - 64);
     await this.persist();
     return result;
   }

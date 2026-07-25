@@ -266,6 +266,9 @@ function sessionSummary(session: Session): Record<string, unknown> {
     changedFiles: session.changedFiles,
     ...(session.lastRun ? {lastRun: session.lastRun} : {}),
     ...(session.tokenLedger?.length ? {tokenLedger: session.tokenLedger} : {}),
+    ...(session.contextCompactionReceipts?.length
+      ? {contextCompactionReceipts: session.contextCompactionReceipts}
+      : {}),
     usage: session.usage,
   };
 }

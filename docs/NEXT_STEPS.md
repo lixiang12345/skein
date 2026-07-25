@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.23`.
+- Current repository version: `0.3.24`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -41,8 +41,8 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.23.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.23.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.24.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.24.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
@@ -123,6 +123,20 @@ startup performs zero MCP transport connections and zero remote discovery until
 the model explicitly calls `mcp_activate` for a configured server. The release
 does not add per-server trust scopes, provider billing A/B, or Context
 Compaction 2.0.
+
+Version `0.3.24` completes the Context Compaction 2.0 engineering slice. Each
+handoff rebuilds a deterministic facts envelope from the Task Contract,
+working state, changed files, last-run verification, permission and failure
+audit, retained artifact handles, and bounded older user corrections. Generated
+narrative is fallible and optional; empty or contradictory output cannot erase
+the authoritative facts, and the complete transcript remains persisted.
+Automatic compaction calls the provider only when three predicted future prompt
+reuses yield positive net estimated savings; explicit `/compact` remains a
+manual override. Provider-reported or locally estimated compaction usage is
+included in session totals and a separate content-free receipt. JSON/JSONL and
+the Context Inspector expose the resulting decision without retaining prompt or
+source text. Paid same-model task-success A/B remains required before closing
+P0-E or making a provider-billing savings claim.
 
 ### P0-D: Repository reuse and calibrated duplication enforcement
 

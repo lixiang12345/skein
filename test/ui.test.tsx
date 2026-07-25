@@ -506,6 +506,27 @@ describe('terminal presentation', () => {
     }
   });
 
+  it('shows a facts-only handoff when compaction succeeds without a narrative', () => {
+    const output = renderToString(
+      <ContextInspector
+        status={{
+          pressure: 0.3, messageCount: 6, activeTokens: 1200,
+          summaryTokens: 420, toolTokens: 100, compactedMessages: 8,
+        }}
+        working={undefined}
+        width={40}
+      />,
+      {columns: 40},
+    );
+
+    expect(output).toContain('facts');
+    expect(output).not.toContain('not created');
+    for (const line of output.split('\n')) {
+      expect(displayWidth(line), `40-column facts-only context row overflowed: ${JSON.stringify(line)}`)
+        .toBeLessThanOrEqual(40);
+    }
+  });
+
   it('keeps an empty transcript linear instead of drawing a large viewport card', () => {
     const output = renderToString(<Timeline items={[]} />);
     expect(output).toContain('Start with a request, @file, or /help.');

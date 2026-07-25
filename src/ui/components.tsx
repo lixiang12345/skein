@@ -1245,12 +1245,13 @@ export function ContextInspector({status, working, summary, width, memory, conne
 }) {
   const theme = useTheme();
   const glyphs = resolveGlyphs(glyphMode);
+  const hasCompactedContext = status.compactedMessages > 0 || Boolean(summary);
   if (minimal) {
     const rowWidth = safeWidth(width);
     const padding = rowWidth >= 4 ? 2 : 0;
     const innerWidth = Math.max(1, rowWidth - padding);
     const active = `${status.messageCount} msg ${glyphs.separator} ~${formatTokens(status.activeTokens)} tok`;
-    const focus = sanitizeTerminalText(working?.focus || working?.goal || (summary ? 'summary ready' : 'not established'))
+    const focus = sanitizeTerminalText(working?.focus || working?.goal || (hasCompactedContext ? 'handoff ready' : 'not established'))
       .replace(/\s+/g, ' ')
       .trim() || 'not established';
     return (
@@ -1267,7 +1268,7 @@ export function ContextInspector({status, working, summary, width, memory, conne
   const entries: ListEntry[] = [
     {label: 'active', detail: `${status.messageCount} messages ${glyphs.separator} ~${formatTokens(status.activeTokens)} tokens ${glyphs.separator} tools ~${formatTokens(status.toolTokens)}`},
     {label: 'short-term', detail: working ? `${working.focus || working.goal || 'ready'} ${glyphs.separator} ${relativeTime(working.lastUpdatedAt)}` : 'not established'},
-    {label: 'summary', detail: summary ? `~${formatTokens(status.summaryTokens)} tokens ${glyphs.separator} ${status.compactedMessages} compacted` : 'not created'},
+    {label: 'summary', detail: hasCompactedContext ? `~${formatTokens(status.summaryTokens)} tokens ${glyphs.separator} ${status.compactedMessages} compacted${summary ? '' : ` ${glyphs.separator} facts`}` : 'not created'},
     {label: 'long-term', detail: memory ?? `retrieved by relevance ${glyphs.separator} untrusted context`},
   ];
   if (!compact && working?.constraints.length) entries.push({label: `constraints ${working.constraints.length}`, detail: working.constraints.slice(0, 2).join(` ${glyphs.separator} `)});
@@ -1291,7 +1292,7 @@ export function ContextInspector({status, working, summary, width, memory, conne
   const rowWidth = safeWidth(width);
   const innerWidth = Math.max(1, rowWidth - 2);
   const pressureColor = status.pressure >= 0.9 ? theme.error : status.pressure >= 0.75 ? theme.warning : theme.accent;
-  const summaryTokens = summary ? status.summaryTokens : 0;
+  const summaryTokens = hasCompactedContext ? status.summaryTokens : 0;
   const segments: MeterSegment[] = [
     {label: 'active', value: status.activeTokens, color: theme.accent},
     {label: 'tools', value: status.toolTokens, color: theme.assistant},

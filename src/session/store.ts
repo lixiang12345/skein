@@ -220,6 +220,38 @@ const taskContractSchema = z.object({
   auditBoundaryId: z.string().min(1).max(128).optional(),
 }).strict();
 
+const contextCompactionReceiptSchema = z.object({
+  id: z.string().uuid(),
+  recordedAt: z.string().datetime(),
+  mode: z.enum(['automatic', 'manual']),
+  status: z.enum(['compacted', 'skipped']),
+  reason: z.enum(['compacted', 'insufficient-history', 'non-positive-net-savings']),
+  omittedMessages: z.number().int().nonnegative(),
+  compactedThroughMessageId: z.string().optional(),
+  predictedReuses: z.number().int().positive(),
+  estimated: z.object({
+    inputTokens: z.number().int().nonnegative(),
+    outputTokens: z.number().int().nonnegative(),
+    predictedOutputTokens: z.number().int().nonnegative(),
+    outputAllowanceTokens: z.number().int().nonnegative(),
+    omittedTokens: z.number().int().nonnegative(),
+    priorSummaryTokens: z.number().int().nonnegative(),
+    factsTokens: z.number().int().nonnegative(),
+    projectedGrossSavingsTokens: z.number().int().nonnegative(),
+    projectedNetSavingsTokens: z.number().int(),
+  }).strict(),
+  actual: z.object({
+    inputTokens: z.number().int().nonnegative().optional(),
+    outputTokens: z.number().int().nonnegative().optional(),
+    cachedInputTokens: z.number().int().nonnegative().optional(),
+    cacheWriteInputTokens: z.number().int().nonnegative().optional(),
+    reasoningTokens: z.number().int().nonnegative().optional(),
+  }).strict(),
+  inputSource: z.enum(['actual', 'estimated', 'none']),
+  outputSource: z.enum(['actual', 'estimated', 'none']),
+  narrative: z.enum(['present', 'empty', 'not-requested']),
+}).strict();
+
 const sessionSchema = z.object({
   id: sessionIdSchema,
   title: z.string(),
@@ -235,6 +267,7 @@ const sessionSchema = z.object({
   contextSummary: z.string().max(200_000).optional(),
   contextCompactions: z.number().int().nonnegative().optional(),
   compactedThroughMessageId: z.string().optional(),
+  contextCompactionReceipts: z.array(contextCompactionReceiptSchema).max(64).optional(),
   workingMemory: workingMemorySchema.optional(),
   contextSources: z.array(contextSourceSchema).max(64).optional(),
   toolArtifacts: z.array(toolArtifactSchema).max(200).optional(),

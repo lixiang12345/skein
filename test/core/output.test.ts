@@ -257,6 +257,44 @@ describe('HeadlessReporter', () => {
     }
   });
 
+  it('retains content-free compaction receipts in JSON and JSONL session output', () => {
+    const compaction = {
+      id: '00000000-0000-4000-8000-000000000003',
+      recordedAt: '2026-07-25T00:00:00.000Z',
+      mode: 'automatic' as const,
+      status: 'compacted' as const,
+      reason: 'compacted' as const,
+      omittedMessages: 8,
+      compactedThroughMessageId: 'message-8',
+      predictedReuses: 3,
+      estimated: {
+        inputTokens: 800, outputTokens: 100, predictedOutputTokens: 140,
+        outputAllowanceTokens: 1600, omittedTokens: 900,
+        priorSummaryTokens: 0, factsTokens: 80,
+        projectedGrossSavingsTokens: 2040, projectedNetSavingsTokens: 1100,
+      },
+      actual: {inputTokens: 780, outputTokens: 95},
+      inputSource: 'actual' as const,
+      outputSource: 'actual' as const,
+      narrative: 'present' as const,
+    };
+
+    for (const format of ['json', 'stream-json'] as const) {
+      const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+      const reporter = new HeadlessReporter({format});
+      reporter.onEvent({
+        type: 'context_compacted', omittedMessages: 8, summaryTokens: 180,
+        status: 'compacted', reason: 'compacted', receipt: compaction,
+      });
+      reporter.finish({...session, contextCompactionReceipts: [compaction]});
+      const serialized = stdout.mock.calls.map(([chunk]) => String(chunk)).join('');
+      expect(serialized).toContain('contextCompactionReceipts');
+      expect(serialized).toContain('projectedNetSavingsTokens');
+      expect(serialized).not.toContain('private transcript');
+      stdout.mockRestore();
+    }
+  });
+
   it('keeps unresolved Contract acceptance non-successful in JSON', () => {
     const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const reporter = new HeadlessReporter({format: 'json'});

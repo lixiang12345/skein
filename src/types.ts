@@ -241,6 +241,49 @@ export interface TokenLedgerEntry {
   };
 }
 
+export type ContextCompactionMode = 'automatic' | 'manual';
+export type ContextCompactionStatus = 'compacted' | 'skipped';
+export type ContextCompactionReason =
+  | 'compacted'
+  | 'insufficient-history'
+  | 'non-positive-net-savings';
+
+/**
+ * Privacy-safe accounting for a context compaction model request. The receipt
+ * contains only counts, decisions, and provider usage, never transcript text.
+ */
+export interface ContextCompactionReceipt {
+  id: string;
+  recordedAt: string;
+  mode: ContextCompactionMode;
+  status: ContextCompactionStatus;
+  reason: ContextCompactionReason;
+  omittedMessages: number;
+  compactedThroughMessageId?: string;
+  predictedReuses: number;
+  estimated: {
+    inputTokens: number;
+    outputTokens: number;
+    predictedOutputTokens: number;
+    outputAllowanceTokens: number;
+    omittedTokens: number;
+    priorSummaryTokens: number;
+    factsTokens: number;
+    projectedGrossSavingsTokens: number;
+    projectedNetSavingsTokens: number;
+  };
+  actual: {
+    inputTokens?: number;
+    outputTokens?: number;
+    cachedInputTokens?: number;
+    cacheWriteInputTokens?: number;
+    reasoningTokens?: number;
+  };
+  inputSource: 'actual' | 'estimated' | 'none';
+  outputSource: 'actual' | 'estimated' | 'none';
+  narrative: 'present' | 'empty' | 'not-requested';
+}
+
 export interface ToolDefinition {
   name: string;
   description: string;
@@ -599,6 +642,8 @@ export interface Session {
   contextSummary?: string;
   contextCompactions?: number;
   compactedThroughMessageId?: string;
+  /** Recent content-free receipts for compaction decisions and model cost. */
+  contextCompactionReceipts?: ContextCompactionReceipt[];
   workingMemory?: WorkingMemory;
   contextSources?: ContextSource[];
   toolArtifacts?: ToolArtifactReference[];
@@ -633,7 +678,7 @@ export type AgentEvent =
   | {type: 'agent_done'; id: string; profile: string; ok: boolean; summary: string; provider?: string; model?: string; phase?: AgentPhase; durationMs?: number; toolCalls?: number; usage?: {inputTokens: number; outputTokens: number}}
   | {type: 'writer_lane'; id: string; status: WriterLaneStatus; detail: string; files?: string[]; checkpointId?: string}
   | {type: 'workflow'; name: string; step: string; status: TaskStatus}
-  | {type: 'context_compacted'; omittedMessages: number; summaryTokens: number}
+  | {type: 'context_compacted'; omittedMessages: number; summaryTokens: number; status: ContextCompactionStatus; reason: ContextCompactionReason; receipt: ContextCompactionReceipt}
   | {type: 'usage'; inputTokens: number; outputTokens: number; source?: TokenMeasurementSource; inputSource?: TokenMeasurementSource; outputSource?: TokenMeasurementSource; actual?: {inputTokens: number; outputTokens: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; reasoningTokens?: number}; estimated?: {inputTokens: number; outputTokens: number}; receipt?: TokenLedgerEntry}
   | {type: 'error'; error: Error}
   | {type: 'done'; reason: string; completion?: RunCompletion};
