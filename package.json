@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.43",
+  "version": "0.3.44",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,6 +16,8 @@
   },
   "skein": {
     "releaseNotes": [
+      "An opt-in Claude Code writer can now implement one bounded change inside a Skein-owned disposable worktree with safe mode, file-only tools, a pre-request USD cap, hard timeout, cancellation, API review, patch SHA, and live-human integration gates",
+      "Claude writer runs combine a stable writable Profile with a dynamic Review Contract brief, while privacy-safe streamed tool names and counts make progress visible in Team Cockpit without exposing arguments, file content, prompts, or reasoning",
       "Read-only external expert recovery can invoke trusted Codex, Claude, or Grok runtimes with bounded profiles, minimal environments, explicit doctor guidance, and no provider-secret inheritance",
       "External expert runs emit bounded heartbeats and preserve timeout truth, so a child process that exits after cancellation cannot turn a partial report into a successful result",
       "A production-ready zero-dependency Skein website adds the Skein Goose identity, interactive terminal story, responsive and accessible product guidance, privacy-first metadata, deterministic verification, and GitHub Pages deployment",

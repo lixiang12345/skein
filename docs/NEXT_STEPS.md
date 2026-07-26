@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.43`.
+- Current repository version: `0.3.44`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -43,8 +43,8 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.43.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.43.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.44.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.44.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
