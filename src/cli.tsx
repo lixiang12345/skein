@@ -2496,7 +2496,12 @@ function printStatusSummary(
         : chalk.yellow('!');
     process.stdout.write(`${icon} ${name.padEnd(16)} ${dim(detail)}\n`);
   };
-  const keyReady = Boolean(config.model.apiKey) || config.model.provider === 'compatible';
+  const catalogProfiles = config.connectionCatalog?.profiles ?? [];
+  const statusProfile = catalogProfiles.find((profile) => profile.id === config.connectionCatalog?.defaultConnection)
+    ?? (catalogProfiles.length === 1 ? catalogProfiles[0] : undefined);
+  const keyReady = statusProfile
+    ? statusProfile.authStatus !== 'missing'
+    : Boolean(config.model.apiKey) || config.model.provider === 'compatible';
   const endpoint = redactEndpoint(config.model.baseUrl);
   const local = (context.local ?? {}) as {available?: boolean; files?: number; chunks?: number};
   const engineDetail = 'local index';

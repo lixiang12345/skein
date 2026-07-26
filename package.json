@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.46",
+  "version": "0.3.47",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -24,6 +24,8 @@
   },
   "skein": {
     "releaseNotes": [
+      "skein status now reports the default connection's real credential state and shows a missing API key as a warning instead of treating compatible providers as configured",
+      "A self-contained product introduction page ships at /intro.html with an animated real-output terminal tour, keyboard-accessible tabs, honest capability claims, reduced-motion support, and zero external dependencies",
       "Local-only commands (index, search, context, status, doctor, config show) now work without a complete model connection: an incomplete default connection degrades to legacy model info instead of blocking, while explicit --connection and model-backed chat stay fail-closed with the exact incomplete-credential error",
       "Root help now groups every subcommand under Getting started, Context & retrieval, Sessions & recovery, and Agents & extensions, ends with runnable examples plus Website/Docs/Issues pointers, and a regression fails when a new command lacks a group",
       "Single-word prompts within a small edit distance of a real subcommand emit a non-blocking stderr hint instead of silently spending a model call, with adjacent-transposition matching and short-word substitution safeguards",

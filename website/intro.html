@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skein — Code with context. Ship with evidence.</title>
+<meta name="description" content="Skein is an open, context-first coding agent for the terminal: local retrieval, evidence-gated completion, reversible edits, and multi-model teams.">
+<link rel="canonical" href="https://lixiang12345.github.io/skein/intro.html">
+<link rel="icon" href="./assets/skein-goose.svg" type="image/svg+xml">
+<meta property="og:title" content="Skein — Code with context. Ship with evidence.">
+<meta property="og:description" content="An open, context-first coding agent for the terminal.">
+<meta property="og:image" content="https://lixiang12345.github.io/skein/assets/skein-goose-flight.png">
+<style>
+:root{
+  --bg:#0a0d12;--bg2:#10151d;--bg3:#151b24;--surface:rgba(18,24,33,.82);
+  --line:rgba(148,163,184,.14);--text:#f4f7fb;--soft:#a7b2c2;--faint:#768295;
+  --teal:#2fbfae;--violet:#a78bfa;--amber:#f5c97b;
+  --glow:radial-gradient(circle at 70% 10%,rgba(47,191,174,.14),transparent 34rem);
+  --radius:14px;
+}
+@media (prefers-color-scheme: light){
+  :root{--bg:#f3f5f2;--bg2:#ffffff;--bg3:#e9eeeb;--surface:rgba(255,255,255,.88);
+  --line:rgba(23,32,44,.12);--text:#17202c;--soft:#536071;--faint:#758091;
+  --glow:radial-gradient(circle at 70% 10%,rgba(31,121,113,.10),transparent 34rem);}
+}
+:root[data-theme="dark"]{--bg:#0a0d12;--bg2:#10151d;--bg3:#151b24;--surface:rgba(18,24,33,.82);
+  --line:rgba(148,163,184,.14);--text:#f4f7fb;--soft:#a7b2c2;--faint:#768295;
+  --glow:radial-gradient(circle at 70% 10%,rgba(47,191,174,.14),transparent 34rem);}
+:root[data-theme="light"]{--bg:#f3f5f2;--bg2:#ffffff;--bg3:#e9eeeb;--surface:rgba(255,255,255,.88);
+  --line:rgba(23,32,44,.12);--text:#17202c;--soft:#536071;--faint:#758091;
+  --glow:radial-gradient(circle at 70% 10%,rgba(31,121,113,.10),transparent 34rem);}
+*{box-sizing:border-box;margin:0}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+}
+body{
+  font:16px/1.65 ui-sans-serif,-apple-system,"Segoe UI",Roboto,"PingFang SC","Noto Sans",sans-serif;
+  background:var(--glow),var(--bg);color:var(--text);
+  -webkit-font-smoothing:antialiased;
+}
+code,pre,.term{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+a{color:inherit}
+.wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+.skip{position:absolute;left:-9999px;top:0;background:var(--violet);color:#0a0d12;padding:8px 14px;border-radius:8px;z-index:99}
+.skip:focus{left:16px;top:12px}
+/* header */
+header{position:sticky;top:0;z-index:20;backdrop-filter:blur(14px);
+  background:color-mix(in srgb,var(--bg) 78%,transparent);border-bottom:1px solid var(--line)}
+.nav{display:flex;align-items:center;gap:18px;height:60px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:.04em;text-decoration:none}
+.brand img{width:28px;height:28px}
+.brand .mark{color:var(--teal)}
+.nav nav{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
+.nav nav a{color:var(--soft);text-decoration:none;font-size:14px;padding:7px 11px;border-radius:8px}
+.nav nav a:hover{color:var(--text);background:var(--bg3)}
+.tbtn{border:1px solid var(--line);background:var(--bg2);color:var(--soft);border-radius:8px;
+  padding:6px 10px;cursor:pointer;font-size:13px}
+.tbtn:hover{color:var(--text)}
+/* hero */
+.hero{display:grid;grid-template-columns:1.05fr .95fr;gap:44px;align-items:center;padding:76px 0 60px}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--soft);
+  border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--teal);box-shadow:0 0 10px var(--teal)}
+h1{font-size:clamp(34px,5vw,54px);line-height:1.08;letter-spacing:-.02em;margin:18px 0 14px}
+h1 em{font-style:normal;background:linear-gradient(92deg,var(--teal),var(--violet));
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+.lede{color:var(--soft);font-size:18px;max-width:34em}
+.cta{display:flex;gap:12px;margin:26px 0 18px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:8px;border-radius:10px;padding:11px 18px;
+  font-weight:600;font-size:15px;text-decoration:none;border:1px solid var(--line);transition:transform .15s ease}
+.btn:hover{transform:translateY(-1px)}
+.btn-p{background:linear-gradient(92deg,var(--teal),#1f7971);color:#06110f;border:none}
+.btn-s{background:var(--bg2);color:var(--text)}
+.chip{display:flex;align-items:center;gap:10px;border:1px solid var(--line);background:var(--surface);
+  border-radius:10px;padding:10px 14px;max-width:460px}
+.chip code{font-size:14px;color:var(--text);overflow-x:auto;white-space:nowrap}
+.chip .mark{color:var(--teal)}
+.copy{margin-left:auto;border:1px solid var(--line);background:var(--bg3);color:var(--soft);
+  border-radius:7px;padding:5px 10px;font-size:12px;cursor:pointer;flex:none}
+.copy:hover{color:var(--text)}
+.copy.done{color:var(--teal);border-color:var(--teal)}
+.meta{color:var(--faint);font-size:13px;margin-top:12px}
+/* terminal */
+.term{border:1px solid var(--line);border-radius:var(--radius);background:#0b0f15;color:#e8edf5;
+  box-shadow:0 24px 70px rgba(0,0,0,.45);overflow:hidden;font-size:13.5px;line-height:1.62}
+:root[data-theme="light"] .term{box-shadow:0 24px 60px rgba(23,32,44,.18)}
+.term-top{display:flex;align-items:center;gap:6px;padding:10px 14px;border-bottom:1px solid rgba(148,163,184,.12)}
+.term-top i{width:11px;height:11px;border-radius:50%;display:inline-block}
+.term-top i:nth-child(1){background:#ff5f57}.term-top i:nth-child(2){background:#febc2e}.term-top i:nth-child(3){background:#28c840}
+.term-top span{margin-left:8px;color:#8b98ab;font-size:12px}
+.term-body{padding:16px 18px;min-height:308px;white-space:pre-wrap;overflow-x:auto}
+.t-dim{color:#7d8b9f}.t-teal{color:#43d9c5}.t-vio{color:#b9a4fb}.t-ok{color:#5ad48a}.t-warn{color:#f5c97b}
+.caret{display:inline-block;width:8px;height:16px;background:#43d9c5;vertical-align:-2px;animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+/* sections */
+section{padding:64px 0}
+.sec-head{max-width:640px;margin-bottom:36px}
+.sec-head .eyebrow{margin-bottom:12px}
+h2{font-size:clamp(26px,3.4vw,36px);letter-spacing:-.01em;line-height:1.15;margin-bottom:10px}
+.sec-head p{color:var(--soft)}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.card{border:1px solid var(--line);background:var(--surface);border-radius:var(--radius);padding:22px;
+  transition:transform .18s ease,border-color .18s ease}
+.card:hover{transform:translateY(-3px);border-color:color-mix(in srgb,var(--teal) 45%,var(--line))}
+.card .ic{font-size:20px;color:var(--teal)}
+.card h3{font-size:17px;margin:10px 0 6px}
+.card p{color:var(--soft);font-size:14.5px}
+.card code{font-size:12.5px;color:var(--violet)}
+/* tabs */
+.tabs{display:grid;grid-template-columns:250px 1fr;gap:18px;align-items:start}
+.tabs [role="tablist"]{display:flex;flex-direction:column;gap:8px}
+.tab{display:flex;gap:12px;align-items:center;text-align:left;border:1px solid var(--line);
+  background:var(--surface);color:var(--soft);border-radius:10px;padding:13px 15px;cursor:pointer;font-size:14.5px}
+.tab strong{color:var(--text);display:block;font-size:14.5px}
+.tab small{color:var(--faint)}
+.tab[aria-selected="true"]{border-color:var(--teal);color:var(--text);background:var(--bg2)}
+.tab .n{flex:none;width:26px;height:26px;border-radius:50%;border:1px solid var(--line);
+  display:grid;place-items:center;font-size:13px;color:var(--teal)}
+.panel{border:1px solid var(--line);border-radius:var(--radius);background:#0b0f15;color:#e8edf5;overflow:hidden}
+.panel-top{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;
+  border-bottom:1px solid rgba(148,163,184,.12);color:#8b98ab;font-size:13px}
+.panel pre{padding:16px 18px;overflow-x:auto;font-size:13.5px;line-height:1.66}
+/* invariants */
+.inv{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+.inv .card{display:flex;gap:14px}
+.inv .badge{flex:none;width:34px;height:34px;border-radius:9px;display:grid;place-items:center;
+  background:color-mix(in srgb,var(--violet) 16%,transparent);color:var(--violet);font-size:16px}
+/* table */
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius)}
+table{width:100%;border-collapse:collapse;background:var(--surface);font-size:14.5px;min-width:620px}
+th,td{padding:13px 16px;text-align:left;border-bottom:1px solid var(--line)}
+th{color:var(--faint);font-weight:600;font-size:13px;text-transform:uppercase;letter-spacing:.06em}
+td:first-child{color:var(--soft)}
+.yes{color:var(--teal);font-weight:600}
+/* faq */
+details{border:1px solid var(--line);border-radius:10px;background:var(--surface);margin-bottom:10px}
+summary{cursor:pointer;padding:15px 18px;font-weight:600;list-style:none;display:flex;justify-content:space-between;gap:12px}
+summary::after{content:"+";color:var(--teal);font-size:18px}
+details[open] summary::after{content:"–"}
+details div{padding:0 18px 15px;color:var(--soft);font-size:14.5px}
+summary:focus-visible,.tab:focus-visible,.btn:focus-visible,.copy:focus-visible,.tbtn:focus-visible,a:focus-visible{
+  outline:2px solid var(--violet);outline-offset:2px;border-radius:8px}
+/* cta + footer */
+.final{border:1px solid var(--line);border-radius:18px;background:
+  linear-gradient(140deg,color-mix(in srgb,var(--teal) 12%,transparent),color-mix(in srgb,var(--violet) 10%,transparent)),var(--surface);
+  text-align:center;padding:56px 28px}
+footer{border-top:1px solid var(--line);padding:30px 0;color:var(--faint);font-size:13.5px}
+.foot{display:flex;gap:18px;flex-wrap:wrap;align-items:center}
+.foot a{color:var(--soft);text-decoration:none}
+.foot a:hover{color:var(--text)}
+.foot span:first-child{margin-right:auto}
+/* reveal */
+.rv{opacity:0;transform:translateY(16px);transition:opacity .5s ease,transform .5s ease}
+.rv.in{opacity:1;transform:none}
+@media (prefers-reduced-motion: reduce){.rv{opacity:1;transform:none}}
+@media (max-width:900px){
+  .hero{grid-template-columns:1fr;padding-top:44px}
+  .grid3{grid-template-columns:1fr}
+  .tabs{grid-template-columns:1fr}
+  .tabs [role="tablist"]{flex-direction:row;overflow-x:auto}
+  .tab{flex:none}
+  .inv{grid-template-columns:1fr}
+  .nav nav{display:none}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header>
+  <div class="wrap nav">
+    <a class="brand" href="./index.html"><img src="./assets/skein-goose.svg" alt="" width="28" height="28"><span><span class="mark">⌁</span> SKEIN</span></a>
+    <nav aria-label="Page sections">
+      <a href="#what">What</a><a href="#usage">Usage</a><a href="#tour">Tour</a><a href="#features">Features</a><a href="#invariants">Invariants</a><a href="#faq">FAQ</a>
+    </nav>
+    <button class="tbtn" type="button" data-theme-toggle aria-label="Toggle color theme">◐ Theme</button>
+  </div>
+</header>
+
+<main id="main">
+<div class="wrap">
+  <section class="hero">
+    <div>
+      <span class="eyebrow"><span class="dot"></span> Open source · MIT · Node 22.16+</span>
+      <h1>Code with context.<br><em>Ship with evidence.</em></h1>
+      <p class="lede">Skein is a context-first coding agent for the terminal. It reads the change surface before editing, asks before anything consequential, and only calls work <strong>verified</strong> when deterministic checks prove it.</p>
+      <div class="cta">
+        <a class="btn btn-p" href="#tour">Three-minute tour ↓</a>
+        <a class="btn btn-s" href="https://github.com/lixiang12345/skein" rel="noreferrer">GitHub ↗</a>
+      </div>
+      <div class="chip">
+        <span class="mark">$</span>
+        <code id="install-cmd">npm install -g @skein-code/cli</code>
+        <button class="copy" type="button" data-copy="npm install -g @skein-code/cli">Copy</button>
+      </div>
+      <p class="meta">Also: <code>curl -fsSL https://raw.githubusercontent.com/lixiang12345/skein/main/scripts/install.sh | sh</code></p>
+    </div>
+    <div class="term" role="img" aria-label="Animated Skein terminal session: searching the local index, editing, and finishing with a verified completion">
+      <div class="term-top"><i></i><i></i><i></i><span>skein · ~/work/api</span></div>
+      <div class="term-body" id="demo" aria-hidden="true"></div>
+    </div>
+  </section>
+
+  <section id="what">
+    <div class="sec-head rv">
+      <span class="eyebrow">What is Skein</span>
+      <h2>A coding agent that lives in your terminal.</h2>
+      <p>In one sentence: you describe a change in plain language, Skein finds the relevant code with its own local index, edits with your permission, runs your tests, and only reports success when the tests prove it.</p>
+    </div>
+    <div class="grid3">
+      <div class="card rv"><div class="ic">1</div><h3>You ask</h3><p><code>skein "fix the flaky webhook retry test"</code> — plain language, or pin files with <code>@path</code>. Works interactively or as a one-shot command.</p></div>
+      <div class="card rv"><div class="ic">2</div><h3>It works transparently</h3><p>Every file read, patch, and command shows up in a live timeline. Writes need your approval and get automatic pre-write checkpoints you can restore.</p></div>
+      <div class="card rv"><div class="ic">3</div><h3>You get proof</h3><p>The run ends with a completion status backed by real test and typecheck results — never just the model's word. Sessions persist, so you can resume or audit anything later.</p></div>
+    </div>
+  </section>
+
+  <section id="usage">
+    <div class="sec-head rv">
+      <span class="eyebrow">Everyday usage</span>
+      <h2>The commands you’ll actually type.</h2>
+      <p>Full reference: <code>skein --help</code> or <code>man skein</code>.</p>
+    </div>
+    <div class="tablewrap rv">
+      <table>
+        <thead><tr><th>You want to…</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Start the workspace</td><td><code>skein</code></td><td>Composer-first TUI; first run guides relay setup</td></tr>
+          <tr><td>Make one change</td><td><code>skein "add retry logging"</code></td><td>Pin context with <code>@src/file.ts</code></td></tr>
+          <tr><td>Ask without editing</td><td><code>skein --ask "why is auth slow?"</code></td><td>Mutation tools are denied in ask mode</td></tr>
+          <tr><td>Script or CI run</td><td><code>skein -p "…" --output-format json</code></td><td>Stable exit codes: 0 verified … 9 needs review</td></tr>
+          <tr><td>Search your code</td><td><code>skein search "token budget"</code></td><td>Local index, offline, scored spans with line ranges</td></tr>
+          <tr><td>Resume yesterday</td><td><code>skein --continue</code></td><td>Or <code>skein session list</code> + <code>--resume &lt;id&gt;</code></td></tr>
+          <tr><td>Undo an agent edit</td><td><code>skein checkpoint list</code> → <code>restore</code></td><td>Every mutation has a pre-write snapshot</td></tr>
+          <tr><td>Check your setup</td><td><code>skein doctor</code></td><td>Diagnoses terminal, index, connections, credentials</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="meta rv" style="margin-top:14px">Inside the TUI: <code>@file</code> attaches context · <code>/command</code> opens the palette · <code>ctrl+r</code> searches prompt history · <code>esc</code> stops a run · <code>alt+enter</code> queues a follow-up while the agent is busy.</p>
+  </section>
+
+  <section id="why">
+    <div class="sec-head rv">
+      <span class="eyebrow">Why Skein</span>
+      <h2>Agents guess. Skein grounds, gates, and proves.</h2>
+      <p>Three design commitments separate Skein from a chat loop with shell access.</p>
+    </div>
+    <div class="grid3">
+      <div class="card rv"><div class="ic">⌁</div><h3>Context first</h3>
+        <p>A local BM25 + path + symbol + import-graph index ranks real spans with scores, line ranges, and content hashes. No retrieval service, no embeddings bill — <code>skein search</code> works offline.</p></div>
+      <div class="card rv"><div class="ic">▣</div><h3>Evidence-gated completion</h3>
+        <p>“Done” is a status the model cannot grant itself. Only current, successful test / typecheck / build / diff-check tool runs after the last mutation yield <code>verified</code> — prose never does.</p></div>
+      <div class="card rv"><div class="ic">◈</div><h3>Trust as architecture</h3>
+        <p>Independent read/write/shell/git/network permissions, workspace-root enforcement, pre-write checkpoints, and untrusted-by-default project config. Cloned repos can’t execute anything by merely being cloned.</p></div>
+    </div>
+  </section>
+
+  <section id="tour">
+    <div class="sec-head rv">
+      <span class="eyebrow">Three-minute tour</span>
+      <h2>Install. Connect. Run. Verify.</h2>
+      <p>Everything below is the real CLI surface — the same commands the test suite and man page are generated from.</p>
+    </div>
+    <div class="tabs rv">
+      <div role="tablist" aria-label="Quickstart steps">
+        <button class="tab" role="tab" id="tab-0" aria-selected="true" aria-controls="pan-0" type="button"><span class="n">1</span><span><strong>Install</strong><small>npm or guarded installer</small></span></button>
+        <button class="tab" role="tab" id="tab-1" aria-selected="false" aria-controls="pan-1" type="button"><span class="n">2</span><span><strong>Connect a relay</strong><small>credentials stay in env vars</small></span></button>
+        <button class="tab" role="tab" id="tab-2" aria-selected="false" aria-controls="pan-2" type="button"><span class="n">3</span><span><strong>Interactive or headless</strong><small>TUI, JSON, exit-code contract</small></span></button>
+        <button class="tab" role="tab" id="tab-3" aria-selected="false" aria-controls="pan-3" type="button"><span class="n">4</span><span><strong>Recover anything</strong><small>checkpoints, sessions, audit</small></span></button>
+      </div>
+      <div>
+        <div class="panel" id="pan-0" role="tabpanel" aria-labelledby="tab-0">
+          <div class="panel-top"><span>1 · Install</span><button class="copy" type="button" data-copy="npm install -g @skein-code/cli">Copy</button></div>
+<pre># Node.js 22.16 or newer
+npm install -g @skein-code/cli
+skein --version
+man skein          # generated from the CLI itself, 21 subcommands</pre>
+        </div>
+        <div class="panel" id="pan-1" role="tabpanel" aria-labelledby="tab-1" hidden>
+          <div class="panel-top"><span>2 · Connect</span><button class="copy" type="button" data-copy="skein agents setup --yes --name team-relay --provider compatible --protocol openai-responses --base-url https://relay.example/v1 --api-key-env TEAM_RELAY_API_KEY --model provider/coding-model">Copy</button></div>
+<pre>export TEAM_RELAY_API_KEY=…   # Skein stores the NAME, never the value
+
+skein agents setup --yes \
+  --name team-relay \
+  --provider compatible \
+  --protocol openai-responses \
+  --base-url https://relay.example/v1 \
+  --api-key-env TEAM_RELAY_API_KEY \
+  --model provider/coding-model</pre>
+        </div>
+        <div class="panel" id="pan-2" role="tabpanel" aria-labelledby="tab-2" hidden>
+          <div class="panel-top"><span>3 · Run</span><button class="copy" type="button" data-copy='skein -p "summarize the failing tests" --output-format json'>Copy</button></div>
+<pre>skein                          # composer-first interactive workspace
+skein "fix the failing test"   # one instruction, live tool timeline
+
+# CI-grade headless: published JSON schema + stable exit codes
+skein -p "summarize the failing tests" --output-format json
+# 0 = verified · 1 = unverified · … · 9 = needs review</pre>
+        </div>
+        <div class="panel" id="pan-3" role="tabpanel" aria-labelledby="tab-3" hidden>
+          <div class="panel-top"><span>4 · Recover</span><button class="copy" type="button" data-copy="skein checkpoint list">Copy</button></div>
+<pre>skein session list             # durable, resumable, forkable sessions
+skein checkpoint list          # every mutation has a pre-write snapshot
+skein checkpoint restore &lt;s&gt; &lt;c&gt;
+skein /recover                 # in-TUI: retry, diff, audit, rollback</pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="features">
+    <div class="sec-head rv">
+      <span class="eyebrow">What’s inside</span>
+      <h2>A full workshop, not a wrapper.</h2>
+      <p>Twenty-one subcommands, grouped the way you actually work.</p>
+    </div>
+    <div class="grid3">
+      <div class="card rv"><div class="ic">☰</div><h3>Local retrieval engine</h3><p>Grounded spans with score provenance (<code>bm25 · path · symbol · graph · recency</code>), incremental refresh of only changed paths, multilingual recall benchmarks with checked-in quality gates.</p></div>
+      <div class="card rv"><div class="ic">⇄</div><h3>Model-agnostic relays</h3><p>OpenAI Responses, Chat Completions, and Anthropic Messages — protocol always explicit, never guessed from a URL. No cross-protocol retries billing you twice.</p></div>
+      <div class="card rv"><div class="ic">⚑</div><h3>Multi-model teams</h3><p>Route reviewer, architect, and tester roles to different providers. Team Runs persist content-addressed reports with reviewer verdicts bound to exact patch SHA-256.</p></div>
+      <div class="card rv"><div class="ic">✂</div><h3>Reuse over duplication</h3><p>A TS/JS clone detector blocks completion on exact Type-1/2 duplicates — the agent must reuse your code, not paste a second copy of it.</p></div>
+      <div class="card rv"><div class="ic">◔</div><h3>Token economy</h3><p>Adaptive retrieval budgets, context epochs with content-free handoffs, compaction that only runs when three predicted reuses show positive net savings.</p></div>
+      <div class="card rv"><div class="ic">✳</div><h3>Extensible, but gated</h3><p>MCP with fingerprint-bound trust and lazy activation, workspace Skills that fail closed on content drift, typed workflows, durable background jobs.</p></div>
+    </div>
+  </section>
+
+  <section id="invariants">
+    <div class="sec-head rv">
+      <span class="eyebrow">Invariants</span>
+      <h2>Rules the model can’t vote on.</h2>
+      <p>These hold across every provider, mode, and flag — including <code>--yes</code>.</p>
+    </div>
+    <div class="inv">
+      <div class="card rv"><span class="badge">1</span><div><h3>Deterministic truth wins</h3><p>Passing receipts beat conflicting model judgment; failing oracles cannot be overridden by any reviewer, human-persuasive prose included.</p></div></div>
+      <div class="card rv"><span class="badge">2</span><div><h3>Content-free telemetry</h3><p>Receipts and registries keep hashes, counts, and bounded aggregates only — no prompts, no source text, no command arguments, no credentials.</p></div></div>
+      <div class="card rv"><span class="badge">3</span><div><h3>Live-human gates stay human</h3><p>Git push, publish, destructive commands, writer integration: no flag, config rule, or model review can stand in for a person saying yes.</p></div></div>
+      <div class="card rv"><span class="badge">4</span><div><h3>Cloned code has no authority</h3><p>Project-local config is untrusted by default. Hooks, endpoints, and verification commands activate only after explicit <code>--trust-project-config</code>.</p></div></div>
+    </div>
+  </section>
+
+  <section id="compare">
+    <div class="sec-head rv">
+      <span class="eyebrow">Positioning</span>
+      <h2>Where Skein stands apart.</h2>
+    </div>
+    <div class="tablewrap rv">
+      <table>
+        <thead><tr><th>Capability</th><th>Typical terminal agent</th><th>Skein</th></tr></thead>
+        <tbody>
+          <tr><td>Code retrieval</td><td>grep + file reads</td><td class="yes">Local scored index, offline, with provenance</td></tr>
+          <tr><td>“Task complete”</td><td>Model says so</td><td class="yes">Only deterministic tool evidence grants <code>verified</code></td></tr>
+          <tr><td>Model lock-in</td><td>Single vendor</td><td class="yes">Any relay; explicit protocol per connection</td></tr>
+          <tr><td>Undo story</td><td>git and hope</td><td class="yes">Automatic pre-write checkpoints + restore + audit</td></tr>
+          <tr><td>Repo trust</td><td>Config runs on clone</td><td class="yes">Untrusted by default, opt-in execution</td></tr>
+          <tr><td>CI usage</td><td>Parse stdout prose</td><td class="yes">Published JSON schema, stable exit codes 0–9</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="faq">
+    <div class="sec-head rv">
+      <span class="eyebrow">FAQ</span>
+      <h2>Fair questions.</h2>
+    </div>
+    <div class="rv">
+      <details><summary>Does Skein send my code to a retrieval service?</summary><div>No. The index is built and stored locally at <code>.skein/index.json</code>. Retrieval, ranking, and packing run on your machine; only the context you approve for a model turn goes to the relay you configured.</div></details>
+      <details><summary>What happens to my API keys?</summary><div>Skein saves the environment-variable <em>name</em>, never the value. Diagnostics redact secrets, URLs, and query strings; receipts are content-free by design.</div></details>
+      <details><summary>Can I use it in CI?</summary><div>Yes — <code>--print --output-format json</code> follows a published schema with a stable exit-code contract (0 verified … 9 needs review), so pipelines gate on results without parsing prose.</div></details>
+      <details><summary>Which models does it work with?</summary><div>Any OpenAI-Responses, OpenAI-Chat, or Anthropic-Messages compatible endpoint. You choose the protocol explicitly per connection; Skein never probes or guesses at your expense.</div></details>
+      <details><summary>Is it actually tested?</summary><div>Every release passes typecheck, 770+ tests, real-PTY terminal regressions across widths 20–120 (including screen readers and <code>TERM=dumb</code>), benchmark quality gates, and a byte-verified npm artifact.</div></details>
+    </div>
+  </section>
+
+  <section>
+    <div class="final rv">
+      <h2>Weave your next change.</h2>
+      <p class="lede" style="margin:10px auto 22px">One command. Your model, your rules, your evidence.</p>
+      <div class="cta" style="justify-content:center">
+        <a class="btn btn-p" href="https://www.npmjs.com/package/@skein-code/cli" rel="noreferrer">Get Skein on npm</a>
+        <a class="btn btn-s" href="https://github.com/lixiang12345/skein/blob/main/docs/ARCHITECTURE.md" rel="noreferrer">Read the architecture</a>
+      </div>
+    </div>
+  </section>
+</div>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <span>⌁ Skein — MIT licensed</span>
+    <a href="./index.html">Home</a>
+    <a href="https://github.com/lixiang12345/skein" rel="noreferrer">GitHub</a>
+    <a href="https://github.com/lixiang12345/skein/issues" rel="noreferrer">Issues</a>
+    <a href="https://www.npmjs.com/package/@skein-code/cli" rel="noreferrer">npm</a>
+  </div>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // theme toggle
+  var toggle = document.querySelector("[data-theme-toggle]");
+  toggle.addEventListener("click", function(){
+    var root = document.documentElement;
+    var dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    var current = root.getAttribute("data-theme") || (dark ? "dark" : "light");
+    root.setAttribute("data-theme", current === "dark" ? "light" : "dark");
+  });
+
+  // copy buttons
+  function fallbackCopy(text){
+    var area = document.createElement("textarea");
+    area.value = text; area.setAttribute("readonly", "");
+    area.style.position = "absolute"; area.style.left = "-9999px";
+    document.body.appendChild(area); area.select();
+    try { document.execCommand("copy"); } catch (error) {}
+    document.body.removeChild(area);
+  }
+  Array.prototype.forEach.call(document.querySelectorAll("[data-copy]"), function(button){
+    button.addEventListener("click", function(){
+      var text = button.getAttribute("data-copy");
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).catch(function(){ fallbackCopy(text); });
+      } else { fallbackCopy(text); }
+      button.classList.add("done"); button.textContent = "Copied";
+      setTimeout(function(){ button.classList.remove("done"); button.textContent = "Copy"; }, 1600);
+    });
+  });
+
+  // tabs
+  var tabs = Array.prototype.slice.call(document.querySelectorAll(".tab"));
+  function selectTab(tab){
+    tabs.forEach(function(other){
+      var on = other === tab;
+      other.setAttribute("aria-selected", on ? "true" : "false");
+      document.getElementById(other.getAttribute("aria-controls")).hidden = !on;
+    });
+    tab.focus();
+  }
+  tabs.forEach(function(tab, index){
+    tab.addEventListener("click", function(){ selectTab(tab); });
+    tab.addEventListener("keydown", function(event){
+      if (event.key === "ArrowDown" || event.key === "ArrowRight") { event.preventDefault(); selectTab(tabs[(index + 1) % tabs.length]); }
+      if (event.key === "ArrowUp" || event.key === "ArrowLeft") { event.preventDefault(); selectTab(tabs[(index - 1 + tabs.length) % tabs.length]); }
+      if (event.key === "Escape") { tab.blur(); }
+    });
+  });
+
+  // scroll reveal
+  if ("IntersectionObserver" in window && !reduced) {
+    var observer = new IntersectionObserver(function(entries){
+      entries.forEach(function(entry){
+        if (entry.isIntersecting) { entry.target.classList.add("in"); observer.unobserve(entry.target); }
+      });
+    }, {threshold: .12});
+    Array.prototype.forEach.call(document.querySelectorAll(".rv"), function(node){ observer.observe(node); });
+  } else {
+    Array.prototype.forEach.call(document.querySelectorAll(".rv"), function(node){ node.classList.add("in"); });
+  }
+
+  // terminal typing demo — real Skein 0.3.46 output shapes
+  var demo = document.getElementById("demo");
+  var script = [
+    ["cmd", "skein search \"completion evidence gate\""],
+    ["dim", "[local-bm25+path+symbol+graph 28.19] evidenceRefs src/agent/review-verdict.ts:223-252"],
+    ["dim", "[local-bm25+path+symbol+graph 22.17] latestMutationIndex src/agent/completion-gate.ts:270-288"],
+    ["gap", ""],
+    ["cmd", "skein \"make search hits show their index generation\""],
+    ["teal", "◇ context  local · 12 spans · ~8.1k tokens"],
+    ["ok",   "✓ read_file    src/agent/completion-gate.ts        24ms"],
+    ["ok",   "✓ apply_patch  src/context/provenance.ts           31ms"],
+    ["ok",   "✓ run_command  npx vitest run test/core/context.ts  8.2s"],
+    ["gap", ""],
+    ["vio",  "⌁ Skein — completion: verified"],
+    ["dim",  "  evidence: vitest 777 passed · typecheck clean · git diff --check"],
+  ];
+  function render(upTo, partial){
+    var html = "";
+    for (var index = 0; index < upTo; index += 1) {
+      var kind = script[index][0], text = script[index][1];
+      if (kind === "gap") { html += "\n"; continue; }
+      if (kind === "cmd") { html += "<span class=\"t-teal\">›</span> " + text + "\n"; continue; }
+      var cls = kind === "dim" ? "t-dim" : kind === "teal" ? "t-teal" : kind === "ok" ? "t-ok" : kind === "vio" ? "t-vio" : "t-warn";
+      html += "<span class=\"" + cls + "\">" + text + "</span>\n";
+    }
+    if (partial !== undefined) { html += "<span class=\"t-teal\">›</span> " + partial; }
+    demo.innerHTML = html + "<span class=\"caret\"></span>";
+  }
+  if (reduced) { render(script.length); }
+  else {
+    var line = 0;
+    function step(){
+      if (line >= script.length) { render(script.length); setTimeout(function(){ line = 0; step(); }, 9000); return; }
+      var kind = script[line][0], text = script[line][1];
+      if (kind === "cmd") {
+        var char = 0;
+        var typer = setInterval(function(){
+          char += 2;
+          render(line, text.slice(0, char));
+          if (char >= text.length) { clearInterval(typer); line += 1; setTimeout(step, 320); }
+        }, 24);
+      } else {
+        line += 1; render(line); setTimeout(step, kind === "gap" ? 140 : 260);
+      }
+    }
+    step();
+  }
+})();
+</script>
+</body>
+</html>

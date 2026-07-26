@@ -47,6 +47,10 @@ describe('local-only commands without model credentials', () => {
     const configShow = await runCli(['config', 'show', '--workspace', workspace, '--json'], environment);
     expect(configShow.exitCode).toBe(0);
     expect(configShow.stdout).not.toContain('SKEIN_TEST_MISSING_CREDENTIAL is set');
+
+    const statusText = await runCli(['--no-color', 'status', '--workspace', workspace], environment);
+    expect(statusText.exitCode).toBe(0);
+    expect(statusText.stdout).toMatch(/API key\s+missing/u);
   }, 60_000);
 
   it('model-backed chat still fails closed with the incomplete-connection error', async () => {
