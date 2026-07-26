@@ -119,7 +119,7 @@ export class AgentRunner {
   readonly checkpointStore: CheckpointStore;
   readonly workspace: WorkspaceAccess;
   readonly hooks: HookRunner;
-  readonly session: Session;
+  session: Session;
   readonly contextManager: ContextManager;
   readonly promptContextProvider: PromptContextProvider | undefined;
   readonly rolePrompt: string;
@@ -156,6 +156,37 @@ export class AgentRunner {
     if (this.session.workspace !== this.workspace.primaryRoot) {
       throw new Error('Session workspace does not match the primary configured root.');
     }
+  }
+
+  /**
+   * Switch the model id within the active connection for this session.
+   *
+   * Providers read the shared ModelConfig per request, so the next model
+   * call uses the new id; endpoint, protocol, and credentials are unchanged.
+   */
+  async switchModel(modelId: string): Promise<void> {
+    const trimmed = modelId.trim();
+    if (!trimmed) throw new Error('Model id must not be empty.');
+    this.config.model.model = trimmed;
+    this.session.model = trimmed;
+    await this.persist();
+  }
+
+  /**
+   * Swap the live session for an already-loaded one from the same workspace.
+   *
+   * Session-scoped state that must never leak across sessions — interactive
+   * approvals and queued steering — is cleared; the store, tools, provider,
+   * and permission policy are unchanged.
+   */
+  switchSession(session: Session): void {
+    if (this.running) throw new Error('Finish or stop the active run before switching sessions.');
+    if (session.workspace !== this.workspace.primaryRoot) {
+      throw new Error('Session workspace does not match the primary configured root.');
+    }
+    this.session = session;
+    this.sessionApprovals.clear();
+    this.steering = [];
   }
 
   /** Returns the live session object used by the runner and UI. */

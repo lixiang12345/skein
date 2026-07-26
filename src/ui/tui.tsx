@@ -4,6 +4,7 @@ import {relative} from 'node:path';
 import type {AgentRunner} from '../agent/index.js';
 import {PLAN_MODE_INSTRUCTIONS} from '../agent/prompt.js';
 import {resolveAgentModelRoute} from '../agent/model-route.js';
+import {listConnectionModels} from '../agent/model-catalog.js';
 import {providerApiKeyEnv, saveUiPreference} from '../config.js';
 import {
   activeMentionToken,
@@ -1249,6 +1250,97 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       append({id: nextId(), kind: 'theme', name: selected.name});
       return true;
     }
+    if (command === 'resume') {
+      if (!argument) {
+        const summaries = (await runner.sessionStore.list()).slice(0, 8);
+        appendList('Recent sessions', summaries.length
+          ? summaries.map((summary) => ({
+            label: `${summary.id.slice(0, 8)}${summary.id === session.id ? '  (current)' : ''}`,
+            detail: `${summary.title} · ${summary.messageCount} messages · ${summary.updatedAt.slice(0, 16).replace('T', ' ')}`,
+          }))
+          : [{label: 'No saved sessions in this workspace.'}]);
+        if (summaries.length > 1) {
+          append({id: nextId(), kind: 'notice', tone: 'info', text: 'Switch with /resume <session-id prefix>.'});
+        }
+        return true;
+      }
+      const selector = argument.trim();
+      const summaries = await runner.sessionStore.list();
+      const matches = summaries.filter((summary) => summary.id.startsWith(selector));
+      if (!matches.length) throw new Error(`No session id starts with ${selector}. Use /resume to list sessions.`);
+      if (matches.length > 1) throw new Error(`Session prefix ${selector} is ambiguous (${matches.length} matches). Add more characters.`);
+      const target = matches[0] as (typeof matches)[number];
+      if (target.id === session.id) {
+        append({id: nextId(), kind: 'notice', tone: 'info', text: 'That session is already active.'});
+        return true;
+      }
+      const loaded = await runner.sessionStore.load(target.id);
+      runner.switchSession(loaded);
+      const snapshot = snapshotSession(loaded);
+      setSession(snapshot);
+      setTasks(snapshot.tasks.map((task) => ({...task})));
+      setTimeline(initialTimeline(loaded, {
+        engine: 'local',
+        status: 'ready',
+        version: packageJson.version,
+      }));
+      setHistory(initialHistory(loaded));
+      queued.current = [];
+      clarificationBacklog.current = [];
+      setQueue([]);
+      append({
+        id: nextId(),
+        kind: 'notice',
+        tone: 'success',
+        text: `Resumed session ${target.id.slice(0, 8)} · ${target.title}. Session approvals were reset.`,
+      });
+      return true;
+    }
+    if (command === 'model') {
+      const routeLabel = `${config.model.provider}/${config.model.model}`;
+      const connectionLabel = config.activeConnection && config.activeConnection.source !== 'legacy'
+        ? `@${config.activeConnection.id}`
+        : undefined;
+      const namedConnection = connectionLabel
+        ? config.agents?.connections?.[config.activeConnection?.id ?? '']
+        : undefined;
+      if (!argument) {
+        appendList('Model route', [
+          {label: routeLabel, detail: connectionLabel ? `connection ${connectionLabel}` : 'legacy configuration'},
+          {label: 'Switch', detail: '/model <model-id> switches within this connection; /model list shows the catalog'},
+        ]);
+        return true;
+      }
+      if (argument.toLocaleLowerCase() === 'list') {
+        if (!namedConnection) {
+          throw new Error('Model discovery needs a named connection; the legacy route has no catalog endpoint.');
+        }
+        const models = await listConnectionModels(namedConnection);
+        appendList(`Models ${connectionLabel}`, models.length
+          ? models.slice(0, 20).map((model) => ({
+            label: model.id === config.model.model ? `${model.id}  (active)` : model.id,
+            ...(model.ownedBy ? {detail: model.ownedBy} : {}),
+          }))
+          : [{label: 'The connection returned no models.'}]);
+        return true;
+      }
+      const requested = argument.trim();
+      if (namedConnection) {
+        const models = await listConnectionModels(namedConnection).catch(() => []);
+        if (models.length && !models.some((model) => model.id === requested)) {
+          throw new Error(`Model ${requested} is not in the ${connectionLabel} catalog. Use /model list.`);
+        }
+      }
+      await runner.switchModel(requested);
+      setSession(snapshotSession(runner.getSession()));
+      append({
+        id: nextId(),
+        kind: 'notice',
+        tone: 'success',
+        text: `Model switched to ${config.model.provider}/${requested}${connectionLabel ? ` on ${connectionLabel}` : ''}. The next turn uses it.`,
+      });
+      return true;
+    }
     if (command === 'mode') {
       const normalized = argument.toLocaleLowerCase();
       const next = normalized === 'ask' || normalized === 'plan' || normalized === 'build'
@@ -2279,6 +2371,8 @@ function shouldDeferLocalCommand(value: string): boolean {
     'rollback',
     'recover',
     'workflow',
+    'model',
+    'resume',
     'exit',
     'quit',
   ]).has(command);
