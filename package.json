@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.42",
+  "version": "0.3.43",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,6 +16,9 @@
   },
   "skein": {
     "releaseNotes": [
+      "Read-only external expert recovery can invoke trusted Codex, Claude, or Grok runtimes with bounded profiles, minimal environments, explicit doctor guidance, and no provider-secret inheritance",
+      "External expert runs emit bounded heartbeats and preserve timeout truth, so a child process that exits after cancellation cannot turn a partial report into a successful result",
+      "A production-ready zero-dependency Skein website adds the Skein Goose identity, interactive terminal story, responsive and accessible product guidance, privacy-first metadata, deterministic verification, and GitHub Pages deployment",
       "The macOS PTY release gate now derives its expected startup version from package metadata, preventing valid patch releases from failing against a stale literal",
       "Fresh interactive sessions now open as a composer-first workspace with one brand signature, one truthful readiness line, and on-demand /status detail instead of a permanent operations dashboard",
       "Successful visual workspace preparation clears its temporary loading frame before chat while screen readers retain linear announcements, and compact permission receipts take priority over stale inspectors",
