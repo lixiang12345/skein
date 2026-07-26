@@ -1,0 +1,427 @@
+.TH SKEIN 1 "2026-07-26" "skein 0.3.45" "Skein Manual"
+.SH NAME
+skein \- context-first, model-agnostic coding agent with an auditable terminal workspace
+.SH SYNOPSIS
+.B skein
+[options] [command] [prompt...]
+.SH DESCRIPTION
+.nf
+Usage: skein [options] [command] [prompt...]
+
+A context-first, model-agnostic coding agent with an auditable workspace.
+
+Arguments:
+  prompt                     instruction for the agent
+
+Options:
+  -V, --version              output the version number
+  -p, --print                run once and print the result
+  -a, --ask                  retrieval and inspection mode; mutation tools are
+                             denied
+  --plan                     read-only planning mode; propose changes without
+                             mutating the workspace
+  -q, --quiet                print only the final response in text mode
+  --output-format <format>   text, json, or stream-json (choices: "text",
+                             "json", "stream-json", default: "text")
+  --compact                  reduce progress output in print mode
+  --yes                      approve all non-denied tool requests for this run
+  --auto-edit                approve read/write requests and ask before
+                             shell/Git/network
+  --trust-project-config     allow executable and security-sensitive settings
+                             from project config
+  --queue <prompt>           run an additional prompt after the first one
+                             (default: [])
+  -w, --workspace <path>     primary workspace root (default:
+                             "/Users/jiming/codeagentcli")
+  --add-workspace <path>     additional workspace root (default: [])
+  --config <path>            explicit config file
+  --connection <name>        named model connection
+  --provider <provider>      model provider
+  --model <model>            model identifier
+  --base-url <url>           OpenAI-compatible or provider base URL
+  --max-turns <n>            maximum agent turns
+  --epoch-token-budget <n>   maximum tokens before an internal context handoff
+  --token-budget <n>         maximum lifetime tokens across the resumed session
+  --resume [session]         resume a session by id or prefix
+  -c, --continue             resume the latest session
+  --no-color                 disable color output
+  --no-checkpoint            disable pre-mutation checkpoints for this run
+  -h, --help                 display help for command
+
+Getting started:
+  init [options]             Create a project-local config (preserving an
+                             existing .mosaic namespace)
+  config                     Inspect the resolved configuration
+  status [options]           Show model, context, workspace, and index status
+  doctor [options]           Diagnose prerequisites and safe fallbacks
+  update [options]           Update to the latest published release
+  migrate [options]          Inspect or migrate legacy .mosaic state into .skein
+  completion <shell>         Generate completion for bash, zsh, or fish
+  feedback                   Show where to report issues, with a content-free
+                             environment summary
+
+Context & retrieval:
+  index [options]            Index the configured workspace
+  search [options] <query>   Search indexed code and print grounded file spans
+  context [options] <query>  Pack task-oriented context under a token budget
+
+Sessions & recovery:
+  session                    Manage local, resumable sessions
+  jobs                       Manage optional durable background jobs
+  checkpoint                 Inspect and restore pre-mutation snapshots
+
+Agents & extensions:
+  tools [options]            List active built-in agent tools and permission
+                             categories
+  skills                     Discover task-specific Agent Skills
+  agents                     Inspect specialized agent profiles
+  workflow                   Inspect typed coding workflows
+  memory                     Manage durable local memory
+  mcp                        Inspect configured MCP servers
+  rules [options]            List user and workspace rules loaded into the agent
+
+Examples:
+  $ skein                                   start the interactive workspace
+  $ skein "fix the failing webhook test"    run one instruction interactively
+  $ skein -p "explain src/agent/runner.ts"  run once and print the result
+  $ git diff | skein -p "review this diff"  include piped stdin in the prompt
+  $ skein search "token budget"             search the local code index
+  $ skein --continue                        resume the latest session
+
+Learn more:
+  Website  https://lixiang12345.github.io/skein/
+  Docs     https://github.com/lixiang12345/skein/blob/main/docs/ARCHITECTURE.md
+  Issues   https://github.com/lixiang12345/skein/issues
+.fi
+.SH COMMANDS
+.SS skein init
+.nf
+Usage: skein init [options]
+
+Create a project-local config (preserving an existing .mosaic namespace)
+
+Options:
+  -w, --workspace <path>  workspace root
+  --provider <provider>   openai, anthropic, gemini, or compatible (default:
+                          "openai")
+  --model <model>         model identifier
+  --base-url <url>        provider base URL
+  --api-key <key>         store a provider key in project config (prefer env
+                          vars)
+  --index                 build the index after writing config
+  --yes                   use defaults without prompting
+  -h, --help              display help for command
+.fi
+.SS skein config
+.nf
+Usage: skein config [options] [command]
+
+Inspect the resolved configuration
+
+Options:
+  -h, --help      display help for command
+
+Commands:
+  show [options]  Show effective configuration with secrets redacted
+  path [options]  Show the project config path
+  help [command]  display help for command
+.fi
+.SS skein status
+.nf
+Usage: skein status [options]
+
+Show model, context, workspace, and index status
+
+Options:
+  -w, --workspace <path>  workspace root
+  --config <path>         explicit config file
+  --json                  print JSON
+  -h, --help              display help for command
+.fi
+.SS skein doctor
+.nf
+Usage: skein doctor [options]
+
+Diagnose prerequisites and safe fallbacks
+
+Options:
+  -w, --workspace <path>  workspace root
+  --config <path>         explicit config file
+  --json                  print JSON
+  --visual                inspect terminal rendering, glyphs, and keyboard
+                          support
+  -h, --help              display help for command
+.fi
+.SS skein update
+.nf
+Usage: skein update [options]
+
+Update to the latest published release
+
+Options:
+  --check     only report whether a newer version is available
+  --yes       skip the confirmation prompt and upgrade immediately
+  --json      print the result as JSON
+  -h, --help  display help for command
+.fi
+.SS skein migrate
+.nf
+Usage: skein migrate [options]
+
+Inspect or migrate legacy .mosaic state into .skein
+
+Options:
+  -w, --workspace <path>  workspace root
+  --json                  print a migration manifest as JSON
+  --yes                   perform the migration after conflict checks
+  --rollback              verify and roll back a completed migration
+  --recover               inspect or recover interrupted migration/rollback
+                          state
+  --home                  operate on the user-level Skein/Mosaic namespace
+  -h, --help              display help for command
+.fi
+.SS skein completion
+.nf
+Usage: skein completion [options] <shell>
+
+Generate completion for bash, zsh, or fish
+
+Options:
+  -h, --help  display help for command
+.fi
+.SS skein feedback
+.nf
+Usage: skein feedback [options]
+
+Show where to report issues, with a content-free environment summary
+
+Options:
+  -h, --help  display help for command
+.fi
+.SS skein index
+.nf
+Usage: skein index [options]
+
+Index the configured workspace
+
+Options:
+  -w, --workspace <path>  workspace root
+  --add-workspace <path>  additional root (default: [])
+  --config <path>         explicit config file
+  --json                  print JSON
+  -h, --help              display help for command
+.fi
+.SS skein search
+.nf
+Usage: skein search [options] <query>
+
+Search indexed code and print grounded file spans
+
+Arguments:
+  query                   search query
+
+Options:
+  -w, --workspace <path>  workspace root
+  --config <path>         explicit config file
+  -k, --top-k <n>         number of results (default: "12")
+  --json                  print JSON
+  -h, --help              display help for command
+.fi
+.SS skein context
+.nf
+Usage: skein context [options] <query>
+
+Pack task-oriented context under a token budget
+
+Arguments:
+  query                   task description
+
+Options:
+  -w, --workspace <path>  workspace root
+  --config <path>         explicit config file
+  --max-tokens <n>        token cap
+  --json                  print JSON
+  -h, --help              display help for command
+.fi
+.SS skein session
+.nf
+Usage: skein session [options] [command]
+
+Manage local, resumable sessions
+
+Options:
+  -h, --help                  display help for command
+
+Commands:
+  list [options]              List sessions for this workspace
+  show [options] <id>         Show a saved session transcript
+  delete [options] <id>       Delete a saved session
+  export [options] <id>       Export a session as Markdown
+  fork|branch [options] <id>  Fork a saved session into a new logical branch
+  help [command]              display help for command
+.fi
+.SS skein jobs
+.nf
+Usage: skein jobs [options] [command]
+
+Manage optional durable background jobs
+
+Options:
+  -h, --help                           display help for command
+
+Commands:
+  start [options] <session> <command>  Start one session-owned command after
+                                       explicit operator confirmation
+  list [options] <session>             List jobs owned by one session
+  output [options] <session> <job>     Read bounded incremental stdout/stderr
+  kill [options] <session> <job>       Cancel a session-owned process tree
+  help [command]                       display help for command
+.fi
+.SS skein checkpoint
+.nf
+Usage: skein checkpoint [options] [command]
+
+Inspect and restore pre-mutation snapshots
+
+Options:
+  -h, --help                                display help for command
+
+Commands:
+  list [options] <session>                  List checkpoints for a session
+  restore [options] <session> <checkpoint>  Restore files from a checkpoint
+  help [command]                            display help for command
+.fi
+.SS skein tools
+.nf
+Usage: skein tools [options]
+
+List active built-in agent tools and permission categories
+
+Options:
+  -w, --workspace <path>  workspace root
+  --config <path>         explicit config file
+  --json                  print JSON
+  -h, --help              display help for command
+.fi
+.SS skein skills
+.nf
+Usage: skein skills [options] [command]
+
+Discover task-specific Agent Skills
+
+Options:
+  -h, --help                display help for command
+
+Commands:
+  list [options]            List discovered SKILL.md playbooks
+  inspect [options] <name>  Inspect a skill source, exact fingerprint, trust,
+                            and activation effect
+  trust [options] <name>    Trust one exact workspace skill fingerprint after
+                            review
+  revoke [options] <name>   Revoke persisted trust for a workspace skill
+  help [command]            display help for command
+.fi
+.SS skein agents
+.nf
+Usage: skein agents [options] [command]
+
+Inspect specialized agent profiles
+
+Options:
+  -h, --help                            display help for command
+
+Commands:
+  list [options]                        List built-in and discovered expert
+                                        profiles
+  run [options] <profile> <prompt...>   Run one expert through an installed
+                                        external CLI in read-only mode
+  setup [options]                       Configure one shared model connection
+                                        and team defaults
+  connections [options]                 List named model endpoints and
+                                        credential references
+  models [options] <connection>         List model IDs exposed by a named
+                                        compatible connection
+  capability                            Inspect privacy-safe shadow capability
+                                        routing
+  runs [options]                        List persisted multi-model team runs
+  show [options] <id>                   Show a persisted team run and its peer
+                                        reports
+  arbitrate [options] <id> <criterion>  Record one live-human criterion decision
+                                        for a needs_review Team Run
+  delete [options] <id>                 Delete a persisted team run and its
+                                        local reports
+  help [command]                        display help for command
+.fi
+.SS skein workflow
+.nf
+Usage: skein workflow [options] [command]
+
+Inspect typed coding workflows
+
+Options:
+  -h, --help             display help for command
+
+Commands:
+  list [options]         List built-in workflows
+  show [options] <name>  Show workflow steps
+  help [command]         display help for command
+.fi
+.SS skein memory
+.nf
+Usage: skein memory [options] [command]
+
+Manage durable local memory
+
+Options:
+  -h, --help                  display help for command
+
+Commands:
+  search [options] <query>    Search user and workspace memory
+  add [options] <content...>  Store a non-secret workspace memory
+  forget [options] <id>       Archive a memory
+  stats [options]             Show memory storage statistics
+  privacy [options]           Review content-free memory retention and local
+                              storage privacy
+  export [options] [file]     Export reviewed memory as JSON to stdout or an
+                              owner-only file
+  clear [options]             Permanently delete memory records and candidates
+                              in a selected scope
+  candidates [options]        List memory proposals awaiting user approval
+  approve [options] <id>      Approve a memory proposal and make it durable
+  reject [options] <id>       Reject a memory proposal without storing it
+  help [command]              display help for command
+.fi
+.SS skein mcp
+.nf
+Usage: skein mcp [options] [command]
+
+Inspect configured MCP servers
+
+Options:
+  -h, --help                              display help for command
+
+Commands:
+  status [options]                        Report redacted MCP trust and connection status without connecting optional servers
+  search [options] [query...]             Search configured capability manifests without network access
+  inspect [options] <server>              Review a redacted declarative capability manifest without connecting
+  trust [options] <server>                Trust the current redacted manifest fingerprint after review
+  activate [options] <server> <query...>  Connect one trusted server and load only query-relevant schemas
+  disable [options] <server>              Persistently disable an MCP capability and unload its schemas
+  revoke [options] <server>               Revoke persisted MCP trust and require a fresh review
+  help [command]                          display help for command
+.fi
+.SS skein rules
+.nf
+Usage: skein rules [options]
+
+List user and workspace rules loaded into the agent
+
+Options:
+  -w, --workspace <path>  workspace root
+  --json                  print JSON
+  -h, --help              display help for command
+.fi
+.SH SEE ALSO
+Website: https://lixiang12345.github.io/skein/
+.br
+Issues: https://github.com/lixiang12345/skein/issues

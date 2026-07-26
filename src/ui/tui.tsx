@@ -63,6 +63,7 @@ import {displayWidth, sanitizeTerminalText, terminalEllipsis, truncateDisplay} f
 import {resolveKittyKeyboardConfig, resolveTerminalAccessibility} from './terminal-capabilities.js';
 import {nextTheme, reloadUserThemes, resolveThemeWithColor, ThemeProvider, themes} from './theme.js';
 import {editComposerDraft} from './external-editor.js';
+import {starterHint} from './starter-hints.js';
 import {estimateTimelineItemRows, fitTimelineToRows} from './viewport.js';
 import {
   buildRedactedReviewBundle,
@@ -176,6 +177,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [suggestionsDismissedFor, setSuggestionsDismissedFor] = useState<string>();
   const [frameIndex, setFrameIndex] = useState(0);
+  const [starterHintIndex, setStarterHintIndex] = useState(0);
   const controller = useRef<AbortController | undefined>(undefined);
   const processing = useRef(false);
   const queued = useRef<QueueItem[]>([]);
@@ -317,6 +319,16 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     const timer = setInterval(() => setFrameIndex((value) => (value + 1) % spinnerFrames().length), 120);
     return () => clearInterval(timer);
   }, [busy, terminalAccessibility.reducedMotion]);
+
+  const composerEmpty = input.length === 0;
+  useEffect(() => {
+    if (busy || !composerEmpty || terminalAccessibility.reducedMotion) {
+      setStarterHintIndex(0);
+      return undefined;
+    }
+    const timer = setInterval(() => setStarterHintIndex((value) => value + 1), 10_000);
+    return () => clearInterval(timer);
+  }, [busy, composerEmpty, terminalAccessibility.reducedMotion]);
 
   const requestPermission = useCallback((call: ToolCall, category: ToolCategory, reason?: string) => {
     return new Promise<PermissionGrant>((resolve) => setPermission({
@@ -1817,6 +1829,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const tokenTotal = session.usage.inputTokens + session.usage.outputTokens;
   const contextStatus = runner.getContextStatus();
   const frame = spinnerFrames()[frameIndex % spinnerFrames().length] as string;
+  const composerStarterHint = starterHint(starterHintIndex, separator);
   const compactUi = compact || terminalHeight < 28;
   const constrainedHeight = terminalHeight < 18;
   const compactComposer = terminalHeight < 18;
@@ -1967,7 +1980,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
             busy={busy || editing}
             value={input}
             width={contentWidth}
-            placeholder={busy ? `Steer ${PRODUCT_NAME}${separator}alt+enter queues` : `Type a request${separator}@file${separator}/command`}
+            placeholder={busy ? `Steer ${PRODUCT_NAME}${separator}alt+enter queues` : composerStarterHint}
             queueCount={queue.length}
             {...(visibleQueuePreview ? {queuePreview: visibleQueuePreview} : {})}
             attachments={visibleAttachments}

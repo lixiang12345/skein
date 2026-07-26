@@ -1,9 +1,17 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.44",
+  "version": "0.3.45",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
+  "homepage": "https://lixiang12345.github.io/skein/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lixiang12345/skein.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lixiang12345/skein/issues"
+  },
   "keywords": [
     "ai",
     "coding-agent",
@@ -16,6 +24,12 @@
   },
   "skein": {
     "releaseNotes": [
+      "Root help now groups every subcommand under Getting started, Context & retrieval, Sessions & recovery, and Agents & extensions, ends with runnable examples plus Website/Docs/Issues pointers, and a regression fails when a new command lacks a group",
+      "Single-word prompts within a small edit distance of a real subcommand emit a non-blocking stderr hint instead of silently spending a model call, with adjacent-transposition matching and short-word substitution safeguards",
+      "A guarded POSIX installer wraps global npm install with Node 22.16 prerequisite checks, exact version pinning, dry-run planning, and PATH verification while npm registry checksums continue to enforce package integrity",
+      "The idle composer rotates starter hints behind a stable Type a request anchor and stays static under reduced motion, screen readers, and dumb terminals",
+      "skein feedback prints the issue tracker URL with a content-free environment summary, and published package metadata now resolves npm repo, bugs, and homepage",
+      "Every build regenerates man/skein.1 from the CLI's own help output across all 21 subcommands so the installed manual can never drift from real commands",
       "An opt-in Claude Code writer can now implement one bounded change inside a Skein-owned disposable worktree with safe mode, file-only tools, a pre-request USD cap, hard timeout, cancellation, API review, patch SHA, and live-human integration gates",
       "Claude writer runs combine a stable writable Profile with a dynamic Review Contract brief, while privacy-safe streamed tool names and counts make progress visible in Team Cockpit without exposing arguments, file content, prompts, or reasoning",
       "Read-only external expert recovery can invoke trusted Codex, Claude, or Grok runtimes with bounded profiles, minimal environments, explicit doctor guidance, and no provider-secret inheritance",
@@ -139,10 +153,12 @@
     "mosaic": "dist/cli.js",
     "mosaic-code": "dist/cli.js"
   },
+  "man": "./man/skein.1",
   "files": [
     "dist",
     "docs",
     "examples",
+    "man",
     "README.md",
     "LICENSE"
   ],
@@ -151,6 +167,7 @@
   },
   "scripts": {
     "build": "tsup",
+    "postbuild": "node scripts/generate-man.mjs",
     "dev": "tsx src/cli.tsx",
     "start": "node dist/cli.js",
     "test": "vitest run",

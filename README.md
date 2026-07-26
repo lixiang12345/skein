@@ -4,6 +4,12 @@
   <img src="docs/assets/skein-goose-flight.png" width="180" alt="Skein Goose: a flying goose carrying three woven context threads">
 </p>
 
+<p align="center">
+  <a href="https://github.com/lixiang12345/skein/actions/workflows/ci.yml"><img src="https://github.com/lixiang12345/skein/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="https://www.npmjs.com/package/@skein-code/cli"><img src="https://img.shields.io/npm/v/%40skein-code%2Fcli" alt="npm version"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
+</p>
+
 **An open, context-first coding agent for the terminal.**
 
 Skein understands the change surface before it edits, exposes every tool call,
@@ -94,6 +100,21 @@ The product rationale and competitor research are in
 
 ## Install
 
+Install the published package from npm (recommended):
+
+```bash
+npm install -g @skein-code/cli
+skein --version
+```
+
+Or use the guarded installer, which checks Node.js >= 22.16 first and can pin
+an exact version (`--version x.y.z`); package integrity stays enforced by
+npm's registry checksums:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lixiang12345/skein/main/scripts/install.sh | sh
+```
+
 From this repository:
 
 ```bash
@@ -106,13 +127,7 @@ To build, verify, and install a local package artifact from this checkout:
 
 ```bash
 npm run verify:package -- --output-dir artifacts/package
-npm install -g ./artifacts/package/skein-code-cli-0.3.32.tgz
-```
-
-To install the published package from npm:
-
-```bash
-npm install -g @skein-code/cli
+npm install -g ./artifacts/package/skein-code-cli-<version>.tgz
 ```
 
 Once installed, upgrade in place with `skein update` (it detects your package
@@ -124,6 +139,29 @@ newer version, or `--yes` to skip the confirmation prompt.
 environment variables remain compatible with this release.
 
 ## Quick start
+
+Sixty seconds from install to a first grounded run:
+
+```bash
+npm install -g @skein-code/cli
+cd your-project
+skein                      # first run opens guided relay setup, then the workspace
+```
+
+Or fully headless (CI and scripts) — export a relay credential, save only its
+environment-variable name, and print one verified result:
+
+```bash
+export TEAM_RELAY_API_KEY=...
+skein agents setup --yes --name team-relay --provider compatible \
+  --protocol openai-responses --base-url https://relay.example/v1 \
+  --api-key-env TEAM_RELAY_API_KEY --model provider/coding-model
+skein -p "summarize the failing tests" --output-format json
+```
+
+The JSON record follows `docs/headless-output.schema.json` with a stable
+exit-code contract (`0` verified … `9` needs review), so pipelines can gate on
+the result without parsing prose.
 
 On the first interactive `skein` run, an incomplete model configuration opens
 a keyboard-driven relay setup before any session is created. Choose OpenAI

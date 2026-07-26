@@ -217,7 +217,10 @@
             <div class="code-window-top"><span data-quickstep-title>1 · Install</span><button class="copy-button copy-button-code" type="button" data-copy-target="quickstep-install" aria-label="Copy quickstart command"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg><span>Copy</span></button></div>
             <pre id="quickstep-install" data-quickstep-panel="install"><code><span class="code-comment"># Node.js 22.16 or newer</span>
 npm install -g @skein-code/cli
-skein --version</code></pre>
+skein --version
+
+<span class="code-comment"># Or the guarded installer: checks Node first, pins exact versions.</span>
+curl -fsSL https://raw.githubusercontent.com/lixiang12345/skein/main/scripts/install.sh | sh</code></pre>
             <pre id="quickstep-connect" data-quickstep-panel="connect" hidden><code><span class="code-comment"># Export your relay key, then reference its name.</span>
 export TEAM_RELAY_API_KEY=…
 

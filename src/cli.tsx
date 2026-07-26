@@ -61,6 +61,7 @@ import {
   type OutputFormat,
 } from './cli/output.js';
 import {resolveCliGlyphs} from './cli/glyphs.js';
+import {suggestCommandForPrompt} from './cli/command-hint.js';
 import {acquireCliNamespaceLeases, releaseCliNamespaceLeases} from './cli/namespace-leases.js';
 import {
   needsFirstRunOnboarding,
@@ -98,7 +99,7 @@ import {
 } from './utils/namespace.js';
 import {refreshUpdateCache, updateNoticeText, upgradeCommand, type UpdateNotice} from './utils/update-check.js';
 import {resolveUpgradePlan, runUpgrade, upgradeCommandOverride} from './utils/self-update.js';
-import {PRODUCT_NAME, PRODUCT_COMMAND} from './brand.js';
+import {PRODUCT_NAME, PRODUCT_COMMAND, PRODUCT_WEBSITE_URL, PRODUCT_REPO_URL, PRODUCT_ISSUES_URL} from './brand.js';
 import {PLAN_MODE_INSTRUCTIONS} from './agent/prompt.js';
 import packageJson from '../package.json' with {type: 'json'};
 
@@ -125,7 +126,22 @@ program
   .name(PRODUCT_COMMAND)
   .description('A context-first, model-agnostic coding agent with an auditable workspace.')
   .version(packageJson.version)
-  .showSuggestionAfterError();
+  .showSuggestionAfterError()
+  .addHelpText('after', [
+    '',
+    'Examples:',
+    `  $ ${PRODUCT_COMMAND}                                   start the interactive workspace`,
+    `  $ ${PRODUCT_COMMAND} "fix the failing webhook test"    run one instruction interactively`,
+    `  $ ${PRODUCT_COMMAND} -p "explain src/agent/runner.ts"  run once and print the result`,
+    `  $ git diff | ${PRODUCT_COMMAND} -p "review this diff"  include piped stdin in the prompt`,
+    `  $ ${PRODUCT_COMMAND} search "token budget"             search the local code index`,
+    `  $ ${PRODUCT_COMMAND} --continue                        resume the latest session`,
+    '',
+    'Learn more:',
+    `  Website  ${PRODUCT_WEBSITE_URL}`,
+    `  Docs     ${PRODUCT_REPO_URL}/blob/main/docs/ARCHITECTURE.md`,
+    `  Issues   ${PRODUCT_ISSUES_URL}`,
+  ].join('\n'));
 
 program
   .argument('[prompt...]', 'instruction for the agent')
@@ -1725,6 +1741,28 @@ program
     }
   });
 
+program
+  .command('feedback')
+  .description('Show where to report issues, with a content-free environment summary')
+  .action(() => {
+    process.stdout.write(`Report issues and ideas: ${PRODUCT_ISSUES_URL}\n\n`);
+    process.stdout.write('Environment (safe to paste, no credentials or content):\n');
+    process.stdout.write(`  ${PRODUCT_NAME} ${packageJson.version}\n`);
+    process.stdout.write(`  Node ${process.versions.node} on ${process.platform} ${process.arch}\n`);
+  });
+
+const HELP_COMMAND_GROUPS: Record<string, readonly string[]> = {
+  'Getting started:': ['init', 'config', 'status', 'doctor', 'update', 'migrate', 'completion', 'feedback'],
+  'Context & retrieval:': ['index', 'search', 'context'],
+  'Sessions & recovery:': ['session', 'jobs', 'checkpoint'],
+  'Agents & extensions:': ['tools', 'skills', 'agents', 'workflow', 'memory', 'mcp', 'rules'],
+};
+for (const [heading, names] of Object.entries(HELP_COMMAND_GROUPS)) {
+  for (const name of names) {
+    program.commands.find((command) => command.name() === name)?.helpGroup(heading);
+  }
+}
+
 let cliNamespaceLeases: Awaited<ReturnType<typeof acquireCliNamespaceLeases>> = [];
 program.hook('preAction', async (_command, actionCommand) => {
   cliNamespaceLeases = await acquireCliNamespaceLeases(actionCommand);
@@ -1958,6 +1996,16 @@ async function runChat(prompts: string[], options: RootOptions): Promise<void> {
   const stdinPrompt = !process.stdin.isTTY ? await readStdin() : '';
   const firstPrompt = [...prompts, stdinPrompt].filter(Boolean).join('\n\n').trim();
   if (shouldPrint && !firstPrompt) throw new Error('Provide a prompt argument or pipe input on stdin.');
+  const soloPrompt = prompts.length === 1 ? prompts[0] : undefined;
+  if (soloPrompt && !stdinPrompt) {
+    const suggestion = suggestCommandForPrompt(soloPrompt, program.commands.map((command) => command.name()));
+    if (suggestion) {
+      process.stderr.write(
+        `hint: '${soloPrompt.trim()}' is being sent to the agent as a prompt; ` +
+        `run '${PRODUCT_COMMAND} ${suggestion}' if you meant that command.\n`,
+      );
+    }
+  }
   const workspace = resolve(options.workspace);
   const connectionSelection = shouldPrint ? 'required' as const : 'interactive' as const;
   let config = await runtimeConfig(workspace, {...options, connectionSelection});
