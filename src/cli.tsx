@@ -2060,11 +2060,23 @@ async function runChat(prompts: string[], options: RootOptions): Promise<void> {
   });
   if (!shouldPrint) {
     await store.save(runner.getSession());
+    // Fresh sessions surface a one-line pointer to the most recent prior
+    // session; resumed sessions already carry their transcript instead.
+    let resumeHint: {title: string; updatedAt: string} | undefined;
+    if (!selectedSession) {
+      const currentId = runner.getSession().id;
+      const summaries = await store.list().catch(() => []);
+      const latest = summaries
+        .filter((summary) => summary.id !== currentId && summary.messageCount > 0)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+      if (latest) resumeHint = {title: latest.title, updatedAt: latest.updatedAt};
+    }
     try {
       await runInteractiveTui({
         runner,
         config,
         extensions,
+        ...(resumeHint ? {resumeHint} : {}),
         ...(preparation?.status === 'ready' ? {workspaceReadiness: preparation.readiness} : {}),
         ...(firstPrompt ? {initialPrompt: firstPrompt} : {}),
         askMode: options.ask === true || options.plan === true,

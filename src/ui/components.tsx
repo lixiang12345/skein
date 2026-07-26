@@ -2,7 +2,7 @@ import React from 'react';
 import {Box, Text} from 'ink';
 import {basename} from 'node:path';
 import type {AgentPhase, ContextBudgetTier, ContextDegradation, ContextSource, MosaicConfig, PendingInput, PromptTokenBreakdown, RouteCostReceipt, SessionTask, ToolCall, ToolCategory, WorkingMemory} from '../types.js';
-import {PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
+import {PRODUCT_COMMAND, PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
 import {commandForCall} from '../tools/permissions.js';
 import {commandSuggestions, type CommandSuggestion} from './commands.js';
 import {
@@ -31,7 +31,7 @@ export type TimelineItem =
   | {id: string; kind: 'list'; title: string; entries: ListEntry[]}
   | {id: string; kind: 'context-inspector'; status: ContextInspectorStatus; working?: WorkingMemory; summary?: string; sources?: ContextSource[]}
   | {id: string; kind: 'theme'; name: string}
-  | {id: string; kind: 'banner'; engine: string; status: 'ready' | 'empty' | 'blocked'; version: string}
+  | {id: string; kind: 'banner'; engine: string; status: 'ready' | 'empty' | 'blocked'; version: string; files?: number; resume?: {title: string; updatedAt: string}}
   | {id: string; kind: 'notice'; text: string; tone?: 'info' | 'error' | 'success' | 'warning'; wrapWidth?: number}
   | {id: string; kind: 'update'; current: string; latest: string; command: string; highlights?: string[]};
 
@@ -481,7 +481,7 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
           return <ContextInspector key={item.id} status={item.status} working={item.working} summary={item.summary} width={width} compact={compact} glyphMode={glyphMode} />;
         }
         if (item.kind === 'theme') return <ThemePreview key={item.id} name={item.name} width={width} glyphs={glyphs} />;
-        if (item.kind === 'banner') return <Banner key={item.id} engine={item.engine} status={item.status} version={item.version} width={width} glyphs={glyphs} />;
+        if (item.kind === 'banner') return <Banner key={item.id} engine={item.engine} status={item.status} version={item.version} width={width} glyphs={glyphs} {...(item.files !== undefined ? {files: item.files} : {})} {...(item.resume ? {resume: item.resume} : {})} />;
         if (item.kind === 'update') {
           return <UpdateNotice key={item.id} current={item.current} latest={item.latest} command={item.command} width={width} glyphs={glyphs} {...(item.highlights ? {highlights: item.highlights} : {})} />;
         }
@@ -1425,12 +1425,14 @@ function ThemePreview({name, width, glyphs}: {name: string; width: number; glyph
   );
 }
 
-function Banner({engine, status, version, width, glyphs}: {
+function Banner({engine, status, version, width, glyphs, files, resume}: {
   engine: string;
   status: 'ready' | 'empty' | 'blocked';
   version: string;
   width: number;
   glyphs: UiGlyphs;
+  files?: number;
+  resume?: {title: string; updatedAt: string};
 }) {
   const theme = useTheme();
   const rowWidth = safeWidth(width);
@@ -1444,18 +1446,42 @@ function Banner({engine, status, version, width, glyphs}: {
       ? 'Empty workspace'
       : 'Setup required';
   const color = status === 'ready' ? theme.success : theme.warning;
+  const indexed = files !== undefined && files > 0 && rowWidth >= 64
+    ? `${glyphs.separator} ${files.toLocaleString('en-US')} files `
+    : '';
   const detail = rowWidth >= 48
-    ? `${label} ${glyphs.separator} ${safeEngine} context ${glyphs.separator} v${version}`
+    ? `${label} ${glyphs.separator} ${safeEngine} context ${indexed}${glyphs.separator} v${version}`
     : rowWidth >= 28
       ? `${label} ${glyphs.separator} v${version}`
       : `${status === 'ready' ? 'Ready' : status === 'empty' ? 'Empty' : 'Setup'} ${glyphs.separator} v${version}`;
+  const showResume = Boolean(resume) && status !== 'blocked' && rowWidth >= 48;
 
   return (
-    <Box marginBottom={1} paddingLeft={padding} height={1} overflowY="hidden">
-      <Text bold color={color}>{glyph} </Text>
-      <Text color={status === 'ready' ? theme.text : theme.warning}>{truncateDisplay(detail, Math.max(1, innerWidth - 2))}</Text>
+    <Box marginBottom={1} paddingLeft={padding} flexDirection="column">
+      <Box height={1} overflowY="hidden">
+        <Text bold color={color}>{glyph} </Text>
+        <Text color={status === 'ready' ? theme.text : theme.warning}>{truncateDisplay(detail, Math.max(1, innerWidth - 2))}</Text>
+      </Box>
+      {showResume && resume ? (
+        <Box height={1} overflowY="hidden">
+          <Text color={theme.muted}>{'  '}{truncateDisplay(
+            `last session "${sanitizeInlineTerminalText(resume.title)}" ${glyphs.separator} ${relativeAge(resume.updatedAt)} ${glyphs.separator} resume: ${PRODUCT_COMMAND} --continue`,
+            Math.max(1, innerWidth - 2),
+          )}</Text>
+        </Box>
+      ) : null}
     </Box>
   );
+}
+
+/** Coarse local age label for the fresh-session resume hint. */
+function relativeAge(iso: string): string {
+  const elapsedMinutes = Math.round((Date.now() - Date.parse(iso)) / 60_000);
+  if (!Number.isFinite(elapsedMinutes) || elapsedMinutes < 1) return 'just now';
+  if (elapsedMinutes < 60) return `${elapsedMinutes}m ago`;
+  const hours = Math.round(elapsedMinutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
 }
 function UpdateNotice({current, latest, command, highlights, width, glyphs}: {
   current: string;

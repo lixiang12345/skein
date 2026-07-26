@@ -1168,6 +1168,29 @@ export class AgentRunner {
     return accepted;
   }
 
+  /**
+   * Execute one user-typed shell command through the same permission,
+   * receipt, checkpoint, and changed-file pipeline as model tool calls.
+   * Backs the TUI `!` escape; never part of a model turn, so it cannot
+   * contribute completion evidence or bypass allow/deny policy.
+   */
+  async runUserShellCommand(
+    command: string,
+    options: RunOptions = {},
+  ): Promise<{call: ToolCall; result: ToolResult}> {
+    const emit = async (event: AgentEvent): Promise<void> => {
+      await options.onEvent?.(event);
+    };
+    const call: ToolCall = {
+      id: `user-shell-${randomUUID()}`,
+      name: 'shell',
+      arguments: {command, cwd: this.workspace.primaryRoot},
+    };
+    const result = await this.executeTool(call, options, emit);
+    await this.persist();
+    return {call, result};
+  }
+
   private async runVerification(
     options: RunOptions,
     emit: (event: AgentEvent) => Promise<void>,

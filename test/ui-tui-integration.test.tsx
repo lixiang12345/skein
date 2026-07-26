@@ -68,8 +68,11 @@ describe('SkeinApp completion flows', () => {
       expect(frame).not.toContain('EXTENSIONS');
 
       harness.stdin.write('/status\r');
-      await vi.waitFor(() => expect(harness.output()).toContain('28 files'));
+      // The fresh banner itself now shows the indexed file count, so wait on
+      // the chunk count, which only the /status panel renders.
+      await vi.waitFor(() => expect(harness.output()).toContain('71 chunks'));
       const output = stripAnsi(harness.output());
+      expect(output).toContain('28 files');
       expect(output).toContain('Status');
       expect(output).toContain('71 chunks');
       expect(output).toContain('9 tools');

@@ -118,10 +118,11 @@ export interface TuiOptions {
   askMode?: boolean;
   planMode?: boolean;
   workspaceReadiness?: WorkspaceReadiness;
+  resumeHint?: {title: string; updatedAt: string};
 }
 
 
-export function SkeinApp({runner, config, extensions, initialPrompt, askMode = false, planMode = false, workspaceReadiness}: TuiOptions) {
+export function SkeinApp({runner, config, extensions, initialPrompt, askMode = false, planMode = false, workspaceReadiness, resumeHint}: TuiOptions) {
   const {exit} = useApp();
   const {setRawMode} = useStdin();
   const {columns, rows} = useWindowSize();
@@ -152,6 +153,8 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     engine: 'local',
     status: setupProblem ? 'blocked' : workspaceReadiness?.files === 0 ? 'empty' : 'ready',
     version: packageJson.version,
+    ...(workspaceReadiness?.files ? {files: workspaceReadiness.files} : {}),
+    ...(resumeHint ? {resume: resumeHint} : {}),
   }, setupProblem));
   const [tasks, setTasks] = useState<SessionTask[]>(initialSession.tasks.map((task) => ({...task})));
   const [session, setSession] = useState<Session>(() => snapshotSession(initialSession));
@@ -1419,6 +1422,39 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       return;
     }
 
+    if (trimmed.startsWith('!')) {
+      const shellCommand = trimmed.slice(1).trim();
+      if (!shellCommand) {
+        append({id: nextId(), kind: 'notice', tone: 'info', text: `Usage: !<command> runs one shell command through ${PRODUCT_NAME}'s permission checks.`});
+        return;
+      }
+      if (processing.current) {
+        append({id: nextId(), kind: 'notice', tone: 'info', text: 'Shell escape is unavailable while a run is active; wait or press esc to stop it.'});
+        return;
+      }
+      processing.current = true;
+      setBusy(true);
+      append({id: nextId(), kind: 'user', text: trimmed});
+      const abortController = new AbortController();
+      controller.current = abortController;
+      try {
+        await runner.runUserShellCommand(shellCommand, {
+          signal: abortController.signal,
+          onEvent,
+          requestPermission,
+          requestHumanApproval,
+        });
+        setSession(snapshotSession(runner.getSession()));
+      } catch (error) {
+        append({id: nextId(), kind: 'notice', tone: 'error', text: error instanceof Error ? error.message : String(error)});
+      } finally {
+        controller.current = undefined;
+        processing.current = false;
+        setBusy(false);
+      }
+      return;
+    }
+
     if (processing.current && shouldDeferLocalCommand(trimmed)) {
       const pending: LocalQueueItem = {kind: 'local', display: trimmed, value: trimmed};
       queued.current.push(pending);
@@ -1979,6 +2015,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
           <PromptBar
             busy={busy || editing}
             value={input}
+            mode={input.trimStart().startsWith('!') ? 'shell' : 'chat'}
             width={contentWidth}
             placeholder={busy ? `Steer ${PRODUCT_NAME}${separator}alt+enter queues` : composerStarterHint}
             queueCount={queue.length}
@@ -2051,7 +2088,11 @@ function initialTimeline(session: Session, banner: BannerInfo, setupProblem?: st
   // A fresh session opens on the product banner instead of an empty screen; a
   // resumed session keeps its transcript and skips the banner.
   if (!items.length) {
-    items.push({id: nextId(), kind: 'banner', engine: banner.engine, status: banner.status, version: banner.version});
+    items.push({
+      id: nextId(), kind: 'banner', engine: banner.engine, status: banner.status, version: banner.version,
+      ...(banner.files !== undefined ? {files: banner.files} : {}),
+      ...(banner.resume ? {resume: banner.resume} : {}),
+    });
   }
   if (session.taskContract && session.taskContract.state !== 'satisfied') {
     const required = session.taskContract.acceptanceCriteria.filter((item) => item.required);
@@ -2075,6 +2116,8 @@ interface BannerInfo {
   engine: string;
   status: 'ready' | 'empty' | 'blocked';
   version: string;
+  files?: number;
+  resume?: {title: string; updatedAt: string};
 }
 
 function initialHistory(session: Session): string[] {

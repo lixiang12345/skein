@@ -195,7 +195,7 @@ export function estimateTimelineItemRows(
   if (item.kind === 'clarification') {
     return 3 + item.pending.options.length * (rowWidth < 48 ? 2 : 1);
   }
-  if (item.kind === 'banner') return 2;
+  if (item.kind === 'banner') return item.resume && rowWidth >= 48 ? 3 : 2;
   return 1;
 }
 

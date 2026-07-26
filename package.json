@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.47",
+  "version": "0.3.48",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -24,6 +24,8 @@
   },
   "skein": {
     "releaseNotes": [
+      "The composer gains a ! shell escape: !<command> runs one command through the same permission, receipt, checkpoint, and changed-file pipeline as model tool calls with a warning-styled shell mode, never spends a model turn, and stays fail-closed under ask denials and deny policy",
+      "Fresh sessions now show the indexed file count in the readiness line on wide terminals plus a one-line pointer to the most recent prior session with its age and the skein --continue command",
       "skein status now reports the default connection's real credential state and shows a missing API key as a warning instead of treating compatible providers as configured",
       "A self-contained product introduction page ships at /intro.html with an animated real-output terminal tour, keyboard-accessible tabs, honest capability claims, reduced-motion support, and zero external dependencies",
       "Local-only commands (index, search, context, status, doctor, config show) now work without a complete model connection: an incomplete default connection degrades to legacy model info instead of blocking, while explicit --connection and model-backed chat stay fail-closed with the exact incomplete-credential error",
