@@ -197,6 +197,7 @@
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm test && npm run website:check && npm run build && npm run smoke:dist",
     "website:check": "node scripts/verify-website.mjs",
+    "website:fable5:check": "node website-fable-5/check.mjs",
     "smoke:dist": "node dist/cli.js --help",
     "prepublishOnly": "npm run check"
   },

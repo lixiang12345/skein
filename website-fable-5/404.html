@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-title-en="Page not found — Skein" data-title-zh="页面不存在 — Skein">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#060708">
+  <meta name="generator" content="Claude Fable 5">
+  <meta name="robots" content="noindex">
+  <meta name="description" content="This page has wandered off the flight path.">
+  <link rel="icon" href="./assets/skein-goose.svg" type="image/svg+xml">
+  <title>Page not found — Skein</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script>
+    (function () {
+      var root = document.documentElement;
+      root.classList.add("js");
+      var theme = null, language = null;
+      try {
+        theme = window.localStorage.getItem("skein-theme");
+        language = window.localStorage.getItem("skein-lang");
+      } catch (error) { theme = null; language = null; }
+      if (theme !== "light" && theme !== "dark") {
+        theme = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      }
+      if (language !== "en" && language !== "zh-CN") {
+        language = ((navigator.language || "").toLowerCase().indexOf("zh") === 0) ? "zh-CN" : "en";
+      }
+      root.setAttribute("data-theme", theme);
+      root.style.colorScheme = theme;
+      root.setAttribute("lang", language);
+      document.addEventListener("DOMContentLoaded", function () {
+        var titled = root.getAttribute(language === "zh-CN" ? "data-title-zh" : "data-title-en");
+        if (titled) document.title = titled;
+      });
+    })();
+  </script>
+</head>
+<body>
+  <main class="wrap error-page">
+    <img src="./assets/skein-goose-dark.svg" width="126" height="88" alt="">
+    <p class="error-code"><span lang="en">404 · OFF THE FLIGHT PATH</span><span lang="zh-CN">404 · 偏离航线</span></p>
+    <h1><span lang="en">This page isn't in the index.</span><span lang="zh-CN">这一页不在索引里。</span></h1>
+    <p class="error-note" lang="en">The thread you followed doesn't lead anywhere — but the way back is short.</p>
+    <p class="error-note" lang="zh-CN">你跟着的这条线没有通向任何地方——好在回去的路很短。</p>
+    <div class="hero-actions">
+      <a class="button button-primary" href="./index.html"><span lang="en">Back to Skein</span><span lang="zh-CN">回到 Skein</span></a>
+      <a class="button button-ghost" href="./guide.html"><span lang="en">Read the guide</span><span lang="zh-CN">阅读指南</span> <span aria-hidden="true">↗</span></a>
+    </div>
+  </main>
+</body>
+</html>

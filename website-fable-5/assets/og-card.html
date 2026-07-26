@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Skein social card source — render at 1200x630</title>
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1200px; height: 630px; overflow: hidden; }
+  body {
+    position: relative;
+    font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background:
+      linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+      radial-gradient(52rem 30rem at 78% -14%, rgba(62, 230, 197, 0.13), transparent 70%),
+      #060708;
+    background-size: 72px 72px, 72px 72px, auto, auto;
+    color: #f5f7f8;
+    -webkit-font-smoothing: antialiased;
+  }
+  .frame {
+    position: absolute;
+    inset: 26px;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 26px;
+  }
+  .content {
+    position: absolute;
+    inset: 0;
+    padding: 84px 92px;
+    display: flex;
+    flex-direction: column;
+  }
+  .brand { display: flex; align-items: center; gap: 16px; }
+  .brand img { width: 58px; height: 41px; }
+  .brand span { font-size: 30px; font-weight: 750; letter-spacing: 0.01em; }
+  .brand i {
+    font-style: normal;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 15px;
+    font-weight: 650;
+    color: #7a8698;
+    border: 1.5px solid rgba(148, 163, 184, 0.35);
+    border-radius: 8px;
+    padding: 6px 9px;
+    letter-spacing: 0.1em;
+  }
+  h1 { margin-top: 74px; font-size: 84px; line-height: 1.04; letter-spacing: -0.024em; font-weight: 760; }
+  h1 .a { color: #3ee6c5; font-style: italic; }
+  .chip {
+    margin-top: 58px;
+    display: inline-flex;
+    align-items: center;
+    gap: 14px;
+    align-self: flex-start;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 14px;
+    background: rgba(16, 22, 31, 0.85);
+    padding: 17px 24px;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 23px;
+  }
+  .chip b { color: #3ee6c5; font-weight: 600; }
+  .meta {
+    margin-top: auto;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 19px;
+    letter-spacing: 0.06em;
+    color: #7a8698;
+    text-transform: uppercase;
+  }
+  .goose {
+    position: absolute;
+    right: 22px;
+    bottom: -14px;
+    width: 400px;
+    filter: drop-shadow(0 30px 60px rgba(2, 6, 12, 0.6));
+  }
+  .ring {
+    position: absolute;
+    right: -120px;
+    bottom: -260px;
+    width: 720px;
+    height: 720px;
+    border: 1.5px dashed rgba(62, 230, 197, 0.22);
+    border-radius: 50%;
+  }
+</style>
+</head>
+<body>
+  <div class="ring"></div>
+  <div class="frame"></div>
+  <div class="content">
+    <p class="brand">
+      <img src="./skein-goose-dark.svg" alt="">
+      <span>Skein</span>
+      <i>CLI</i>
+    </p>
+    <h1>Code with context.<br><span class="a">Ship with evidence.</span></h1>
+    <p class="chip"><b>$</b> npm install -g @skein-code/cli</p>
+    <p class="meta">Open source · MIT · Context-first coding agent for the terminal</p>
+  </div>
+  <img class="goose" src="./skein-goose-flight.png" alt="">
+</body>
+</html>

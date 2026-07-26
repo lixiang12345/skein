@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-title-en="Skein Guide — Introduction &amp; everyday usage" data-title-zh="Skein 指南 — 介绍与日常用法">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#060708">
+  <meta name="generator" content="Claude Fable 5">
+  <meta name="description" content="The Skein guide: what the context-first coding agent is, how to install and connect a relay, the commands you'll actually type, the headless CI contract, and how to recover anything.">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://lixiang12345.github.io/skein/guide.html">
+  <link rel="icon" href="./assets/skein-goose.svg" type="image/svg+xml">
+  <link rel="manifest" href="./site.webmanifest">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Skein">
+  <meta property="og:title" content="Skein Guide — Introduction &amp; everyday usage">
+  <meta property="og:description" content="Install, connect a relay, learn the everyday commands, wire up CI with stable exit codes, and recover anything.">
+  <meta property="og:url" content="https://lixiang12345.github.io/skein/guide.html">
+  <meta property="og:image" content="https://lixiang12345.github.io/skein/assets/skein-og-card.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Skein — code with context, ship with evidence. A goose carries three woven context threads.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Skein Guide — Introduction &amp; everyday usage">
+  <meta name="twitter:description" content="Install, connect a relay, learn the everyday commands, and wire up CI.">
+  <meta name="twitter:image" content="https://lixiang12345.github.io/skein/assets/skein-og-card.png">
+  <title>Skein Guide — Introduction &amp; everyday usage</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script>
+    (function () {
+      var root = document.documentElement;
+      root.classList.add("js");
+      var theme = null, language = null;
+      try {
+        theme = window.localStorage.getItem("skein-theme");
+        language = window.localStorage.getItem("skein-lang");
+      } catch (error) { theme = null; language = null; }
+      if (theme !== "light" && theme !== "dark") {
+        theme = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      }
+      if (language !== "en" && language !== "zh-CN") {
+        language = ((navigator.language || "").toLowerCase().indexOf("zh") === 0) ? "zh-CN" : "en";
+      }
+      root.setAttribute("data-theme", theme);
+      root.style.colorScheme = theme;
+      root.setAttribute("lang", language);
+    })();
+  </script>
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main"><span lang="en">Skip to content</span><span lang="zh-CN">跳到正文</span></a>
+
+  <header class="site-header" data-header>
+    <div class="wrap header-inner">
+      <a class="brand" href="./index.html" aria-label="Skein home">
+        <img class="brand-mark-dark" src="./assets/skein-goose-dark.svg" width="33" height="23" alt="">
+        <img class="brand-mark-light" src="./assets/skein-goose.svg" width="33" height="23" alt="">
+        <span>Skein</span>
+        <span class="brand-channel">GUIDE</span>
+      </a>
+      <button class="nav-toggle icon-button" type="button" aria-expanded="false" aria-controls="site-navigation" data-nav-toggle>
+        <span class="sr-only">Open navigation</span>
+        <span aria-hidden="true"></span>
+        <span aria-hidden="true"></span>
+      </button>
+      <nav class="site-nav" id="site-navigation" aria-label="Primary" data-nav>
+        <a href="./index.html"><span lang="en">Home</span><span lang="zh-CN">首页</span></a>
+        <a href="#what"><span lang="en">What is Skein</span><span lang="zh-CN">什么是 Skein</span></a>
+        <a href="#install"><span lang="en">Install</span><span lang="zh-CN">安装</span></a>
+        <a href="#commands"><span lang="en">Commands</span><span lang="zh-CN">命令</span></a>
+        <a href="#headless">CI</a>
+        <a href="#recovery"><span lang="en">Recovery</span><span lang="zh-CN">恢复</span></a>
+        <a href="#trust"><span lang="en">Trust</span><span lang="zh-CN">信任</span></a>
+      </nav>
+      <div class="header-actions">
+        <button class="lang-toggle icon-button" type="button" data-lang-toggle aria-label="切换到中文界面">
+          <span class="lang-en" aria-hidden="true">中</span>
+          <span class="lang-zh" aria-hidden="true">EN</span>
+        </button>
+        <button class="theme-toggle icon-button" type="button" aria-label="Switch theme" data-theme-toggle>
+          <svg class="theme-icon-sun" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+            <circle cx="12" cy="12" r="3.5"></circle>
+            <path d="M12 2v2.2M12 19.8V22M4.93 4.93l1.56 1.56M17.51 17.51l1.56 1.56M2 12h2.2M19.8 12H22M4.93 19.07l1.56-1.56M17.51 6.49l1.56-1.56"></path>
+          </svg>
+          <svg class="theme-icon-moon" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+            <path d="M20.2 15.7A8.5 8.5 0 0 1 8.3 3.8a8.5 8.5 0 1 0 11.9 11.9Z"></path>
+          </svg>
+        </button>
+        <a class="header-github" href="https://github.com/lixiang12345/skein" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="wrap guide-hero" aria-labelledby="guide-title">
+      <p class="eyebrow"><span lang="en">The guide</span><span lang="zh-CN">使用指南</span></p>
+      <h1 id="guide-title"><span lang="en">Everything you need<br>to run Skein <span class="accent">well.</span></span><span lang="zh-CN">把 Skein 用<span class="accent">顺手</span>,<br>这一页就够。</span></h1>
+      <p lang="en">One page, no fluff: what Skein is, how to install and connect it, the commands you'll actually type, the headless contract CI can rely on, and how to undo anything the agent did.</p>
+      <p lang="zh-CN">一页讲清，不掺水：Skein 是什么、如何安装与接入、日常真正会敲的命令、CI 可以依赖的无头契约，以及如何撤销智能体做过的任何事。</p>
+      <div class="hero-actions">
+        <a class="button button-primary" href="#install"><span lang="en">Install</span><span lang="zh-CN">安装</span> <span aria-hidden="true">↓</span></a>
+        <a class="button button-ghost" href="./index.html"><span lang="en">Product overview</span><span lang="zh-CN">产品总览</span> <span aria-hidden="true">↗</span></a>
+      </div>
+    </section>
+
+    <section class="wrap section-tight" id="what" aria-labelledby="what-title">
+      <div class="section-heading" data-reveal>
+        <p class="eyebrow"><span lang="en">What is Skein</span><span lang="zh-CN">什么是 Skein</span></p>
+        <h2 id="what-title"><span lang="en">A coding agent that lives in your terminal.</span><span lang="zh-CN">住在终端里的编码智能体。</span></h2>
+        <p lang="en">You describe a change in plain language. Skein finds the relevant code with its own local index, edits with your permission, runs your checks, and only reports success when those checks prove it.</p>
+        <p lang="zh-CN">你用自然语言描述改动，Skein 用自己的本地索引找到相关代码，经你允许后编辑，运行你的检查——只有检查证明之后才报告成功。</p>
+      </div>
+      <div class="grid-3">
+        <div class="info-card" data-reveal>
+          <span class="card-index">1</span>
+          <h3><span lang="en">You ask</span><span lang="zh-CN">你来描述</span></h3>
+          <p lang="en"><code>skein "fix the flaky webhook retry test"</code> — plain language, or pin files with <code>@path</code>. Works interactively or as a one-shot command.</p>
+          <p lang="zh-CN"><code>skein "fix the flaky webhook retry test"</code>——纯自然语言，或用 <code>@path</code> 固定文件。既可交互，也可一条命令直达。</p>
+        </div>
+        <div class="info-card" data-reveal>
+          <span class="card-index">2</span>
+          <h3><span lang="en">It works transparently</span><span lang="zh-CN">过程全透明</span></h3>
+          <p lang="en">Every file read, patch, and command shows up in a live timeline. Writes need your approval and get automatic pre-write checkpoints you can restore.</p>
+          <p lang="zh-CN">每次读文件、打补丁、执行命令都出现在实时时间线里。写入需要你的批准，并自动生成可恢复的写前检查点。</p>
+        </div>
+        <div class="info-card" data-reveal>
+          <span class="card-index">3</span>
+          <h3><span lang="en">You get proof</span><span lang="zh-CN">结果有证明</span></h3>
+          <p lang="en">The run ends with a completion status backed by real test and typecheck results — never just the model's word. Sessions persist for later audit.</p>
+          <p lang="zh-CN">运行以完成状态收尾，背后是真实的测试与类型检查结果——绝不只是模型的一面之词。会话持久保存，随时回溯审计。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="wrap section-tight" id="install" aria-labelledby="install-title">
+      <div class="section-heading" data-reveal>
+        <p class="eyebrow"><span lang="en">Step 1</span><span lang="zh-CN">第 1 步</span></p>
+        <h2 id="install-title"><span lang="en">Install.</span><span lang="zh-CN">安装。</span></h2>
+        <p lang="en">Skein ships on npm for Node.js 22.16 or newer, on macOS and Linux.</p>
+        <p lang="zh-CN">Skein 通过 npm 发布，需要 Node.js 22.16 或更新版本，支持 macOS 与 Linux。</p>
+      </div>
+      <div class="code-window" data-reveal>
+        <div class="code-window-top">
+          <span lang="en">install</span><span lang="zh-CN">安装</span>
+          <button class="copy-button" type="button" data-copy="npm install -g @skein-code/cli" aria-label="Copy the install command">
+            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg>
+            <span>Copy</span>
+          </button>
+        </div>
+        <pre><code><span class="code-comment"># Node.js 22.16 or newer</span>
+npm install -g @skein-code/cli
+skein --version
+man skein            <span class="code-comment"># the manual is generated from the CLI's own help output</span>
+
+<span class="code-comment"># Or the guarded installer: checks Node first, pins exact versions.</span>
+curl -fsSL https://raw.githubusercontent.com/lixiang12345/skein/main/scripts/install.sh | sh</code></pre>
+      </div>
+    </section>
+
+    <section class="wrap section-tight" id="connect" aria-labelledby="connect-title">
+      <div class="section-heading" data-reveal>
+        <p class="eyebrow"><span lang="en">Step 2</span><span lang="zh-CN">第 2 步</span></p>
+        <h2 id="connect-title"><span lang="en">Connect a model.</span><span lang="zh-CN">接入模型。</span></h2>
+        <p lang="en">Every connection names its provider and protocol explicitly — Skein never probes, never guesses from a URL, and never retries across protocols at your expense.</p>
+        <p lang="zh-CN">每个连接都显式声明 provider 与协议——Skein 不探测、不从 URL 猜测，更不会跨协议重试让你多花钱。</p>
+      </div>
+      <div class="table-wrap" data-reveal>
+        <table>
+          <thead>
+            <tr><th scope="col"><span lang="en">Connection</span><span lang="zh-CN">连接</span></th><th scope="col"><span lang="en">Protocol</span><span lang="zh-CN">协议</span></th><th scope="col"><span lang="en">Notes</span><span lang="zh-CN">说明</span></th></tr>
+          </thead>
+          <tbody>
+            <tr><td>OpenAI</td><td><code>openai-responses</code> · <code>openai-chat</code></td><td><span lang="en">Responses is the recommended transport</span><span lang="zh-CN">推荐使用 Responses 传输</span></td></tr>
+            <tr><td>Anthropic</td><td><code>anthropic-messages</code></td><td><span lang="en">Bearer and <code>x-api-key</code> auth both supported</span><span lang="zh-CN">同时支持 Bearer 与 <code>x-api-key</code> 认证</span></td></tr>
+            <tr><td>Gemini</td><td><code>gemini</code></td><td><span lang="en">Native provider connection</span><span lang="zh-CN">原生 provider 连接</span></td></tr>
+            <tr><td><span lang="en">Compatible relay</span><span lang="zh-CN">兼容中继</span></td><td><code>openai-responses</code> · <code>openai-chat</code> · <code>anthropic-messages</code></td><td><span lang="en">Any base URL speaking one of the three protocols</span><span lang="zh-CN">任何讲这三种协议之一的 base URL</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="code-window stack-top" data-reveal>
+        <div class="code-window-top">
+          <span lang="en">connect a relay</span><span lang="zh-CN">接入中继</span>
+          <button class="copy-button" type="button" data-copy="skein agents setup --yes --name team-relay --provider compatible --protocol openai-responses --base-url https://relay.example/v1 --api-key-env TEAM_RELAY_API_KEY --model provider/coding-model" aria-label="Copy the connection command">
+            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg>
+            <span>Copy</span>
+          </button>
+        </div>
+        <pre><code>export TEAM_RELAY_API_KEY=…   <span class="code-comment"># Skein stores the NAME, never the value</span>
+
+skein agents setup --yes \
+  --name team-relay \
+  --provider compatible \
+  --protocol openai-responses \
+  --base-url https://relay.example/v1 \
+  --api-key-env TEAM_RELAY_API_KEY \
+  --model provider/coding-model</code></pre>
+      </div>
+      <p class="note-card" data-reveal><span lang="en">First run without a connection? <code>skein</code> opens guided setup. Local-only commands — <code>index</code>, <code>search</code>, <code>context</code>, <code>status</code>, <code>doctor</code>, <code>config show</code> — work without any model connection at all.</span><span lang="zh-CN">第一次运行还没配连接？直接敲 <code>skein</code> 会进入引导式设置。纯本地命令——<code>index</code>、<code>search</code>、<code>context</code>、<code>status</code>、<code>doctor</code>、<code>config show</code>——完全不需要模型连接。</span></p>
+    </section>
+
+    <section class="wrap section-tight" id="commands" aria-labelledby="commands-title">
+      <div class="section-heading" data-reveal>
+        <p class="eyebrow"><span lang="en">Step 3</span><span lang="zh-CN">第 3 步</span></p>
+        <h2 id="commands-title"><span lang="en">The commands you'll <span class="accent">actually type.</span></span><span lang="zh-CN">你真正会敲的<span class="accent">命令</span>。</span></h2>
+        <p lang="en">Full reference: <code>skein --help</code> or <code>man skein</code> — both generated from the same command registry.</p>
+        <p lang="zh-CN">完整参考：<code>skein --help</code> 或 <code>man skein</code>——两者都从同一份命令注册表生成。</p>
+      </div>
+      <div class="table-wrap" data-reveal>
+        <table>
+          <thead>
+            <tr><th scope="col"><span lang="en">You want to…</span><span lang="zh-CN">你想……</span></th><th scope="col"><span lang="en">Type</span><span lang="zh-CN">就敲</span></th><th scope="col"><span lang="en">Notes</span><span lang="zh-CN">说明</span></th></tr>
+          </thead>
+          <tbody>
+            <tr><td><span lang="en">Open the workspace</span><span lang="zh-CN">打开工作区</span></td><td><code>skein</code></td><td><span lang="en">Composer-first TUI; first run guides relay setup</span><span lang="zh-CN">以输入框为中心的 TUI;首次运行引导中继设置</span></td></tr>
+            <tr><td><span lang="en">Make one change</span><span lang="zh-CN">做一个改动</span></td><td><code>skein "add retry logging"</code></td><td><span lang="en">Pin context with <code>@src/file.ts</code></span><span lang="zh-CN">用 <code>@src/file.ts</code> 固定上下文</span></td></tr>
+            <tr><td><span lang="en">Ask without editing</span><span lang="zh-CN">只问不改</span></td><td><code>skein --ask "why is auth slow?"</code></td><td><span lang="en">Mutation tools are denied in ask mode</span><span lang="zh-CN">ask 模式下修改类工具一律被拒</span></td></tr>
+            <tr><td><span lang="en">Script or CI run</span><span lang="zh-CN">脚本或 CI 运行</span></td><td><code>skein -p "…" --output-format json</code></td><td><span lang="en">Stable exit codes — table below</span><span lang="zh-CN">稳定退出码——见下表</span></td></tr>
+            <tr><td><span lang="en">Search your code</span><span lang="zh-CN">搜索代码</span></td><td><code>skein search "token budget"</code></td><td><span lang="en">Local index, offline, scored spans with line ranges</span><span lang="zh-CN">本地索引、离线、带行号区间的评分片段</span></td></tr>
+            <tr><td><span lang="en">Resume yesterday</span><span lang="zh-CN">继续昨天的活</span></td><td><code>skein --continue</code></td><td><span lang="en">Or <code>skein session list</code> + <code>--resume &lt;id&gt;</code></span><span lang="zh-CN">或 <code>skein session list</code> + <code>--resume &lt;id&gt;</code></span></td></tr>
+            <tr><td><span lang="en">Undo an agent edit</span><span lang="zh-CN">撤销智能体的修改</span></td><td><code>skein checkpoint list</code> → <code>restore</code></td><td><span lang="en">Every mutation has a pre-write snapshot</span><span lang="zh-CN">每次修改都有写前快照</span></td></tr>
+            <tr><td><span lang="en">Check your setup</span><span lang="zh-CN">体检环境</span></td><td><code>skein doctor</code></td><td><span lang="en">Diagnoses terminal, index, connections, credentials</span><span lang="zh-CN">诊断终端、索引、连接与凭据</span></td></tr>
+            <tr><td><span lang="en">See connection state</span><span lang="zh-CN">查看连接状态</span></td><td><code>skein status</code></td><td><span lang="en">Reports the default connection's real credential state</span><span lang="zh-CN">如实报告默认连接的凭据状态</span></td></tr>
+            <tr><td><span lang="en">Report an issue</span><span lang="zh-CN">反馈问题</span></td><td><code>skein feedback</code></td><td><span lang="en">Prints the tracker URL with a content-free summary</span><span lang="zh-CN">打印问题追踪地址与不含内容的环境摘要</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="section-heading stack-top" data-reveal>
+        <h3 id="tui-title" style="font-size: 19px"><span lang="en">Inside the interactive workspace</span><span lang="zh-CN">交互工作区里</span></h3>
+      </div>
+      <ul class="kbd-list" aria-labelledby="tui-title" data-reveal>
+        <li><kbd>@path</kbd> <span lang="en">attach a file as pinned context</span><span lang="zh-CN">把文件作为固定上下文附加</span></li>
+        <li><kbd>/command</kbd> <span lang="en">open the command palette</span><span lang="zh-CN">打开命令面板</span></li>
+        <li><kbd>!command</kbd> <span lang="en">run one shell command, permission-checked</span><span lang="zh-CN">运行一条 shell 命令，经权限检查</span></li>
+        <li><kbd>alt+enter</kbd> <span lang="en">queue a follow-up while the agent is busy</span><span lang="zh-CN">智能体忙时排队一条后续指令</span></li>
+        <li><kbd>esc</kbd> <span lang="en">stop the current run</span><span lang="zh-CN">停止当前运行</span></li>
+        <li><kbd>ctrl+r</kbd> <span lang="en">search your prompt history</span><span lang="zh-CN">搜索提示历史</span></li>
+      </ul>
+    </section>
+
+    <section class="wrap section-tight" id="headless" aria-labelledby="headless-title">
+      <div class="section-heading" data-reveal>
+        <p class="eyebrow"><span lang="en">Automation</span><span lang="zh-CN">自动化</span></p>
+        <h2 id="headless-title"><span lang="en">Headless, with a contract <span class="accent">CI can trust.</span></span><span lang="zh-CN">无头运行，契约让 <span class="accent">CI 敢信</span>。</span></h2>
+        <p lang="en">Print mode emits text, JSON, or streaming JSON following the published schema in <a class="text-link" href="https://github.com/lixiang12345/skein/blob/main/docs/headless-output.schema.json" rel="noreferrer">docs/headless-output.schema.json</a>. Pipelines gate on structured status and exit codes — never on parsed prose.</p>
+        <p lang="zh-CN">打印模式输出文本、JSON 或流式 JSON,遵循 <a class="text-link" href="https://github.com/lixiang12345/skein/blob/main/docs/headless-output.schema.json" rel="noreferrer">docs/headless-output.schema.json</a> 发布的 schema。流水线只依赖结构化状态与退出码——从不解析散文。</p>
+      </div>
+      <div class="code-window" data-reveal>
+        <div class="code-window-top">
+          <span lang="en">headless run</span><span lang="zh-CN">无头运行</span>
+          <button class="copy-button" type="button" data-copy='skein -p "summarize the failing tests" --output-format json' aria-label="Copy the headless command">
+            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg>
+            <span>Copy</span>
+          </button>
+        </div>
+        <pre><code>skein -p "summarize the failing tests" --output-format json
+<span class="code-comment"># → { "status": "verified", "exitCode": 0, "changedFiles": […], "usage": … }</span></code></pre>
+      </div>
+      <div class="table-wrap stack-top" data-reveal>
+        <table>
+          <thead>
+            <tr><th scope="col"><span lang="en">Exit</span><span lang="zh-CN">退出码</span></th><th scope="col"><span lang="en">Status</span><span lang="zh-CN">状态</span></th><th scope="col"><span lang="en">Meaning</span><span lang="zh-CN">含义</span></th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>0</code></td><td><span class="status-good">verified</span> <span class="soft">/ completed</span></td><td><span lang="en">Done, with current deterministic evidence</span><span lang="zh-CN">完成，且有当前的确定性证据</span></td></tr>
+            <tr><td><code>1</code></td><td><code>error</code></td><td><span lang="en">The run failed with an error</span><span lang="zh-CN">运行出错失败</span></td></tr>
+            <tr><td><code>2</code></td><td><code>needs_input</code></td><td><span lang="en">One persisted clarification question awaits an answer</span><span lang="zh-CN">一条持久化的澄清问题等待回答</span></td></tr>
+            <tr><td><code>3</code></td><td><code>unverified</code></td><td><span lang="en">Work finished but no current check proves it</span><span lang="zh-CN">工作完成但没有当前检查能证明</span></td></tr>
+            <tr><td><code>4</code></td><td><code>verification_failed</code></td><td><span lang="en">A required check ran and failed</span><span lang="zh-CN">必需检查已运行且失败</span></td></tr>
+            <tr><td><code>5</code></td><td><code>blocked</code></td><td><span lang="en">A required permission or gate stopped the run</span><span lang="zh-CN">必需权限或门禁拦停了运行</span></td></tr>
+            <tr><td><code>6</code></td><td><code>cancelled</code></td><td><span lang="en">The run was cancelled</span><span lang="zh-CN">运行被取消</span></td></tr>
+            <tr><td><code>7</code></td><td><code>max_turns</code></td><td><span lang="en">The configured turn limit was reached</span><span lang="zh-CN">达到配置的轮次上限</span></td></tr>
+            <tr><td><code>8</code></td><td><code>token_budget</code></td><td><span lang="en">The configured token budget was exhausted</span><span lang="zh-CN">配置的 token 预算耗尽</span></td></tr>
+            <tr><td><code>9</code></td><td><code>needs_review</code></td><td><span lang="en">Completion requires human review</span><span lang="zh-CN">完成需要人工评审</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="wrap section-tight" id="recovery" aria-labelledby="recovery-title">
+      <div class="section-heading" data-reveal>
+        <p class="eyebrow"><span lang="en">Nothing is a one-way door</span><span lang="zh-CN">没有单行道</span></p>
+        <h2 id="recovery-title"><span lang="en">Recover <span class="accent">anything.</span></span><span lang="zh-CN">任何东西都能<span class="accent">恢复</span>。</span></h2>
+        <p lang="en">Durable sessions and automatic pre-write checkpoints mean an agent run is never something you just hope went well.</p>
+        <p lang="zh-CN">持久会话与自动写前检查点，意味着一次智能体运行绝不是「只能祈祷结果」的事。</p>
+      </div>
+      <div class="code-window" data-reveal>
+        <div class="code-window-top">
+          <span lang="en">sessions · checkpoints · audit</span><span lang="zh-CN">会话 · 检查点 · 审计</span>
+          <button class="copy-button" type="button" data-copy="skein checkpoint list" aria-label="Copy the checkpoint command">
+            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg>
+            <span>Copy</span>
+          </button>
+        </div>
+        <pre><code>skein session list               <span class="code-comment"># durable, resumable, forkable sessions</span>
+skein session fork &lt;id&gt;          <span class="code-comment"># branch a run without losing the original</span>
+skein checkpoint list            <span class="code-comment"># every mutation has a pre-write snapshot</span>
+skein checkpoint restore &lt;s&gt; &lt;c&gt; <span class="code-comment"># put the files back, Git history untouched</span>
+/recover                         <span class="code-comment"># in the TUI: retry, diff, audit, rollback</span></code></pre>
+      </div>
+    </section>
+
+    <section class="wrap section-tight" id="trust" aria-labelledby="trust-heading">
+      <div class="section-heading" data-reveal>
+        <p class="eyebrow"><span lang="en">Invariants</span><span lang="zh-CN">不变量</span></p>
+        <h2 id="trust-heading"><span lang="en">Rules the model <span class="accent">can't vote on.</span></span><span lang="zh-CN">模型<span class="accent">没有投票权</span>的规则。</span></h2>
+        <p lang="en">Independent read, write, shell, Git, and network gates; workspace-root enforcement; and project config that stays untrusted until you pass <code>--trust-project-config</code>. On top of that, four invariants hold across every provider, mode, and flag — including <code>--yes</code>.</p>
+        <p lang="zh-CN">独立的读/写/Shell/Git/网络门禁、工作区根路径强制，以及在你传入 <code>--trust-project-config</code> 之前始终不受信的项目配置。在此之上，四条不变量对每个 provider、每种模式、每个 flag(包括 <code>--yes</code>)都成立。</p>
+      </div>
+      <div class="invariant-grid">
+        <div class="invariant-card" data-reveal>
+          <span class="badge" aria-hidden="true">1</span>
+          <div><h3><span lang="en">Deterministic truth wins</span><span lang="zh-CN">确定性事实优先</span></h3><p lang="en">Passing receipts beat conflicting model judgment; failing checks cannot be overridden by any reviewer, however persuasive the prose.</p><p lang="zh-CN">通过的回执压过相左的模型判断；失败的检查任何评审者都无法推翻——文字再有说服力也不行。</p></div>
+        </div>
+        <div class="invariant-card" data-reveal>
+          <span class="badge" aria-hidden="true">2</span>
+          <div><h3><span lang="en">Content-free telemetry</span><span lang="zh-CN">遥测不含内容</span></h3><p lang="en">Receipts and registries keep hashes, counts, and bounded aggregates — no prompts, no source text, no command arguments, no credentials.</p><p lang="zh-CN">回执与注册表只保留哈希、计数与有界聚合——没有提示词、源码、命令参数或凭据。</p></div>
+        </div>
+        <div class="invariant-card" data-reveal>
+          <span class="badge" aria-hidden="true">3</span>
+          <div><h3><span lang="en">Live-human gates stay human</span><span lang="zh-CN">真人门禁只认真人</span></h3><p lang="en">Git push, publish, destructive commands, writer integration: no flag, config rule, or model review can stand in for a person saying yes.</p><p lang="zh-CN">Git push、发布、破坏性命令、写入集成：任何 flag、配置规则或模型评审都不能替一个人说「可以」。</p></div>
+        </div>
+        <div class="invariant-card" data-reveal>
+          <span class="badge" aria-hidden="true">4</span>
+          <div><h3><span lang="en">Cloned code has no authority</span><span lang="zh-CN">克隆的代码没有权限</span></h3><p lang="en">Project-local hooks, endpoints, and verification commands activate only after you explicitly trust the workspace configuration.</p><p lang="zh-CN">项目本地的钩子、端点与验证命令，只有在你显式信任该工作区配置后才会激活。</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="wrap section-tight" id="faq" aria-labelledby="faq-heading">
+      <div class="section-heading" data-reveal>
+        <p class="eyebrow"><span lang="en">FAQ</span><span lang="zh-CN">常见问题</span></p>
+        <h2 id="faq-heading"><span lang="en">Fair questions.</span><span lang="zh-CN">问得都在理。</span></h2>
+      </div>
+      <div class="faq-list" data-reveal>
+        <details>
+          <summary><span lang="en">What happens to my API keys?</span><span lang="zh-CN">我的 API Key 会怎样？</span><span aria-hidden="true">+</span></summary>
+          <p lang="en">Skein saves the environment-variable <em>name</em>, never the value. Diagnostics redact secrets, URLs, and query strings, and receipts are content-free by design.</p>
+          <p lang="zh-CN">Skein 只保存环境变量的<em>名字</em>,绝不保存值。诊断输出会遮蔽密钥、URL 与查询串，回执从设计上就不含内容。</p>
+        </details>
+        <details>
+          <summary><span lang="en">Does my code leave my machine?</span><span lang="zh-CN">我的代码会离开本机吗？</span><span aria-hidden="true">+</span></summary>
+          <p lang="en">Indexing, retrieval, ranking, and search run locally and work offline. Only the context selected for a model turn goes to the relay you explicitly configured.</p>
+          <p lang="zh-CN">索引、检索、排序与搜索都在本地运行，可完全离线。只有为某次模型调用挑选的上下文，会发送到你显式配置的中继。</p>
+        </details>
+        <details>
+          <summary><span lang="en">Can a cloned repository change Skein's behavior?</span><span lang="zh-CN">克隆下来的仓库能改变 Skein 的行为吗？</span><span aria-hidden="true">+</span></summary>
+          <p lang="en">Not by default. Project-local configuration is untrusted until you opt in with <code>--trust-project-config</code> — hooks, verification commands, and endpoint overrides stay inert in freshly cloned code.</p>
+          <p lang="zh-CN">默认不能。项目本地配置在你用 <code>--trust-project-config</code> 选择信任之前不受信——新克隆代码里的钩子、验证命令与端点覆盖全部处于惰性状态。</p>
+        </details>
+        <details>
+          <summary><span lang="en">Which providers does it work with?</span><span lang="zh-CN">支持哪些模型服务？</span><span aria-hidden="true">+</span></summary>
+          <p lang="en">OpenAI Responses, OpenAI Chat, Anthropic Messages, and Gemini natively, plus compatible relay endpoints for the OpenAI and Anthropic protocols — each chosen explicitly per connection.</p>
+          <p lang="zh-CN">原生支持 OpenAI Responses、OpenAI Chat、Anthropic Messages 与 Gemini,并支持讲 OpenAI 或 Anthropic 协议的兼容中继端点——每个连接都显式选定。</p>
+        </details>
+      </div>
+    </section>
+
+    <section class="wrap">
+      <div class="final-cta" aria-labelledby="cta-heading" data-reveal>
+        <img src="./assets/skein-goose-dark.svg" width="140" height="98" alt="">
+        <p class="eyebrow" style="justify-content: center"><span lang="en">Weave your next change</span><span lang="zh-CN">织起下一次变更</span></p>
+        <h2 id="cta-heading"><span lang="en">One command. Your model,<br>your rules, <span class="accent">your evidence.</span></span><span lang="zh-CN">一条命令。你的模型、<br>你的规则、<span class="accent">你的证据</span>。</span></h2>
+        <div class="hero-actions">
+          <a class="button button-primary" href="https://www.npmjs.com/package/@skein-code/cli" rel="noreferrer"><span lang="en">Get Skein on npm</span><span lang="zh-CN">到 npm 获取 Skein</span></a>
+          <a class="button button-ghost" href="https://github.com/lixiang12345/skein/blob/main/docs/ARCHITECTURE.md" rel="noreferrer"><span lang="en">Read the architecture</span><span lang="zh-CN">阅读架构文档</span> <span aria-hidden="true">↗</span></a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <img src="./assets/skein-goose-dark.svg" class="brand-mark-dark" width="38" height="27" alt="">
+          <img src="./assets/skein-goose.svg" class="brand-mark-light" width="38" height="27" alt="">
+          <p lang="en">Context-first coding for the terminal. Open where it matters, strict where it counts.</p>
+          <p lang="zh-CN">上下文优先的终端编码。该开放处开放，该严格处严格。</p>
+        </div>
+        <div class="footer-col">
+          <strong lang="en">Guide</strong><strong lang="zh-CN">指南</strong>
+          <a href="#install"><span lang="en">Install</span><span lang="zh-CN">安装</span></a>
+          <a href="#commands"><span lang="en">Commands</span><span lang="zh-CN">命令</span></a>
+          <a href="#headless"><span lang="en">CI contract</span><span lang="zh-CN">CI 契约</span></a>
+          <a href="#recovery"><span lang="en">Recovery</span><span lang="zh-CN">恢复</span></a>
+        </div>
+        <div class="footer-col">
+          <strong lang="en">Learn</strong><strong lang="zh-CN">学习</strong>
+          <a href="./index.html"><span lang="en">Product overview</span><span lang="zh-CN">产品总览</span></a>
+          <a href="https://github.com/lixiang12345/skein#readme" rel="noreferrer"><span lang="en">Documentation</span><span lang="zh-CN">文档</span></a>
+          <a href="https://github.com/lixiang12345/skein/blob/main/docs/ARCHITECTURE.md" rel="noreferrer"><span lang="en">Architecture</span><span lang="zh-CN">架构</span></a>
+        </div>
+        <div class="footer-col">
+          <strong lang="en">Open source</strong><strong lang="zh-CN">开源</strong>
+          <a href="https://github.com/lixiang12345/skein" rel="noreferrer">GitHub</a>
+          <a href="https://github.com/lixiang12345/skein/issues" rel="noreferrer">Issues</a>
+          <a href="https://www.npmjs.com/package/@skein-code/cli" rel="noreferrer">npm</a>
+          <a href="https://github.com/lixiang12345/skein/blob/main/LICENSE" rel="noreferrer"><span lang="en">MIT license</span><span lang="zh-CN">MIT 许可</span></a>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <p>© <span data-year>2026</span> <span lang="en">Skein contributors.</span><span lang="zh-CN">Skein 贡献者。</span></p>
+        <p lang="en">No tracking. No cookies. Just the site.</p>
+        <p lang="zh-CN">不跟踪，无 Cookie,只有网站本身。</p>
+      </div>
+    </div>
+  </footer>
+
+  <div class="toast" role="status" aria-live="polite" aria-atomic="true" data-toast></div>
+</body>
+</html>

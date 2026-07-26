@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">Skein Goose for dark backgrounds</title>
+  <desc id="description">A forward-flying goose whose wing carries a continuous woven thread.</desc>
+  <path fill="#f4f7fb" fill-rule="evenodd" d="M38 300c41-58 105-86 190-81 36 2 70 10 101 24 8-35 14-78 35-113 20-34 55-54 87-45 25 7 41 29 36 51-4 17-21 28-42 28l57 23-58 24c-19 1-35-5-47-16-8 22-9 46-4 73 8 43-7 80-42 108-49 40-127 55-201 33-55-16-96-53-112-109Zm78-10c50-45 126-66 207-38-44 14-78 37-104 70-32-17-67-28-103-32Z"/>
+  <path fill="#6ee7d0" d="M74 324c48-31 97-37 146-16 43 18 83 16 119-8-28 39-74 57-124 38-48-18-91-15-128 10-7-7-11-15-13-24Z"/>
+  <circle cx="444" cy="119" r="8" fill="#6ee7d0"/>
+</svg>

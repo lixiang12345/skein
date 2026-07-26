@@ -1,0 +1,17 @@
+{
+  "name": "Skein",
+  "short_name": "Skein",
+  "description": "An open, context-first coding agent for the terminal.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0a0d12",
+  "theme_color": "#0a0d12",
+  "icons": [
+    {
+      "src": "./assets/skein-goose.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
