@@ -7,6 +7,7 @@ import {Command, Option} from 'commander';
 import chalk from 'chalk';
 import {
   configSummary,
+  defaultConfig,
   defaultModelForProvider,
   loadConfig,
   redactEndpoint,
@@ -45,9 +46,9 @@ import {
 } from './agent/connection-catalog.js';
 import {discoverWorkspaceRules} from './agent/rules.js';
 import {createProvider} from './providers/index.js';
-import {createSessionWorktree, SessionStore, ToolArtifactStore, type SessionSummary} from './session/index.js';
+import {BackgroundJobStore, createSessionWorktree, runBackgroundWorker, SessionStore, ToolArtifactStore, type SessionSummary} from './session/index.js';
 import {CheckpointStore} from './checkpoint/index.js';
-import {createDefaultToolRegistry} from './tools/index.js';
+import {createDefaultToolRegistry, evaluatePermission, shellTool} from './tools/index.js';
 import {atomicWrite} from './tools/write.js';
 import {runDoctor} from './cli/doctor.js';
 import {generateShellCompletion, type CompletionShell} from './cli/completion.js';
@@ -493,6 +494,8 @@ sessionCommand
     const store = new SessionStore(workspace);
     const session = await requireSessionSelector(store, id);
     if (!options.yes && !(await confirm(`Delete session ${session.id.slice(0, 8)}?`))) return;
+    const backgroundConfig = defaultConfig(workspace).backgroundJobs;
+    if (backgroundConfig) await new BackgroundJobStore(workspace, backgroundConfig).removeSession(session.id);
     await new ToolArtifactStore(workspace).removeSession(session.id);
     await store.remove(session.id);
     process.stdout.write(`Deleted ${session.id}\n`);
@@ -554,6 +557,103 @@ sessionCommand
     }
   });
 
+const jobsCommand = program.command('jobs').description('Manage optional durable background jobs');
+jobsCommand
+  .command('start <session> <command>')
+  .description('Start one session-owned command after explicit operator confirmation')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--cwd <path>', 'working directory inside the workspace', '.')
+  .option('--timeout <ms>', 'runtime limit up to the configured maximum')
+  .option('--yes', 'confirm this exact background command')
+  .option('--json', 'print JSON')
+  .action(async (sessionSelector: string, command: string, options: SessionCommandOptions & RuntimeConfigOptions & {
+    cwd?: string;
+    timeout?: string;
+    yes?: boolean;
+  }) => {
+    if (!options.yes) throw new Error('Starting a background command requires explicit --yes confirmation.');
+    const workspace = workspaceOption(options.workspace);
+    const config = await runtimeConfig(workspace, runtimeOptions(options));
+    const background = requireBackgroundJobs(config);
+    const session = await requireSessionSelector(new SessionStore(workspace), sessionSelector);
+    const call = {id: 'cli-background-start', name: 'background_start', arguments: {command, cwd: options.cwd ?? '.'}};
+    const categories = shellTool.permissionCategories?.({command, cwd: options.cwd ?? '.'}) ?? ['shell' as const];
+    for (const category of categories) {
+      const decision = evaluatePermission(config.permissions, call, category);
+      if (decision.outcome === 'deny') throw new Error(decision.reason);
+    }
+    const timeoutMs = options.timeout === undefined ? undefined : positiveInt(options.timeout, 0);
+    if (options.timeout !== undefined && !timeoutMs) throw new Error('--timeout must be a positive integer.');
+    const job = await new BackgroundJobStore(workspace, background).start(session.id, {
+      command,
+      cwd: options.cwd ?? '.',
+      ...(timeoutMs ? {timeoutMs} : {}),
+    });
+    if (options.json) printObject(job, true);
+    else process.stdout.write(`${formatBackgroundJob(job)}\n`);
+  });
+jobsCommand
+  .command('list <session>')
+  .description('List jobs owned by one session')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--json', 'print JSON')
+  .action(async (sessionSelector: string, options: SessionCommandOptions & RuntimeConfigOptions) => {
+    const workspace = workspaceOption(options.workspace);
+    const config = await runtimeConfig(workspace, runtimeOptions(options));
+    const background = backgroundJobsForRecovery(config);
+    const session = await requireSessionSelector(new SessionStore(workspace), sessionSelector);
+    const jobs = await new BackgroundJobStore(workspace, background).list(session.id);
+    if (options.json) printObject(jobs, true);
+    else process.stdout.write(jobs.length ? `${jobs.map(formatBackgroundJob).join('\n')}\n` : 'No background jobs for this session.\n');
+  });
+jobsCommand
+  .command('output <session> <job>')
+  .description('Read bounded incremental stdout/stderr')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--cursor <cursor>', 'stdout:stderr byte cursor', '0:0')
+  .option('--max-bytes <n>', 'maximum output bytes', '8000')
+  .option('--json', 'print JSON')
+  .action(async (sessionSelector: string, jobId: string, options: SessionCommandOptions & RuntimeConfigOptions & {
+    cursor: string;
+    maxBytes: string;
+  }) => {
+    const workspace = workspaceOption(options.workspace);
+    const config = await runtimeConfig(workspace, runtimeOptions(options));
+    const background = backgroundJobsForRecovery(config);
+    const session = await requireSessionSelector(new SessionStore(workspace), sessionSelector);
+    const result = await new BackgroundJobStore(workspace, background).output(session.id, jobId, {
+      cursor: options.cursor,
+      maxBytes: positiveInt(options.maxBytes, 8_000),
+    });
+    if (options.json) printObject(result, true);
+    else {
+      process.stdout.write(`${formatBackgroundJob(result.job)}\n`);
+      if (result.stdout) process.stdout.write(`stdout:\n${result.stdout}\n`);
+      if (result.stderr) process.stdout.write(`stderr:\n${result.stderr}\n`);
+      process.stdout.write(`next_cursor: ${result.cursor}${result.hasMore ? ' (more available)' : ''}\n`);
+    }
+  });
+jobsCommand
+  .command('kill <session> <job>')
+  .description('Cancel a session-owned process tree')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--yes', 'confirm cancellation')
+  .option('--json', 'print JSON')
+  .action(async (sessionSelector: string, jobId: string, options: SessionCommandOptions & RuntimeConfigOptions & {yes?: boolean}) => {
+    if (!options.yes) throw new Error('Cancelling a background job requires explicit --yes confirmation.');
+    const workspace = workspaceOption(options.workspace);
+    const config = await runtimeConfig(workspace, runtimeOptions(options));
+    const background = backgroundJobsForRecovery(config);
+    const session = await requireSessionSelector(new SessionStore(workspace), sessionSelector);
+    const job = await new BackgroundJobStore(workspace, background).kill(session.id, jobId);
+    if (options.json) printObject(job, true);
+    else process.stdout.write(`${formatBackgroundJob(job)}\n`);
+  });
+
 const checkpointCommand = program.command('checkpoint').description('Inspect and restore pre-mutation snapshots');
 checkpointCommand
   .command('list <session>')
@@ -595,10 +695,16 @@ checkpointCommand
 
 program
   .command('tools')
-  .description('List built-in agent tools and permission categories')
+  .description('List active built-in agent tools and permission categories')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
   .option('--json', 'print JSON')
-  .action((options: {json?: boolean}) => {
-    const definitions = createDefaultToolRegistry().definitions();
+  .action(async (options: ConfigOptions) => {
+    const config = await runtimeConfig(workspaceOption(options.workspace), runtimeOptions(options));
+    const definitions = createDefaultToolRegistry({
+      ...(config.lsp ? {lsp: config.lsp} : {}),
+      ...(config.backgroundJobs ? {backgroundJobs: config.backgroundJobs} : {}),
+    }).definitions();
     if (options.json) printObject(definitions, true);
     else for (const definition of definitions) {
       process.stdout.write(`${definition.name.padEnd(16)} ${definition.category.padEnd(8)} ${definition.description}\n`);
@@ -1552,6 +1658,13 @@ void runCli();
 
 async function runCli(): Promise<void> {
   try {
+    if (process.argv[2] === '__background-worker') {
+      if (process.env.SKEIN_BACKGROUND_WORKER !== '1' || !process.argv[3]) {
+        throw new Error('The internal background worker can only be launched by Skein.');
+      }
+      await runBackgroundWorker(process.argv[3]);
+      return;
+    }
     await program.parseAsync(process.argv);
   } catch (error) {
     const format = structuredOutputFormat(process.argv);
@@ -1806,7 +1919,11 @@ async function runChat(prompts: string[], options: RootOptions): Promise<void> {
     })
     : undefined;
   if (preparation?.status === 'cancelled') return;
-  const toolRegistry = createDefaultToolRegistry({contextEngine});
+  const toolRegistry = createDefaultToolRegistry({
+    contextEngine,
+    ...(config.lsp ? {lsp: config.lsp} : {}),
+    ...(config.backgroundJobs ? {backgroundJobs: config.backgroundJobs} : {}),
+  });
   const extensions = await ExtensionRuntime.create(config, toolRegistry, {provider, contextEngine});
   const runner = new AgentRunner({
     config,
@@ -2477,6 +2594,27 @@ function runtimeOptions(options: RuntimeConfigOptions): RuntimeConfigOptions {
 function positiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function requireBackgroundJobs(config: MosaicConfig): NonNullable<MosaicConfig['backgroundJobs']> {
+  if (!config.backgroundJobs?.enabled) {
+    throw new Error('Background jobs are disabled. Enable backgroundJobs.enabled in trusted user or explicit configuration.');
+  }
+  return config.backgroundJobs;
+}
+
+function backgroundJobsForRecovery(config: MosaicConfig): NonNullable<MosaicConfig['backgroundJobs']> {
+  return config.backgroundJobs ?? {
+    enabled: false,
+    maxConcurrent: 2,
+    maxJobsPerSession: 16,
+    maxLogBytes: 2_000_000,
+    maxRuntimeMs: 1_800_000,
+  };
+}
+
+function formatBackgroundJob(job: import('./session/background-jobs.js').BackgroundJob): string {
+  return `Background job ${job.id}  ${job.status}  cwd=${job.cwd}  command_sha256=${job.commandSha256.slice(0, 16)}  output=${job.retainedBytes}/${job.maxLogBytes} bytes`;
 }
 
 function validateHostedTools(values: string[]): Array<'web_search'> {

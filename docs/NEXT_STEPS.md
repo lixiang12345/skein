@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.38`.
+- Current repository version: `0.3.39`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -42,8 +42,8 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.38.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.38.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.39.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.39.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
@@ -532,7 +532,7 @@ budgets while requiring the last chunk in the final frame. Future expansion may
 sample additional widths through 160 and heights through 60 without changing
 the shipped gate's factual scope.
 
-### P2: Session branching and terminal entry points
+### P2: Session branching, code intelligence, and terminal entry points
 
 Version `0.3.38` adds content-free, hash-bound logical session
 forks with fresh usage accounting. An explicitly confirmed branch/worktree
@@ -540,8 +540,17 @@ fork creates a sibling Git worktree from `HEAD`; it never starts a model in the
 background or spends tokens merely because a branch was created. Bash, zsh,
 and fish completion are generated locally, while `Alt+E`/`/editor` round-trip a
 bounded owner-only draft through the user's external editor without invoking a
-shell or exposing provider credentials. Optional LSP and durable background-job
-adapters remain the next dependency-free P2 slice.
+shell or exposing provider credentials.
+
+Version `0.3.39` adds the dependency-free optional LSP and durable-job slice.
+`lsp_query` supports bounded definition/reference/diagnostics over an explicitly
+configured stdio server and discards locations outside the workspace. Durable
+jobs are session-owned across CLI restarts, expose start/list/output/kill with
+incremental cursors and disk/runtime/concurrency limits, omit provider secrets,
+bind the approved descriptor by one-time HMAC, and cancel the process group.
+Both adapters are disabled by default and stripped from untrusted project
+configuration. Model start/kill always require a live human, and starts keep
+completion evidence unresolved instead of claiming asynchronous mutations.
 
 ### P3: Distribution
 

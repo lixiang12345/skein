@@ -184,7 +184,7 @@ const highRiskCommandRules: Array<{pattern: RegExp; categories: ToolCategory[]}>
 ];
 
 function allowListCategory(call: ToolCall): ToolCategory | undefined {
-  if (call.name === 'shell') return 'shell';
+  if (call.name === 'shell' || call.name === 'background_start') return 'shell';
   if (call.name === 'git') return 'git';
   return undefined;
 }
@@ -195,7 +195,7 @@ function hasCustomEnvironment(call: ToolCall): boolean {
 }
 
 export function commandForCall(call: ToolCall): string | undefined {
-  if (call.name === 'shell' && typeof call.arguments.command === 'string') {
+  if ((call.name === 'shell' || call.name === 'background_start') && typeof call.arguments.command === 'string') {
     return normalizeCommand(call.arguments.command);
   }
   if (call.name === 'git' && Array.isArray(call.arguments.args) &&

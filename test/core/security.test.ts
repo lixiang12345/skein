@@ -15,6 +15,7 @@ import {
 import {defaultPermissions} from '../../src/config.js';
 import {gitTool} from '../../src/tools/git.js';
 import {shellTool} from '../../src/tools/shell.js';
+import {createBackgroundJobTools} from '../../src/tools/background.js';
 import {resolveMentions} from '../../src/context/mentions.js';
 import type {ToolCall} from '../../src/types.js';
 import {runProcess} from '../../src/utils/process.js';
@@ -116,6 +117,16 @@ describe('workspace and permission boundaries', () => {
     expect(requiresLiveHumanApproval({
       name: 'writer_integrate', description: 'integrate', category: 'write', inputSchema: {}, humanApproval: true,
     }, {id: 'integrate', name: 'writer_integrate', arguments: {}}, ['write', 'git'])).toBe(true);
+    const background = createBackgroundJobTools({
+      enabled: true, maxConcurrent: 1, maxJobsPerSession: 4, maxLogBytes: 64000, maxRuntimeMs: 10000,
+    }).find((tool) => tool.definition.name === 'background_start');
+    expect(background).toBeDefined();
+    expect(requiresLiveHumanApproval(background!.definition, {
+      id: 'background-publish', name: 'background_start', arguments: {command: 'npm publish'},
+    }, ['shell', 'network'])).toBe(true);
+    expect(evaluatePermission({...defaultPermissions, shell: 'allow'}, {
+      id: 'background-denied', name: 'background_start', arguments: {command: 'rm -rf /'},
+    }, 'shell').outcome).toBe('deny');
   });
 
   it('scopes session approvals to a concrete command or resource without leaking it', () => {

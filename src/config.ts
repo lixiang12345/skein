@@ -9,7 +9,9 @@ import {defaultMemoryPath} from './memory/store.js';
 import type {
   AgentCapabilityConfig,
   AgentTeamConfig,
+  BackgroundJobsConfig,
   McpConfig,
+  LspConfig,
   MemoryConfig,
   ModelConfig,
   MosaicConfig,
@@ -213,6 +215,33 @@ const mcpConfigSchema = z.object({
   servers: z.record(z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/), mcpServerSchema).optional(),
 }).partial();
 
+const lspServerSchema = z.object({
+  command: z.string().min(1).max(1_000).refine((value) => !/[\u0000\r\n]/u.test(value), {
+    message: 'LSP command cannot contain control lines',
+  }),
+  args: z.array(z.string().max(4_000).refine((value) => !/[\u0000\r\n]/u.test(value)))
+    .max(32).default([]),
+  extensions: z.array(z.string().regex(/^\.[a-z0-9][a-z0-9+_-]{0,15}$/u))
+    .min(1).max(32).refine((values) => new Set(values).size === values.length, {
+      message: 'LSP extensions must be unique',
+    }),
+  languageId: z.string().regex(/^[a-z][a-z0-9+_-]{0,63}$/u),
+}).strict();
+
+const lspConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  timeoutMs: z.number().int().positive().max(30_000).optional(),
+  servers: z.record(z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u), lspServerSchema).optional(),
+}).partial();
+
+const backgroundJobsConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  maxConcurrent: z.number().int().min(1).max(8).optional(),
+  maxJobsPerSession: z.number().int().min(1).max(32).optional(),
+  maxLogBytes: z.number().int().min(64_000).max(5_000_000).optional(),
+  maxRuntimeMs: z.number().int().min(1_000).max(86_400_000).optional(),
+}).strict();
+
 const partialConfigSchema = z.object({
   model: z.object({
     provider: z.enum(['openai', 'anthropic', 'gemini', 'compatible']).optional(),
@@ -260,6 +289,8 @@ const partialConfigSchema = z.object({
   memory: memoryConfigSchema.optional(),
   agents: agentTeamConfigSchema.optional(),
   mcp: mcpConfigSchema.optional(),
+  lsp: lspConfigSchema.optional(),
+  backgroundJobs: backgroundJobsConfigSchema.optional(),
 }).partial();
 
 type PartialConfig = z.infer<typeof partialConfigSchema>;
@@ -361,6 +392,18 @@ export function defaultConfig(workspace = process.cwd()): MosaicConfig {
       enabled: true,
       retrievalLimit: 8,
       maxPromptTokens: 1_200,
+    },
+    lsp: {
+      enabled: false,
+      timeoutMs: 5_000,
+      servers: {},
+    },
+    backgroundJobs: {
+      enabled: false,
+      maxConcurrent: 2,
+      maxJobsPerSession: 16,
+      maxLogBytes: 2_000_000,
+      maxRuntimeMs: 1_800_000,
     },
     agents: {
       enabled: true,
@@ -466,6 +509,15 @@ function mergeConfig(base: MosaicConfig, update: PartialConfig): MosaicConfig {
       ...update.mcp,
       servers: {...base.mcp?.servers, ...update.mcp?.servers},
     } as McpConfig,
+    lsp: {
+      ...base.lsp,
+      ...update.lsp,
+      servers: {...base.lsp?.servers, ...update.lsp?.servers},
+    } as LspConfig,
+    backgroundJobs: {
+      ...base.backgroundJobs,
+      ...update.backgroundJobs,
+    } as BackgroundJobsConfig,
     workspaceRoots: update.workspaceRoots ?? base.workspaceRoots,
   } as MosaicConfig;
 }
@@ -743,6 +795,8 @@ function sanitizeProjectConfig(
     permissions: _permissions,
     hooks: _hooks,
     mcp: _mcp,
+    lsp: _lsp,
+    backgroundJobs: _backgroundJobs,
     skills: _skills,
     ...safeUpdate
   } = update;
@@ -941,6 +995,22 @@ export function configSummary(config: MosaicConfig): Record<string, unknown> {
     mcp: config.mcp ? {
       enabled: config.mcp.enabled,
       servers: Object.keys(config.mcp.servers),
+    } : undefined,
+    lsp: config.lsp ? {
+      enabled: config.lsp.enabled,
+      timeoutMs: config.lsp.timeoutMs,
+      servers: Object.fromEntries(Object.entries(config.lsp.servers).map(([name, server]) => [name, {
+        command: server.command,
+        extensions: server.extensions,
+        languageId: server.languageId,
+      }])),
+    } : undefined,
+    backgroundJobs: config.backgroundJobs ? {
+      enabled: config.backgroundJobs.enabled,
+      maxConcurrent: config.backgroundJobs.maxConcurrent,
+      maxJobsPerSession: config.backgroundJobs.maxJobsPerSession,
+      maxLogBytes: config.backgroundJobs.maxLogBytes,
+      maxRuntimeMs: config.backgroundJobs.maxRuntimeMs,
     } : undefined,
   };
 }

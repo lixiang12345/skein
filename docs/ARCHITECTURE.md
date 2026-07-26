@@ -103,6 +103,25 @@ secrets are omitted from its environment, and the only supplied file is an
 owner-only temporary draft with a 120 kB limit and post-edit regular-file
 check.
 
+Optional LSP code intelligence is a user-trusted local adapter, not part of the
+index. A configured extension selects one stdio server; Skein resolves its
+executable outside all workspace roots, launches it without a shell or provider
+credentials, bounds source/protocol/result sizes, and exposes only definition,
+reference, or diagnostic facts that re-resolve inside the workspace. Untrusted
+project configuration removes the entire adapter and missing servers degrade
+without changing normal startup.
+
+Optional durable jobs use a separate session-owned store under the active
+project namespace. Each start has a one-time HMAC-bound descriptor, content-free
+command fingerprint, bounded owner-only stdout/stderr, incremental byte cursor,
+runtime/log/concurrency/history limits, heartbeat recovery, and a control-file
+cancel path. The detached worker holds the namespace lease and receives a
+minimal environment without provider or relay secrets. Model-initiated start
+and kill are unconditional live-human actions; a start reports unresolved
+mutation tracking, so a background process cannot authorize completion. POSIX
+cancellation targets the spawned process group; Windows uses the direct child
+process boundary.
+
 ## Interactive startup gate
 
 New interactive sessions establish local context readiness before creating or
@@ -367,7 +386,7 @@ never writes the Registry, calls a provider, or enables automatic routing.
 - File tools resolve and validate paths against configured workspace roots.
 - Read, write, shell, Git, and network have independent policies.
 - Repository-local configuration is treated as data-only by default: hooks,
-  custom executables, verification commands, checkpoint overrides, and
+  custom executables, LSP/background adapters, verification commands, checkpoint overrides, and
   permission changes require `--trust-project-config` or an explicit config.
 - Project API keys and remote provider/endpoint overrides also require explicit
   trust; loopback compatible settings are retained for local-model workflows.
@@ -396,6 +415,10 @@ never writes the Registry, calls a provider, or enables automatic routing.
   `PATH` entries, and reports non-zero exits as failed tool results. Operations
   that can invoke transport, signing, merge, or checkout helpers also require
   shell permission.
+- LSP and background executables resolve outside workspace-controlled paths,
+  use direct argv, and receive minimal environments. LSP is read-only;
+  background mutation evidence is always unresolved and start/kill cannot reuse
+  config, `--yes`, or session approval in a model run.
 
 ## Capability extension policy
 

@@ -224,6 +224,17 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
       required: false,
     });
   }
+  if (config.lsp?.enabled) {
+    for (const [name, server] of Object.entries(config.lsp.servers)) {
+      const resolved = await resolveExecutableRuntime(server.command, root, config.workspaceRoots);
+      checks.push({
+        name: `LSP server: ${name}`,
+        ok: Boolean(resolved),
+        detail: resolved?.executable ?? 'not found outside configured workspace roots',
+        required: false,
+      });
+    }
+  }
 
   const context = new ContextEngine(config);
   try {

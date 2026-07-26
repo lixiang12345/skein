@@ -1,7 +1,10 @@
+import type {BackgroundJobsConfig, LspConfig} from '../types.js';
+import {createBackgroundJobTools} from './background.js';
 import type {ContextProvider} from './types.js';
 import {applyPatchTool} from './apply-patch.js';
 import {gitTool} from './git.js';
 import {listFilesTool} from './list.js';
+import {createLspTool} from './lsp.js';
 import {readFileTool} from './read.js';
 import {readToolArtifactTool} from './read-artifact.js';
 import {ToolRegistry} from './registry.js';
@@ -16,12 +19,16 @@ import {writeFileTool} from './write.js';
 export interface DefaultToolRegistryOptions {
   /** Reserved for callers that want the registry to document its ranked retrieval. */
   contextEngine?: ContextProvider;
+  /** Explicit, user-trusted language-server configuration. */
+  lsp?: LspConfig;
+  /** Explicit, user-trusted durable local subprocess configuration. */
+  backgroundJobs?: BackgroundJobsConfig;
 }
 
 export function createDefaultToolRegistry(
-  _options: DefaultToolRegistryOptions = {},
+  options: DefaultToolRegistryOptions = {},
 ): ToolRegistry {
-  return new ToolRegistry([
+  const tools = [
     readFileTool,
     readToolArtifactTool,
     listFilesTool,
@@ -34,7 +41,12 @@ export function createDefaultToolRegistry(
     taskContractTool,
     duplicationTool,
     workingMemoryTool,
-  ]);
+  ];
+  if (options.lsp?.enabled && Object.keys(options.lsp.servers).length > 0) {
+    tools.push(createLspTool(options.lsp));
+  }
+  if (options.backgroundJobs?.enabled) tools.push(...createBackgroundJobTools(options.backgroundJobs));
+  return new ToolRegistry(tools);
 }
 
 export {ToolRegistry} from './registry.js';
@@ -59,4 +71,6 @@ export {
   taskTool,
   taskContractTool,
   workingMemoryTool,
+  createLspTool,
+  createBackgroundJobTools,
 };

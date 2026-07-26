@@ -68,7 +68,12 @@ export async function resolveExecutableRuntime(
     if (!contaminated && !safeDirectories.includes(directory)) safeDirectories.push(directory);
   }
 
-  if (explicitPath) executable = await usableExecutable(explicitPath);
+  if (explicitPath) {
+    const resolvedExplicit = await usableExecutable(explicitPath);
+    executable = resolvedExplicit && !realRoots.some((root) => isInside(root, resolvedExplicit))
+      ? resolvedExplicit
+      : undefined;
+  }
   if (!executable) return undefined;
   return {executable, path: safeDirectories.join(delimiter)};
 }

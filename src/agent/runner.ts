@@ -137,6 +137,8 @@ export class AgentRunner {
     this.contextEngine = options.contextEngine ?? new ContextEngine(options.config);
     this.tools = options.toolRegistry ?? createDefaultToolRegistry({
       contextEngine: this.contextEngine,
+      ...(options.config.lsp ? {lsp: options.config.lsp} : {}),
+      ...(options.config.backgroundJobs ? {backgroundJobs: options.config.backgroundJobs} : {}),
     });
     this.sessionStore = options.sessionStore ?? new SessionStore(this.workspace.primaryRoot);
     this.toolArtifactStore = options.toolArtifactStore ?? new ToolArtifactStore(this.workspace.primaryRoot);

@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.38",
+  "version": "0.3.39",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,6 +16,11 @@
   },
   "skein": {
     "releaseNotes": [
+      "Optional user-trusted stdio LSP adapters provide bounded definition, references, and diagnostics without coupling the local index or TUI to an installed language server",
+      "Session-owned durable background jobs persist content-free lifecycle state and bounded incremental stdout/stderr across CLI restarts with heartbeat recovery, retention, concurrency, runtime, and disk limits",
+      "Every model-initiated background start and kill requires live human approval, start remains completion-unresolved, and one-time HMAC descriptors plus minimal environments prevent command substitution and provider-secret inheritance",
+      "Skein jobs start, list, output, and kill provide explicit operator recovery while POSIX cancellation targets process groups and disabling future starts does not hide or strand existing jobs",
+      "Explicit executable paths now receive the same workspace exclusion checks as PATH discovery, closing a trust-boundary gap for editors, Git helpers, agent runtimes, and language servers",
       "Session fork and branch commands create SHA-256-bound logical continuations with fresh usage accounting, while explicit --branch/--worktree/--yes can place a fork in an isolated sibling Git worktree",
       "Alt+E and /editor round-trip bounded owner-only drafts through VISUAL or EDITOR without a shell, workspace executable resolution, or provider and relay secrets",
       "Bash, zsh, and fish completion scripts expose Skein commands, session branching, and common global options without adding a runtime dependency",

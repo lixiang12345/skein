@@ -1,6 +1,7 @@
 # When this file is placed under a repository's .mosaic directory, hooks,
-# permissions, verification commands, checkpoint overrides, and custom context
-# executables require --trust-project-config. User-level config is trusted.
+# permissions, verification commands, checkpoint overrides, custom context,
+# LSP, and background executables require --trust-project-config. User-level
+# config is trusted.
 model:
   provider: openai
   model: gpt-5
@@ -58,6 +59,27 @@ ui:
   color: true
   compact: false
   theme: auto
+
+# Optional local stdio language servers. Keep disabled in committed project
+# config unless the repository and exact executable settings were reviewed.
+lsp:
+  enabled: false
+  timeoutMs: 5000
+  servers:
+    typescript:
+      command: typescript-language-server
+      args: [--stdio]
+      extensions: [.ts, .tsx]
+      languageId: typescript
+
+# Optional durable local commands. Each model-initiated start/kill remains a
+# live-human action and background mutations never become completion evidence.
+backgroundJobs:
+  enabled: false
+  maxConcurrent: 2
+  maxJobsPerSession: 16
+  maxLogBytes: 2000000
+  maxRuntimeMs: 1800000
 
 # External capabilities are disabled until both configuration and the separate
 # workspace-bound manifest trust review are explicit. Use:

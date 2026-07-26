@@ -310,6 +310,27 @@ export interface McpConfig {
   servers: Record<string, McpServerConfig>;
 }
 
+export interface LspServerConfig {
+  command: string;
+  args: string[];
+  extensions: string[];
+  languageId: string;
+}
+
+export interface LspConfig {
+  enabled: boolean;
+  timeoutMs: number;
+  servers: Record<string, LspServerConfig>;
+}
+
+export interface BackgroundJobsConfig {
+  enabled: boolean;
+  maxConcurrent: number;
+  maxJobsPerSession: number;
+  maxLogBytes: number;
+  maxRuntimeMs: number;
+}
+
 export interface MosaicConfig {
   model: ModelConfig;
   workspaceRoots: string[];
@@ -338,6 +359,10 @@ export interface MosaicConfig {
   memory?: MemoryConfig;
   agents?: AgentTeamConfig;
   mcp?: McpConfig;
+  /** Optional user-trusted local language-server adapters. */
+  lsp?: LspConfig;
+  /** Optional durable subprocess adapter; every start requires live human approval. */
+  backgroundJobs?: BackgroundJobsConfig;
   /** Runtime-only redacted connection discovery and selection facts. */
   connectionCatalog?: ConnectionCatalogRuntime;
   activeConnection?: ConnectionRuntimeInfo;

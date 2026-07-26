@@ -1,5 +1,8 @@
+import {chmod, mkdtemp, rm, writeFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {describe, expect, it} from 'vitest';
-import {runProcess} from '../../src/utils/process.js';
+import {resolveExecutableRuntime, runProcess} from '../../src/utils/process.js';
 
 describe('process runner', () => {
   it('treats a zero timeout as disabled', async () => {
@@ -88,5 +91,17 @@ describe('process runner', () => {
     expect(result.timedOut).toBe(false);
     expect(result.durationMs).toBeLessThan(5_000);
     expect(result.exitCode).not.toBe(0);
+  });
+
+  it('rejects an explicitly configured executable from an excluded workspace', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-process-'));
+    const executable = join(root, 'workspace-command');
+    try {
+      await writeFile(executable, '#!/bin/sh\nexit 0\n');
+      await chmod(executable, 0o700);
+      await expect(resolveExecutableRuntime(executable, root, [root])).resolves.toBeUndefined();
+    } finally {
+      await rm(root, {recursive: true, force: true});
+    }
   });
 });

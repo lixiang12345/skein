@@ -2,7 +2,7 @@ export type CompletionShell = 'bash' | 'zsh' | 'fish';
 
 const topLevelCommands = [
   'init', 'config', 'index', 'search', 'context', 'status', 'doctor', 'update', 'migrate',
-  'session', 'checkpoint', 'tools', 'skills', 'agents', 'workflow', 'memory', 'mcp', 'rules',
+  'session', 'jobs', 'checkpoint', 'tools', 'skills', 'agents', 'workflow', 'memory', 'mcp', 'rules',
   'completion',
 ];
 
@@ -16,6 +16,7 @@ const globalOptions = [
 const subcommands: Record<string, string[]> = {
   config: ['show', 'path'],
   session: ['list', 'show', 'delete', 'export', 'fork', 'branch'],
+  jobs: ['start', 'list', 'output', 'kill'],
   checkpoint: ['list', 'restore'],
   agents: ['list', 'setup', 'connections', 'models', 'runs', 'show', 'delete', 'arbitrate', 'capability'],
   workflow: ['list', 'show'],
@@ -95,6 +96,7 @@ function description(name: string): string {
     update: 'Update Skein',
     migrate: 'Migrate local state',
     session: 'Manage resumable sessions',
+    jobs: 'Manage durable background jobs',
     checkpoint: 'Inspect or restore checkpoints',
     tools: 'List tools',
     skills: 'Inspect Skills',

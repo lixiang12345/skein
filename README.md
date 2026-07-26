@@ -487,6 +487,9 @@ skein session export <id>            Markdown audit export
 skein session fork <id>              fork a hash-bound logical session
 skein session fork <id> --branch <name> --worktree <path> --yes
                                       fork into an isolated sibling worktree
+skein jobs start <session> <command> --yes
+                                      start an explicitly enabled durable job
+skein jobs list|output|kill           inspect or stop session-owned jobs
 skein completion bash|zsh|fish       generate shell completion
 skein checkpoint list <session>      inspect snapshots
 skein checkpoint restore <s> <c>     restore a snapshot
@@ -504,8 +507,9 @@ A cloned repository must not be able to execute commands merely by committing
 `.mosaic/config.*`. Skein therefore ignores project-defined hooks, custom
 verification commands, checkpoint overrides, and
 permission policy by default. It also ignores remote model provider/endpoint
-overrides and their project-stored API keys; loopback compatible endpoints and
-local credentials remain available for local models. Review the file first,
+overrides and their project-stored API keys, plus optional LSP/background
+executables; loopback compatible endpoints and local credentials remain
+available for local models. Review the file first,
 then opt in explicitly:
 
 ```bash
@@ -576,6 +580,27 @@ hooks:
   beforeTool: []
   afterTool: []
   afterTurn: []
+
+# Optional local code intelligence. The server must already be installed and
+# resolve outside every workspace root. Untrusted project config cannot enable it.
+lsp:
+  enabled: false
+  timeoutMs: 5000
+  servers:
+    typescript:
+      command: typescript-language-server
+      args: [--stdio]
+      extensions: [.ts, .tsx]
+      languageId: typescript
+
+# Optional durable commands. Model-started and model-stopped jobs always need
+# live human approval and never count as complete mutation evidence.
+backgroundJobs:
+  enabled: false
+  maxConcurrent: 2
+  maxJobsPerSession: 16
+  maxLogBytes: 2000000
+  maxRuntimeMs: 1800000
 ```
 
 `--epoch-token-budget` overrides the handoff boundary for one invocation;
@@ -595,6 +620,25 @@ the same logical run. Permission approval remains a separate runtime gate.
 See [examples/config.yaml](examples/config.yaml) for a ready-to-adapt file.
 Secrets should normally stay in environment variables instead of committed
 configuration.
+
+When LSP is enabled, Skein registers one read-only `lsp_query` tool for
+definition, references, and diagnostics. The adapter speaks bounded JSON-RPC
+over stdio, passes a minimal environment without provider/relay credentials,
+and returns only locations that re-resolve inside configured workspace roots.
+Missing servers or unmatched extensions fail locally and do not affect the
+index or TUI.
+
+Durable background jobs are session-owned and disabled by default. The
+`background_start` and `background_kill` model tools always require a live
+operator; config allow rules, session grants, and headless `--yes` cannot
+replace that approval. Starts are content-addressed without persisting command
+text in job metadata, return `changeTracking: unresolved`, retain bounded
+owner-only stdout/stderr with incremental cursors, and keep a namespace lease
+while the detached worker is alive. Direct `skein jobs start ... --yes` is a
+command-specific operator action; list/output/kill can recover the persisted
+lifecycle after the initiating Skein process exits. Worker launch descriptors
+are one-time HMAC-bound, subprocesses receive no provider/relay secrets, and
+timeout or cancellation targets the spawned process group on POSIX.
 
 The isolated writer lane is disabled by default. Enable it only in user-owned
 or explicitly trusted configuration:
@@ -713,6 +757,9 @@ index is intended.
 - Hooks receive JSON on stdin and run with bounded time/output.
 - Project configuration cannot enable executable hooks or relax safety policy
   unless `--trust-project-config` is explicitly supplied.
+- Project configuration cannot enable LSP servers or durable background jobs
+  without the same explicit trust; both remain absent from the tool catalog by
+  default.
 - Untrusted project configuration cannot switch providers or redirect
   credentials/source code to a remote custom endpoint; these require trust.
 - Git aliases, Git config overrides, repository hooks, and workspace overrides

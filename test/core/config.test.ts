@@ -124,6 +124,17 @@ describe('configuration defaults', () => {
           priors: {reviewer: {reviewer: {successRate: 1, strength: 1_000}}},
         },
       },
+      lsp: {
+        enabled: true,
+        servers: {
+          typescript: {command: 'typescript-language-server', args: ['--stdio'], extensions: ['.ts'], languageId: 'typescript'},
+        },
+      },
+      backgroundJobs: {
+        enabled: true,
+        maxConcurrent: 3,
+        maxLogBytes: 128000,
+      },
     }));
     const safe = await loadConfig(root);
     expect(safe.context).toEqual({maxTokens: 12_000, topK: 12});
@@ -146,6 +157,8 @@ describe('configuration defaults', () => {
     expect(safe.agents?.maxWriterPatchBytes).toBe(60_000);
     expect(safe.agents?.maxAgentCostUsd).toBeUndefined();
     expect(safe.agents?.capability?.priors).toEqual({});
+    expect(safe.lsp).toEqual({enabled: false, timeoutMs: 5_000, servers: {}});
+    expect(safe.backgroundJobs?.enabled).toBe(false);
 
     const trusted = await loadConfig(root, undefined, {trustProjectConfig: true});
     expect(trusted.context).toEqual({maxTokens: 12_000, topK: 12});
@@ -166,6 +179,58 @@ describe('configuration defaults', () => {
     expect(trusted.agents?.maxWriterPatchBytes).toBe(120_000);
     expect(trusted.agents?.maxAgentCostUsd).toBe(0.01);
     expect(trusted.agents?.capability?.priors?.reviewer?.reviewer).toEqual({successRate: 1, strength: 1_000});
+    expect(trusted.lsp?.servers.typescript).toEqual({
+      command: 'typescript-language-server',
+      args: ['--stdio'],
+      extensions: ['.ts'],
+      languageId: 'typescript',
+    });
+    expect(trusted.backgroundJobs).toMatchObject({enabled: true, maxConcurrent: 3, maxLogBytes: 128000});
+  });
+
+  it('loads strict user-configured LSP adapters and supplies empty args', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-lsp-config-'));
+    roots.push(root);
+    const path = join(root, 'config.json');
+    await writeFile(path, JSON.stringify({lsp: {
+      enabled: true,
+      timeoutMs: 7_500,
+      servers: {rust: {command: 'rust-analyzer', extensions: ['.rs'], languageId: 'rust'}},
+    }}));
+    const config = await loadConfig(root, path);
+    expect(config.lsp).toEqual({
+      enabled: true,
+      timeoutMs: 7_500,
+      servers: {rust: {command: 'rust-analyzer', args: [], extensions: ['.rs'], languageId: 'rust'}},
+    });
+
+    await writeFile(path, JSON.stringify({lsp: {
+      enabled: true,
+      servers: {bad: {command: 'server\n--unsafe', extensions: ['ts'], languageId: 'Type Script'}},
+    }}));
+    await expect(loadConfig(root, path)).rejects.toThrow();
+  });
+
+  it('loads bounded user-configured background job limits', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-background-config-'));
+    roots.push(root);
+    const path = join(root, 'config.json');
+    await writeFile(path, JSON.stringify({backgroundJobs: {
+      enabled: true,
+      maxConcurrent: 4,
+      maxJobsPerSession: 20,
+      maxLogBytes: 256000,
+      maxRuntimeMs: 60000,
+    }}));
+    await expect(loadConfig(root, path)).resolves.toMatchObject({backgroundJobs: {
+      enabled: true,
+      maxConcurrent: 4,
+      maxJobsPerSession: 20,
+      maxLogBytes: 256000,
+      maxRuntimeMs: 60000,
+    }});
+    await writeFile(path, JSON.stringify({backgroundJobs: {enabled: true, maxConcurrent: 0}}));
+    await expect(loadConfig(root, path)).rejects.toThrow();
   });
 
   it('loads named model connections that can be shared by multiple agent routes', async () => {
