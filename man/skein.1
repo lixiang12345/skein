@@ -1,4 +1,4 @@
-.TH SKEIN 1 "2026-07-26" "skein 0.3.50" "Skein Manual"
+.TH SKEIN 1 "2026-07-26" "skein 0.3.51" "Skein Manual"
 .SH NAME
 skein \- context-first, model-agnostic coding agent with an auditable terminal workspace
 .SH SYNOPSIS
@@ -87,6 +87,11 @@ Examples:
   $ git diff | skein -p "review this diff"  include piped stdin in the prompt
   $ skein search "token budget"             search the local code index
   $ skein --continue                        resume the latest session
+
+Exit codes (print mode):
+  0 verified/completed   1 error          2 needs input   3 unverified
+  4 verification failed  5 blocked        6 cancelled     7 max turns
+  8 token budget         9 needs review   (schema: docs/headless-output.schema.json)
 
 Learn more:
   Website  https://lixiang12345.github.io/skein/

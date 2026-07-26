@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.50",
+  "version": "0.3.51",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -24,6 +24,11 @@
   },
   "skein": {
     "releaseNotes": [
+      "New /model command shows the active route, lists the named connection's catalog, and switches the model id within the connection without touching endpoint, protocol, or credentials",
+      "New /resume command lists recent sessions and swaps the terminal to one by id prefix, clearing session approvals and steering on switch",
+      "Approval cards arm for 300ms before accepting y or a so keystrokes buffered while typing cannot grant anything; deny keys stay instant",
+      "Root --help documents the print-mode exit-code contract, print-mode --continue/--resume fail clearly when no saved session exists, and the stream-json terminal record now carries the final assistant response text",
+      "The introduction page floats the Skein Goose flight mark over the hero and keeps mobile navigation reachable via horizontal scroll",
       "Approvals never apply to hidden text: long or multi-line shell and git commands now render in full, wrapped to the card width with a bounded line count, on both ordinary and live-human approval cards",
       "A tool call that maps to several ask categories now shows one approval card covering all of them; a single y or a settles the call, session grants cover every pending category's exact-target key, and deny policy plus ask-mode still fail per category before any prompt",
       "Pasted code keeps its indentation: tabs become two spaces in the composer instead of being stripped",
