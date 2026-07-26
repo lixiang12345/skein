@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://lixiang12345.github.io/skein/sitemap.xml

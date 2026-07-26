@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0a0d12">
+  <meta name="description" content="Skein is an open, context-first coding agent for the terminal. Bring your relay, inspect every consequential action, and keep work reproducible or reversible.">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://lixiang12345.github.io/skein/">
+  <link rel="icon" href="./assets/skein-goose.svg" type="image/svg+xml">
+  <link rel="manifest" href="./site.webmanifest">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Skein">
+  <meta property="og:title" content="Skein — Code with context. Ship with evidence.">
+  <meta property="og:description" content="An open, context-first coding agent with visible tools, local retrieval, and reversible work.">
+  <meta property="og:url" content="https://lixiang12345.github.io/skein/">
+  <meta property="og:image" content="https://lixiang12345.github.io/skein/assets/skein-goose-flight.png">
+  <meta property="og:image:width" content="1024">
+  <meta property="og:image:height" content="1024">
+  <meta property="og:image:alt" content="Skein Goose carrying three woven context threads">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Skein — Code with context. Ship with evidence.">
+  <meta name="twitter:description" content="An open, context-first coding agent for the terminal.">
+  <meta name="twitter:image" content="https://lixiang12345.github.io/skein/assets/skein-goose-flight.png">
+  <title>Skein — Code with context. Ship with evidence.</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Skein",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "macOS, Linux",
+      "description": "An open, context-first coding agent for the terminal.",
+      "license": "https://opensource.org/license/mit",
+      "codeRepository": "https://github.com/lixiang12345/skein",
+      "downloadUrl": "https://www.npmjs.com/package/@skein-code/cli"
+    }
+  </script>
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="site-shell">
+    <header class="site-header" data-header>
+      <a class="brand" href="#top" aria-label="Skein home">
+        <span class="brand-mark" aria-hidden="true">
+          <img class="brand-mark-dark" src="./assets/skein-goose-dark.svg" width="42" height="30" alt="">
+          <img class="brand-mark-light" src="./assets/skein-goose.svg" width="42" height="30" alt="">
+        </span>
+        <span class="brand-word">Skein</span>
+        <span class="brand-channel">CLI</span>
+      </a>
+      <button class="nav-toggle icon-button" type="button" aria-expanded="false" aria-controls="site-navigation" data-nav-toggle>
+        <span class="sr-only">Open navigation</span>
+        <span aria-hidden="true"></span>
+        <span aria-hidden="true"></span>
+      </button>
+      <nav class="site-nav" id="site-navigation" aria-label="Primary navigation" data-nav>
+        <a href="#workflow">How it works</a>
+        <a href="#capabilities">Capabilities</a>
+        <a href="#trust">Trust</a>
+        <a href="#quickstart">Quickstart</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <div class="header-actions">
+        <button class="theme-toggle icon-button" type="button" aria-label="Use light theme" data-theme-toggle>
+          <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <circle cx="12" cy="12" r="3.5"></circle>
+            <path d="M12 2v2.2M12 19.8V22M4.93 4.93l1.56 1.56M17.51 17.51l1.56 1.56M2 12h2.2M19.8 12H22M4.93 19.07l1.56-1.56M17.51 6.49l1.56-1.56"></path>
+          </svg>
+          <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <path d="M20.2 15.7A8.5 8.5 0 0 1 8.3 3.8a8.5 8.5 0 1 0 11.9 11.9Z"></path>
+          </svg>
+        </button>
+        <a class="button button-quiet header-github" href="https://github.com/lixiang12345/skein" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero section" id="top" aria-labelledby="hero-title">
+        <div class="hero-atmosphere" aria-hidden="true"></div>
+        <div class="hero-copy" data-reveal>
+          <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> Open source · MIT licensed</p>
+          <h1 id="hero-title">Code with context.<br><span>Ship with evidence.</span></h1>
+          <p class="hero-lede">Skein is a context-first coding agent for the terminal. It understands the change surface before editing, exposes consequential actions, and keeps every run reproducible or reversible.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#quickstart">Start with Skein <span aria-hidden="true">↓</span></a>
+            <a class="button button-secondary" href="https://github.com/lixiang12345/skein#readme" rel="noreferrer">Read the docs</a>
+          </div>
+          <div class="install-chip" aria-label="Install Skein from npm">
+            <span class="prompt-mark" aria-hidden="true">$</span>
+            <code>npm install -g @skein-code/cli</code>
+            <button class="copy-button" type="button" data-copy="npm install -g @skein-code/cli" aria-label="Copy install command">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg>
+              <span>Copy</span>
+            </button>
+          </div>
+          <p class="compatibility">Node.js 22.16+ · macOS and Linux · Bring your own relay</p>
+        </div>
+
+        <div class="hero-visual" data-reveal>
+          <div class="goose-orbit" aria-hidden="true">
+            <span class="orbit orbit-one"></span><span class="orbit orbit-two"></span>
+            <img src="./assets/skein-goose-flight.png" width="1024" height="1024" alt="">
+          </div>
+          <div class="terminal" aria-label="Example Skein terminal session">
+            <div class="terminal-topbar">
+              <div class="terminal-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+              <span>skein · ~/work/api</span><span class="terminal-mode">BUILD</span>
+            </div>
+            <div class="terminal-tabs" role="tablist" aria-label="Skein workflow examples">
+              <button id="tab-build" type="button" role="tab" aria-selected="true" aria-controls="panel-build" tabindex="0" data-terminal-tab="build">Build</button>
+              <button id="tab-review" type="button" role="tab" aria-selected="false" aria-controls="panel-review" tabindex="-1" data-terminal-tab="review">Review</button>
+              <button id="tab-automate" type="button" role="tab" aria-selected="false" aria-controls="panel-automate" tabindex="-1" data-terminal-tab="automate">Automate</button>
+            </div>
+            <div class="terminal-body">
+              <div id="panel-build" role="tabpanel" aria-labelledby="tab-build" data-terminal-panel="build">
+                <p class="terminal-brand"><span aria-hidden="true">⌁</span> SKEIN <span>·</span> local context <span>·</span> checkpoint on</p>
+                <p class="terminal-prompt"><span aria-hidden="true">›</span> Find the webhook retry bug and add a regression test.</p>
+                <p class="terminal-context"><span aria-hidden="true">◇</span> context <em>local · 12 spans · grounded</em></p>
+                <p><b class="ok">✓</b> read_file <span>src/billing/webhook.ts</span></p>
+                <p><b class="ok">✓</b> apply_patch <span>src/billing/webhook.ts</span></p>
+                <p><b class="ok">✓</b> npm test <span>1 regression passed</span></p>
+                <div class="terminal-result"><p><span aria-hidden="true">⌁</span> Skein</p><p>The retry timestamp moved only after persistence. The regression test is passing.</p></div>
+              </div>
+              <div id="panel-review" role="tabpanel" aria-labelledby="tab-review" data-terminal-panel="review" hidden>
+                <p class="terminal-brand"><span aria-hidden="true">⌁</span> SKEIN <span>·</span> REVIEW <span>·</span> read-only</p>
+                <p class="terminal-prompt"><span aria-hidden="true">›</span> Review the current diff against its acceptance criteria.</p>
+                <p><b class="ok">✓</b> task_contract <span>4 required criteria</span></p>
+                <p><b class="ok">✓</b> diff evidence <span>artifact SHA bound</span></p>
+                <p><b class="ok">✓</b> deterministic checks <span>current</span></p>
+                <div class="terminal-result"><p><span aria-hidden="true">⌁</span> Verdict</p><p>Accept · 4/4 criteria cite current, content-addressed evidence.</p></div>
+              </div>
+              <div id="panel-automate" role="tabpanel" aria-labelledby="tab-automate" data-terminal-panel="automate" hidden>
+                <p class="terminal-brand"><span aria-hidden="true">⌁</span> SKEIN <span>·</span> HEADLESS <span>·</span> JSON</p>
+                <p class="terminal-prompt"><span aria-hidden="true">$</span> skein -p --output-format json "Fix the parser"</p>
+                <p><b class="ok">✓</b> status <span>verified</span></p>
+                <p><b class="ok">✓</b> changedFiles <span>2</span></p>
+                <p><b class="ok">✓</b> exitCode <span>0</span></p>
+                <div class="terminal-result"><p><span aria-hidden="true">{ }</span> Stable contract</p><p>Machine-readable result, checks, usage, and explicit final status.</p></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="proof-strip" aria-label="Product principles">
+        <p><span>01</span> Context before tools</p><p><span>02</span> Trust stays visible</p><p><span>03</span> Risky work is reversible</p><p><span>04</span> Automation stays open</p>
+      </section>
+
+      <section class="section workflow" id="workflow" aria-labelledby="workflow-title">
+        <div class="section-heading" data-reveal>
+          <p class="eyebrow">The whole run, not just the answer</p>
+          <h2 id="workflow-title">Understand. Act. Verify. Recover.</h2>
+          <p>Skein treats the model as one part of an inspectable runtime. Deterministic evidence—not confident prose—decides whether work is verified.</p>
+        </div>
+        <ol class="workflow-grid">
+          <li data-reveal><span class="step-number">01</span><div class="step-line" aria-hidden="true"></div><h3>Map the change surface</h3><p>A local BM25, path, and symbol index packs grounded source spans before the first substantive turn.</p><span class="step-tag">Local by default</span></li>
+          <li data-reveal><span class="step-number">02</span><div class="step-line" aria-hidden="true"></div><h3>Make intent visible</h3><p>Read, write, shell, Git, and network permissions remain separate. Every consequential tool action is visible.</p><span class="step-tag">Explicit permissions</span></li>
+          <li data-reveal><span class="step-number">03</span><div class="step-line" aria-hidden="true"></div><h3>Require current evidence</h3><p>Tests, typechecks, builds, configured checks, or diff validation gate a verified completion state.</p><span class="step-tag">Fail closed</span></li>
+          <li data-reveal><span class="step-number">04</span><div class="step-line" aria-hidden="true"></div><h3>Keep the way back</h3><p>Pre-write checkpoints and local sessions make the run inspectable and reversible without rewriting Git history.</p><span class="step-tag">Recoverable</span></li>
+        </ol>
+      </section>
+
+      <section class="section capabilities" id="capabilities" aria-labelledby="capabilities-title">
+        <div class="section-heading" data-reveal><p class="eyebrow">One auditable workspace</p><h2 id="capabilities-title">Open where it matters.</h2><p>Choose the relay, inspect the context, control the tools, and use the same runtime interactively or from CI.</p></div>
+        <div class="capability-grid">
+          <article class="capability-card capability-card-wide" data-reveal>
+            <div><p class="card-kicker">Model choice</p><h3>Your relay. Your protocol.</h3><p>Connect OpenAI Responses, OpenAI Chat, Anthropic Messages, or Gemini explicitly. Skein never guesses the protocol from a URL or model name.</p></div>
+            <div class="protocol-stack" aria-label="Supported provider families"><span><i aria-hidden="true">R</i> OpenAI Responses</span><span><i aria-hidden="true">C</i> OpenAI Chat</span><span><i aria-hidden="true">A</i> Anthropic Messages</span><span><i aria-hidden="true">G</i> Gemini</span></div>
+          </article>
+          <article class="capability-card" data-reveal><p class="card-kicker">Context</p><h3>Retrieval you can inspect.</h3><p>Offline-capable local indexing, explicit <code>@file</code> context, freshness checks, and source-level provenance.</p><div class="mini-index" aria-hidden="true"><span style="--score:92%"></span><span style="--score:74%"></span><span style="--score:57%"></span><span style="--score:36%"></span></div></article>
+          <article class="capability-card" data-reveal><p class="card-kicker">Automation</p><h3>Human calm. Machine strict.</h3><p>Use the composer-first TUI, quiet text, JSON results, or streaming JSON events from the same command.</p><div class="output-pills" aria-label="Output formats"><span>text</span><span>json</span><span>stream-json</span></div></article>
+          <article class="capability-card" data-reveal><p class="card-kicker">Teams</p><h3>Experts without hidden writers.</h3><p>Run bounded read-only experts through API or installed coding CLIs. Writable work stays behind an explicit reviewed lane.</p><div class="agent-line" aria-hidden="true"><span>product</span><span>frontend</span><span>reviewer</span></div></article>
+          <article class="capability-card" data-reveal><p class="card-kicker">Sessions</p><h3>Resume the work, not just the chat.</h3><p>Tasks, changed files, usage, tool outcomes, context sources, and verification state persist locally.</p><div class="session-rows" aria-hidden="true"><span></span><span></span><span></span></div></article>
+        </div>
+      </section>
+
+      <section class="section trust" id="trust" aria-labelledby="trust-title">
+        <div class="trust-visual" data-reveal>
+          <div class="trust-ring trust-ring-one" aria-hidden="true"></div><div class="trust-ring trust-ring-two" aria-hidden="true"></div>
+          <div class="trust-core"><span aria-hidden="true">⌁</span><strong>Workspace boundary</strong><small>enforced</small></div>
+          <div class="trust-node trust-node-read">Read <b>allow</b></div><div class="trust-node trust-node-write">Write <b>ask</b></div><div class="trust-node trust-node-shell">Shell <b>ask</b></div><div class="trust-node trust-node-network">Network <b>deny</b></div>
+        </div>
+        <div class="trust-copy" data-reveal>
+          <p class="eyebrow">Trust is a runtime property</p><h2 id="trust-title">The model cannot promote itself.</h2>
+          <p>Permissions, path boundaries, verification, and recovery are enforced outside model prose. Project executable configuration stays untrusted until you opt in.</p>
+          <ul class="check-list">
+            <li><span aria-hidden="true">✓</span><div><strong>Separate capability gates</strong><small>Read, write, shell, Git, and network are evaluated independently.</small></div></li>
+            <li><span aria-hidden="true">✓</span><div><strong>Evidence-gated completion</strong><small>A current deterministic check is required after mutation.</small></div></li>
+            <li><span aria-hidden="true">✓</span><div><strong>Pre-write checkpoints</strong><small>Recover files without changing the repository's Git history.</small></div></li>
+            <li><span aria-hidden="true">✓</span><div><strong>Privacy-safe receipts</strong><small>Usage and runtime decisions are recorded without retaining prompt or source text.</small></div></li>
+          </ul>
+          <a class="text-link" href="https://github.com/lixiang12345/skein/blob/main/docs/ARCHITECTURE.md" rel="noreferrer">Read the architecture <span aria-hidden="true">→</span></a>
+        </div>
+      </section>
+
+      <section class="section dogfood" aria-labelledby="dogfood-title">
+        <div class="dogfood-card" data-reveal>
+          <div class="dogfood-mark" aria-hidden="true"><span>⌁</span></div>
+          <div><p class="eyebrow">Built under its own rules</p><h2 id="dogfood-title">This site is a Skein dogfood project.</h2><p>Skein's local Context Engine grounded the product claims, and its read-only external expert runtime audited the prototype against the real repository. The run exposed relay recovery, cost-boundary, timeout-truth, and progress-visibility gaps; those became tracked fixes before the site could ship.</p></div>
+          <blockquote><p>“Prototype visuals are useful. Prototype claims are not evidence.”</p><cite>Dogfood review finding</cite></blockquote>
+        </div>
+      </section>
+
+      <section class="section quickstart" id="quickstart" aria-labelledby="quickstart-title">
+        <div class="section-heading" data-reveal><p class="eyebrow">Start with your existing relay</p><h2 id="quickstart-title">From install to first task.</h2><p>Skein stores the credential environment-variable name—not the credential—in connection metadata.</p></div>
+        <div class="quickstart-layout">
+          <ol class="quickstart-steps" data-reveal>
+            <li><button type="button" aria-selected="true" data-quickstep="install"><span>1</span><div><strong>Install</strong><small>Published from npm</small></div></button></li>
+            <li><button type="button" aria-selected="false" data-quickstep="connect"><span>2</span><div><strong>Connect a relay</strong><small>Protocol stays explicit</small></div></button></li>
+            <li><button type="button" aria-selected="false" data-quickstep="run"><span>3</span><div><strong>Run Skein</strong><small>Index, inspect, build</small></div></button></li>
+          </ol>
+          <div class="code-window" data-reveal>
+            <div class="code-window-top"><span data-quickstep-title>1 · Install</span><button class="copy-button copy-button-code" type="button" data-copy-target="quickstep-install" aria-label="Copy quickstart command"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg><span>Copy</span></button></div>
+            <pre id="quickstep-install" data-quickstep-panel="install"><code><span class="code-comment"># Node.js 22.16 or newer</span>
+npm install -g @skein-code/cli
+skein --version</code></pre>
+            <pre id="quickstep-connect" data-quickstep-panel="connect" hidden><code><span class="code-comment"># Export your relay key, then reference its name.</span>
+export TEAM_RELAY_API_KEY=…
+
+skein agents setup --yes \
+  --name team-relay \
+  --provider compatible \
+  --protocol openai-responses \
+  --base-url https://relay.your-company.test/v1 \
+  --api-key-env TEAM_RELAY_API_KEY \
+  --model provider/coding-model</code></pre>
+            <pre id="quickstep-run" data-quickstep-panel="run" hidden><code><span class="code-comment"># Open the TUI in any repository.</span>
+cd your-project
+skein
+
+<span class="code-comment"># Or use the stable headless contract.</span>
+skein -p --output-format json "Find and fix the parser bug"</code></pre>
+          </div>
+        </div>
+        <p class="quickstart-note">Official account login is intentionally out of scope. Primary connections use explicit third-party or local relay contracts.</p>
+      </section>
+
+      <section class="section faq" id="faq" aria-labelledby="faq-title">
+        <div class="section-heading" data-reveal><p class="eyebrow">Straight answers</p><h2 id="faq-title">Before you install.</h2></div>
+        <div class="faq-list" data-reveal>
+          <details><summary>Does Skein send my repository to a retrieval service?<span aria-hidden="true">+</span></summary><p>No. The default code index is local and offline-capable. Model prompts still contain the context selected for the configured model endpoint, so your relay's data policy remains important.</p></details>
+          <details><summary>Which model providers can I use?<span aria-hidden="true">+</span></summary><p>Skein supports OpenAI Responses, OpenAI Chat, Anthropic Messages, Gemini, and compatible relay connections. Each protocol and authentication header is selected explicitly.</p></details>
+          <details><summary>Can Skein run in CI?<span aria-hidden="true">+</span></summary><p>Yes. Print mode supports text, JSON, and streaming JSON. Final status and exit codes distinguish verified, unverified, failed, cancelled, and incomplete work.</p></details>
+          <details><summary>Can the model bypass denied tools?<span aria-hidden="true">+</span></summary><p>No. Tool categories, command rules, workspace boundaries, and completion checks are enforced by the runtime outside model output.</p></details>
+          <details><summary>How do external coding CLIs fit in?<span aria-hidden="true">+</span></summary><p>Installed Codex, Claude, or Grok CLIs can act as bounded read-only experts. External writer access is not silently enabled; writable delegation stays behind Skein's reviewed API writer lane.</p></details>
+        </div>
+      </section>
+
+      <section class="final-cta" aria-labelledby="cta-title">
+        <div class="cta-thread" aria-hidden="true"></div>
+        <img src="./assets/skein-goose-dark.svg" width="160" height="112" alt="">
+        <p class="eyebrow">Carry one inspectable thread</p><h2 id="cta-title">Know what changed.<br>Know why it is done.</h2>
+        <div class="hero-actions"><a class="button button-primary" href="#quickstart">Install Skein</a><a class="button button-secondary" href="https://github.com/lixiang12345/skein" rel="noreferrer">View source <span aria-hidden="true">↗</span></a></div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-brand"><span aria-hidden="true">⌁</span><strong>Skein</strong><p>Context-first coding for the terminal.</p></div>
+      <div class="footer-links">
+        <div><strong>Product</strong><a href="#workflow">How it works</a><a href="#capabilities">Capabilities</a><a href="#trust">Trust</a></div>
+        <div><strong>Resources</strong><a href="https://github.com/lixiang12345/skein#readme" rel="noreferrer">Documentation</a><a href="https://www.npmjs.com/package/@skein-code/cli" rel="noreferrer">npm</a><a href="https://github.com/lixiang12345/skein/releases" rel="noreferrer">Releases</a></div>
+        <div><strong>Open source</strong><a href="https://github.com/lixiang12345/skein" rel="noreferrer">GitHub</a><a href="https://github.com/lixiang12345/skein/issues" rel="noreferrer">Issues</a><a href="https://github.com/lixiang12345/skein/blob/main/LICENSE" rel="noreferrer">MIT license</a></div>
+      </div>
+      <div class="footer-bottom"><p>© <span data-year>2026</span> Skein contributors.</p><p>No tracking. No cookies. Just the site.</p></div>
+    </footer>
+  </div>
+  <div class="toast" role="status" aria-live="polite" aria-atomic="true" data-toast></div>
+</body>
+</html>

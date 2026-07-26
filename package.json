@@ -159,7 +159,8 @@
     "verify:package": "node scripts/verify-package.mjs",
     "release:verify": "npm run check && npm run verify:package --",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm test && npm run build && npm run smoke:dist",
+    "check": "npm run typecheck && npm test && npm run website:check && npm run build && npm run smoke:dist",
+    "website:check": "node scripts/verify-website.mjs",
     "smoke:dist": "node dist/cli.js --help",
     "prepublishOnly": "npm run check"
   },
