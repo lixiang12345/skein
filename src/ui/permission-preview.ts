@@ -1,7 +1,7 @@
 import {lstat, readFile} from 'node:fs/promises';
 import {createTwoFilesPatch} from 'diff';
-import type {ToolCall} from '../types.js';
-import {sanitizeTerminalText} from './text.js';
+import type {ToolCall, ToolCategory} from '../types.js';
+import {displayWidth, sanitizeTerminalText} from './text.js';
 
 /**
  * Bounded, display-only diff preview for write-category permission prompts.
@@ -29,6 +29,51 @@ export async function buildWritePreview(
     return undefined;
   }
   return undefined;
+}
+
+/**
+ * Preview for any ask-category approval. Write tools show their diff; calls
+ * carrying a shell command show the complete command wrapped to the card
+ * width, so approval never applies to text hidden behind an ellipsis.
+ */
+export async function buildPermissionPreview(
+  call: ToolCall,
+  category: ToolCategory,
+  resolvePath: (path: string) => Promise<string>,
+  width: number,
+): Promise<PermissionPreview | undefined> {
+  if (category === 'write' && (call.name === 'write_file' || call.name === 'apply_patch')) {
+    return buildWritePreview(call, resolvePath);
+  }
+  const command = call.arguments.command;
+  if (typeof command !== 'string') return undefined;
+  const summaryBudget = 240;
+  const wrapped = wrapForCard(sanitizeTerminalText(command), width);
+  // The one-line target summary already shows short commands in full; only
+  // add the block when wrapping or truncation would otherwise hide the tail.
+  if (wrapped.lines.length <= 1 && command.length <= summaryBudget && displayWidth(command) < width - 20) {
+    return undefined;
+  }
+  return wrapped;
+}
+
+function wrapForCard(text: string, width: number): PermissionPreview {
+  const columns = Math.max(16, width - 4);
+  const lines: string[] = [];
+  for (const logical of text.split('\n')) {
+    if (logical === '') {
+      lines.push('');
+      continue;
+    }
+    let rest = logical;
+    while (rest !== '') {
+      let take = Math.min(rest.length, columns);
+      while (take > 1 && displayWidth(rest.slice(0, take)) > columns) take -= 1;
+      lines.push(rest.slice(0, take));
+      rest = rest.slice(take);
+    }
+  }
+  return bounded(lines);
 }
 
 /** Rows the preview occupies in the permission card at this width. */

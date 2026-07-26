@@ -781,18 +781,16 @@ export class AgentRunner {
         return result;
       }
     } else {
-      for (const category of categories) {
-        const allowed = await this.authorize(call, category, options, emit);
-        if (!allowed) {
-          const receipt = recovery.recordFailure(call, 'permission_denied');
-          const result = await this.protectToolResult(
-            this.withEvidenceReceipt(call,
-              failedResult(call, `Permission denied for ${category} operation.`, receipt)),
-          );
-          this.recordToolResult(result, category);
-          await emit({type: 'tool_result', result});
-          return result;
-        }
+      const deniedCategory = await this.authorizeAll(call, categories, options, emit);
+      if (deniedCategory) {
+        const receipt = recovery.recordFailure(call, 'permission_denied');
+        const result = await this.protectToolResult(
+          this.withEvidenceReceipt(call,
+            failedResult(call, `Permission denied for ${deniedCategory} operation.`, receipt)),
+        );
+        this.recordToolResult(result, deniedCategory);
+        await emit({type: 'tool_result', result});
+        return result;
       }
     }
     // Persist approvals before a subprocess or mutation starts so an abrupt
@@ -996,57 +994,79 @@ export class AgentRunner {
     }
   }
 
-  private async authorize(
+  /**
+   * Authorize every requested category with at most one interactive prompt.
+   *
+   * Deny policy and ask-mode still fail per category before any prompt, but
+   * the remaining ask categories are approved together: one card, and a
+   * session grant covers each pending category's exact-target key. Returns
+   * the denied category, or undefined when the call may proceed.
+   */
+  private async authorizeAll(
     call: ToolCall,
-    category: ToolCategory,
+    categories: ToolCategory[],
     options: RunOptions,
     emit: (event: AgentEvent) => Promise<void>,
-  ): Promise<boolean> {
-    if (options.askMode === true && category !== 'read') {
-      this.recordPermission(call, category, 'deny', 'Ask mode permits read-only tools.');
-      return false;
+  ): Promise<ToolCategory | undefined> {
+    const pending: Array<{category: ToolCategory; reason?: string}> = [];
+    for (const category of categories) {
+      if (options.askMode === true && category !== 'read') {
+        this.recordPermission(call, category, 'deny', 'Ask mode permits read-only tools.');
+        return category;
+      }
+      const decision = evaluatePermission(this.config.permissions, call, category);
+      if (decision.outcome === 'deny') {
+        this.recordPermission(call, category, 'deny', decision.reason);
+        return category;
+      }
+      if (decision.outcome === 'allow') {
+        this.recordPermission(call, category, 'allow', decision.reason);
+        continue;
+      }
+      if (this.sessionApprovals.has(permissionKey(call, category))) {
+        this.recordPermission(call, category, 'allow', 'Approved for this session.');
+        continue;
+      }
+      pending.push({category, ...(decision.reason ? {reason: decision.reason} : {})});
     }
-    const decision = evaluatePermission(this.config.permissions, call, category);
-    if (decision.outcome === 'allow') {
-      this.recordPermission(call, category, 'allow', decision.reason);
-      return true;
-    }
-    if (decision.outcome === 'deny') {
-      this.recordPermission(call, category, 'deny', decision.reason);
-      return false;
-    }
-    const approvalKey = permissionKey(call, category);
-    if (this.sessionApprovals.has(approvalKey)) {
-      this.recordPermission(call, category, 'allow', 'Approved for this session.');
-      return true;
-    }
+    if (!pending.length) return undefined;
+    const primary = pending[0] as {category: ToolCategory; reason?: string};
+    const reason = pending.length > 1
+      ? `One approval covers ${pending.map((item) => item.category).join(' + ')} for this call.`
+      : primary.reason;
     const displayCall = redactToolCallForDisplay(
       call,
       this.tools.get(call.name)?.definition.sensitiveFields ?? [],
     );
-    await emit({type: 'permission', call: displayCall, category, reason: decision.reason});
+    await emit({type: 'permission', call: displayCall, category: primary.category, ...(reason ? {reason} : {})});
     if (!options.requestPermission) {
-      this.recordPermission(call, category, 'deny', 'No permission handler was available.');
-      return false;
+      for (const item of pending) {
+        this.recordPermission(call, item.category, 'deny', 'No permission handler was available.');
+      }
+      return primary.category;
     }
     try {
-      const grant = await options.requestPermission(displayCall, category, decision.reason);
+      const grant = await options.requestPermission(displayCall, primary.category, reason);
       const allowed = grant === true || grant === 'session';
-      if (grant === 'session') this.sessionApprovals.add(approvalKey);
-      this.recordPermission(
-        call,
-        category,
-        allowed ? 'allow' : 'deny',
-        grant === 'session'
-          ? 'Approved for this session.'
-          : allowed
-            ? 'Approved once.'
-            : 'Denied interactively.',
-      );
-      return allowed;
+      for (const item of pending) {
+        if (grant === 'session') this.sessionApprovals.add(permissionKey(call, item.category));
+        this.recordPermission(
+          call,
+          item.category,
+          allowed ? 'allow' : 'deny',
+          grant === 'session'
+            ? 'Approved for this session.'
+            : allowed
+              ? 'Approved once.'
+              : 'Denied interactively.',
+        );
+      }
+      return allowed ? undefined : primary.category;
     } catch {
-      this.recordPermission(call, category, 'deny', 'Permission request failed.');
-      return false;
+      for (const item of pending) {
+        this.recordPermission(call, item.category, 'deny', 'Permission request failed.');
+      }
+      return primary.category;
     }
   }
 

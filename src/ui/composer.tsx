@@ -599,9 +599,9 @@ function pushComposerInsert(actions: ComposerInputAction[], value: string): void
 }
 
 function sanitizeComposerText(input: string): string {
-  // Tabs and every other terminal control except newline are unsafe inside the
-  // cursor-managed editor. Return is interpreted before this helper is called.
-  return sanitizeTerminalText(input).replace(/\t/gu, '');
+  // Terminal controls except newline are unsafe inside the cursor-managed
+  // editor. Tabs become two spaces so pasted code keeps its indentation.
+  return sanitizeTerminalText(input).replace(/\t/gu, '  ');
 }
 
 /** Preserve every pasted line while removing terminal control sequences. */

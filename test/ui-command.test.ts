@@ -118,7 +118,11 @@ describe('terminal command and width helpers', () => {
   it('removes terminal controls and ANSI sequences from pasted text', () => {
     expect(normalizeComposerPaste(
       '\u001B[31mred\u001B[0m\u0007\b\u007F\r\nnext\tline',
-    )).toBe('red\nnextline');
+    )).toBe('red\nnext  line');
+  });
+
+  it('keeps pasted code indentation by expanding tabs to spaces', () => {
+    expect(normalizeComposerPaste('if x {\n\treturn\n}')).toBe('if x {\n  return\n}');
   });
 
   it('sanitizes non-paste text without losing ordered Return submissions', () => {

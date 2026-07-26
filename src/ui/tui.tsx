@@ -64,7 +64,7 @@ import {resolveKittyKeyboardConfig, resolveTerminalAccessibility} from './termin
 import {nextTheme, reloadUserThemes, resolveThemeWithColor, ThemeProvider, themes} from './theme.js';
 import {editComposerDraft} from './external-editor.js';
 import {starterHint} from './starter-hints.js';
-import {buildWritePreview, permissionPreviewRows, type PermissionPreview} from './permission-preview.js';
+import {buildPermissionPreview, permissionPreviewRows, type PermissionPreview} from './permission-preview.js';
 import {estimateTimelineItemRows, fitTimelineToRows} from './viewport.js';
 import {
   buildRedactedReviewBundle,
@@ -336,11 +336,15 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   }, [busy, composerEmpty, terminalAccessibility.reducedMotion]);
 
   const requestPermission = useCallback(async (call: ToolCall, category: ToolCategory, reason?: string) => {
-    // Live approval UI may show the person exactly what a write would change;
-    // the preview is display-only and never persisted.
-    const preview = category === 'write'
-      ? await buildWritePreview(call, (path) => runner.workspace.resolvePath(path, {allowMissing: true}))
-      : undefined;
+    // Live approval UI shows the person exactly what they are approving: a
+    // bounded diff for writes, the complete wrapped command otherwise. The
+    // preview is display-only and never persisted.
+    const preview = await buildPermissionPreview(
+      call,
+      category,
+      (path) => runner.workspace.resolvePath(path, {allowMissing: true}),
+      contentWidth,
+    );
     return new Promise<PermissionGrant>((resolve) => setPermission({
       call,
       category,
@@ -348,17 +352,24 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       ...(preview ? {preview} : {}),
       resolve,
     }));
-  }, [runner]);
+  }, [runner, contentWidth]);
 
-  const requestHumanApproval = useCallback((call: ToolCall, category: ToolCategory, reason?: string) => {
+  const requestHumanApproval = useCallback(async (call: ToolCall, category: ToolCategory, reason?: string) => {
+    const preview = await buildPermissionPreview(
+      call,
+      category,
+      (path) => runner.workspace.resolvePath(path, {allowMissing: true}),
+      contentWidth,
+    );
     return new Promise<boolean>((resolve) => setPermission({
       call,
       category,
       humanOnly: true,
       ...(reason ? {reason} : {}),
+      ...(preview ? {preview} : {}),
       resolve: (grant) => resolve(grant === true),
     }));
-  }, []);
+  }, [runner, contentWidth]);
 
   const onEvent = useCallback((event: AgentEvent) => {
     switch (event.type) {
