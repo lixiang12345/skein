@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.40",
+  "version": "0.3.41",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,6 +16,9 @@
   },
   "skein": {
     "releaseNotes": [
+      "Fresh interactive sessions now open as a composer-first workspace with one brand signature, one truthful readiness line, and on-demand /status detail instead of a permanent operations dashboard",
+      "Successful visual workspace preparation clears its temporary loading frame before chat while screen readers retain linear announcements, and compact permission receipts take priority over stale inspectors",
+      "The original Skein Goose identity adds a user-approved woven-flight raster, deterministic light/dark/mono SVG and PNG marks, a one-cell Unicode terminal signature, ASCII fallback, accessible naming, and asset regression gates",
       "Background workers bind child close before awaiting spawn or metadata I/O, preventing short-lived commands from losing their exit event and remaining stuck in running state",
       "Optional user-trusted stdio LSP adapters provide bounded definition, references, and diagnostics without coupling the local index or TUI to an installed language server",
       "Session-owned durable background jobs persist content-free lifecycle state and bounded incremental stdout/stderr across CLI restarts with heartbeat recovery, retention, concurrency, runtime, and disk limits",
