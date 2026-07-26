@@ -470,6 +470,159 @@ describe('bounded orchestration', () => {
     expect(result.content).toContain('token budget exceeded');
   });
 
+  it('materializes hosted search only from an explicitly capable Responses route', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-hosted-search-route-'));
+    roots.push(root);
+    const cfg = config(root);
+    cfg.agents = {
+      ...cfg.agents!,
+      connections: {
+        research: {
+          provider: 'compatible',
+          protocol: 'openai-responses',
+          baseUrl: 'https://relay.example/v1',
+          auth: {type: 'none'},
+          hostedTools: ['web_search'],
+        },
+      },
+      routes: {
+        backend: {
+          connection: 'research',
+          model: 'research-model',
+          hostedTools: ['web_search'],
+        },
+      },
+    };
+    const profiles = new AgentProfileCatalog(root);
+    await profiles.discover();
+    const context: ContextProvider = {
+      async pack() { return {text: '', hits: [], estimatedTokens: 0, engine: 'test', truncated: false}; },
+      async search() { return []; },
+    };
+    let materialized: MosaicConfig['model'] | undefined;
+    const manager = new DelegationManager({
+      config: cfg,
+      provider: {name: 'parent', async complete() { return {content: 'parent', toolCalls: []}; }},
+      contextEngine: context,
+      parentTools: createDefaultToolRegistry(),
+      profiles,
+      providerFactory(model) {
+        materialized = model;
+        return {name: 'research', async complete() {
+          return {content: 'Researched with provider-native search.', toolCalls: [], usage: {inputTokens: 10, outputTokens: 2}};
+        }};
+      },
+    });
+    const result = await manager.tool().execute({tasks: [{profile: 'backend', task: 'Research current APIs.'}]}, {
+      config: cfg,
+      workspace: new WorkspaceAccess([root]),
+      session: createSession({workspace: root, provider: 'compatible', model: 'test'}),
+      contextEngine: context,
+    });
+    expect(result.ok).toBe(true);
+    expect(materialized).toMatchObject({
+      provider: 'compatible',
+      protocol: 'openai-responses',
+      hostedTools: ['web_search'],
+    });
+  });
+
+  it('enforces a priced cost ceiling only in explicit strict mode', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-cost-budget-team-'));
+    roots.push(root);
+    const cfg = config(root);
+    cfg.agents = {
+      ...cfg.agents!,
+      routes: {backend: {
+        runtime: 'codex',
+        provider: 'openai',
+        model: 'gpt-external',
+        pricing: {inputPerMillionUsd: 2, outputPerMillionUsd: 8},
+        costBudgetUsd: 0.001,
+        budgetMode: 'strict',
+      }},
+    };
+    const profiles = new AgentProfileCatalog(root);
+    await profiles.discover();
+    const context: ContextProvider = {
+      async pack() { return {text: '', hits: [], estimatedTokens: 0, engine: 'test', truncated: false}; },
+      async search() { return []; },
+    };
+    const events: AgentEvent[] = [];
+    const manager = new DelegationManager({
+      config: cfg,
+      provider: {name: 'parent', async complete() { return {content: 'parent', toolCalls: []}; }},
+      contextEngine: context,
+      parentTools: createDefaultToolRegistry(),
+      profiles,
+      async externalRunner(request) {
+        return {content: 'priced run', runtime: request.runtime, model: request.model, durationMs: 1, usage: {inputTokens: 1_000, outputTokens: 0}, toolCalls: 0};
+      },
+    });
+    const result = await manager.tool().execute({tasks: [{profile: 'backend', task: 'Inspect state.'}]}, {
+      config: cfg,
+      workspace: new WorkspaceAccess([root]),
+      session: createSession({workspace: root, provider: 'compatible', model: 'test'}),
+      contextEngine: context,
+      emit: (event) => { events.push(event); },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.content).toContain('cost budget exceeded');
+    expect(events.find((event) => event.type === 'agent_done')).toMatchObject({
+      type: 'agent_done',
+      cost: {status: 'priced', amountMicros: 2_000},
+    });
+
+    cfg.agents!.routes!.backend!.budgetMode = 'observe';
+    const observed = await manager.tool().execute({tasks: [{profile: 'backend', task: 'Inspect again.'}]}, {
+      config: cfg,
+      workspace: new WorkspaceAccess([root]),
+      session: createSession({workspace: root, provider: 'compatible', model: 'test'}),
+      contextEngine: context,
+    });
+    expect(observed.ok).toBe(true);
+  });
+
+  it('fails closed before a strict cost-capped run when pricing is absent', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-unpriced-strict-team-'));
+    roots.push(root);
+    const cfg = config(root);
+    cfg.agents = {
+      ...cfg.agents!,
+      routes: {backend: {
+        runtime: 'codex', provider: 'openai', model: 'gpt-external',
+        costBudgetUsd: 1, budgetMode: 'strict',
+      }},
+    };
+    const profiles = new AgentProfileCatalog(root);
+    await profiles.discover();
+    const context: ContextProvider = {
+      async pack() { return {text: '', hits: [], estimatedTokens: 0, engine: 'test', truncated: false}; },
+      async search() { return []; },
+    };
+    let calls = 0;
+    const manager = new DelegationManager({
+      config: cfg,
+      provider: {name: 'parent', async complete() { return {content: 'parent', toolCalls: []}; }},
+      contextEngine: context,
+      parentTools: createDefaultToolRegistry(),
+      profiles,
+      async externalRunner(request) {
+        calls += 1;
+        return {content: 'must not run', runtime: request.runtime, model: request.model, durationMs: 1};
+      },
+    });
+    const result = await manager.tool().execute({tasks: [{profile: 'backend', task: 'Inspect state.'}]}, {
+      config: cfg,
+      workspace: new WorkspaceAccess([root]),
+      session: createSession({workspace: root, provider: 'compatible', model: 'test'}),
+      contextEngine: context,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.content).toContain('no model request was sent');
+    expect(calls).toBe(0);
+  });
+
   it('reports a guard threshold without stopping the worker', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-guard-team-'));
     roots.push(root);

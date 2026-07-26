@@ -228,6 +228,11 @@ export class HeadlessReporter {
           `${this.glyphs.meta} clarification resolved ${this.glyphs.separator} ${event.answer}\n`,
         ));
         break;
+      case 'provider_activity':
+        process.stderr.write(this.paint.dim(
+          `${this.glyphs.meta} provider search ${this.glyphs.separator} ${event.hostedTools.length} call${event.hostedTools.length === 1 ? '' : 's'} ${this.glyphs.separator} ${event.sources.length} source${event.sources.length === 1 ? '' : 's'}\n`,
+        ));
+        break;
       case 'usage':
       case 'permission':
       case 'skill':

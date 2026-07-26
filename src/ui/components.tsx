@@ -1,7 +1,7 @@
 import React from 'react';
 import {Box, Text} from 'ink';
 import {basename} from 'node:path';
-import type {AgentPhase, ContextBudgetTier, ContextDegradation, ContextSource, MosaicConfig, PendingInput, PromptTokenBreakdown, SessionTask, ToolCall, ToolCategory, WorkingMemory} from '../types.js';
+import type {AgentPhase, ContextBudgetTier, ContextDegradation, ContextSource, MosaicConfig, PendingInput, PromptTokenBreakdown, RouteCostReceipt, SessionTask, ToolCall, ToolCategory, WorkingMemory} from '../types.js';
 import {PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
 import {commandForCall} from '../tools/permissions.js';
 import {commandSuggestions, type CommandSuggestion} from './commands.js';
@@ -23,7 +23,7 @@ export type TimelineItem =
   | {id: string; kind: 'tool'; name: string; detail: string; state: 'running' | 'ok' | 'error'; startedAt?: number; durationMs?: number; errorDetail?: string; output?: string; meta?: string}
   | {id: string; kind: 'skill'; name: string; description: string}
   | {id: string; kind: 'memory'; count: number; scope: string}
-  | {id: string; kind: 'agent'; profile: string; task: string; provider?: string; model?: string; phase?: AgentPhase; stage?: 'context' | 'thinking' | 'tool' | 'response' | 'review'; activityDetail?: string; activeTool?: string; toolCalls?: number; inputTokens?: number; outputTokens?: number; summary?: string; alerts?: string[]; retryOf?: string; superseded?: boolean; state: 'queued' | 'running' | 'ok' | 'error' | 'cancelled'; cancelReason?: string; startedAt?: number; durationMs?: number}
+  | {id: string; kind: 'agent'; profile: string; task: string; provider?: string; model?: string; phase?: AgentPhase; stage?: 'context' | 'thinking' | 'tool' | 'response' | 'review'; activityDetail?: string; activeTool?: string; toolCalls?: number; inputTokens?: number; outputTokens?: number; cost?: RouteCostReceipt; hostedToolCalls?: number; sourceCount?: number; summary?: string; alerts?: string[]; retryOf?: string; superseded?: boolean; state: 'queued' | 'running' | 'ok' | 'error' | 'cancelled'; cancelReason?: string; startedAt?: number; durationMs?: number}
   | {id: string; kind: 'agent-message'; from: string; to: string; text: string}
   | {id: string; kind: 'workflow'; name: string; step: string; status: SessionTask['status']}
   | {id: string; kind: 'compaction'; messages: number; tokens: number}
@@ -556,6 +556,11 @@ export function TeamCockpit({items, width = 36, glyphMode = 'auto'}: {
             ? `${formatTokens((agent.inputTokens ?? 0) + (agent.outputTokens ?? 0))} tok`
             : '',
           agent.toolCalls !== undefined ? `${agent.toolCalls} tools` : '',
+          agent.cost?.status === 'priced'
+            ? `$${(agent.cost.amountMicros / 1_000_000).toFixed(6)}`
+            : agent.cost ? 'unpriced' : '',
+          agent.hostedToolCalls !== undefined ? `${agent.hostedToolCalls} hosted` : '',
+          agent.sourceCount !== undefined ? `${agent.sourceCount} sources` : '',
         ].filter(Boolean).join(` ${glyphs.separator} `);
         return (
           <Box key={agent.id} flexDirection="column">
@@ -645,6 +650,17 @@ export function TeamWorkbench({items, tasks, width = 80, glyphMode = 'auto', vie
   const cancelled = agents.filter((agent) => agent.state === 'cancelled').length;
   const totalTokens = agents.reduce((sum, agent) => sum + (agent.inputTokens ?? 0) + (agent.outputTokens ?? 0), 0);
   const totalTools = agents.reduce((sum, agent) => sum + (agent.toolCalls ?? 0), 0);
+  const pricedCostMicros = agents.reduce((sum, agent) =>
+    sum + (agent.cost?.status === 'priced' ? agent.cost.amountMicros : 0), 0);
+  const pricedAgents = agents.filter((agent) => agent.cost?.status === 'priced').length;
+  const unpricedAgents = agents.filter((agent) => agent.cost?.status === 'unpriced').length;
+  const costSummary = pricedAgents
+    ? `$${(pricedCostMicros / 1_000_000).toFixed(6)}${unpricedAgents ? ` + ${unpricedAgents} unpriced` : ''}`
+    : unpricedAgents
+      ? `${unpricedAgents} unpriced`
+      : agents.length ? 'cost pending' : '';
+  const hostedToolCalls = agents.reduce((sum, agent) => sum + (agent.hostedToolCalls ?? 0), 0);
+  const sourceCount = agents.reduce((sum, agent) => sum + (agent.sourceCount ?? 0), 0);
   const status = run?.needsReview ? 'needs review' : run?.accepted === true ? 'accepted' : run?.accepted === false ? 'rejected' : running ? 'running' : agents.length ? 'complete' : 'idle';
   const summary = [
     `${status}${run?.reviewRounds !== undefined ? ` ${glyphs.separator} review ${run.reviewRounds}` : ''}`,
@@ -654,6 +670,9 @@ export function TeamWorkbench({items, tasks, width = 80, glyphMode = 'auto', vie
     cancelled ? `${cancelled} cancelled` : '',
     `${formatTokens(totalTokens)} tok`,
     `${totalTools} tools`,
+    costSummary,
+    `${hostedToolCalls} hosted`,
+    `${sourceCount} sources`,
     run?.startedAt ? formatDuration(Date.now() - run.startedAt) : '',
   ].filter(Boolean).join(` ${glyphs.separator} `);
   const viewLabel = view === 'agents' ? 'Agents' : view === 'tasks' ? 'Tasks' : 'Messages';
@@ -672,7 +691,10 @@ export function TeamWorkbench({items, tasks, width = 80, glyphMode = 'auto', vie
           const stateGlyph = agent.state === 'queued' ? glyphs.pending : agent.state === 'running' ? glyphs.running : agent.state === 'ok' ? glyphs.success : agent.state === 'cancelled' ? glyphs.warning : glyphs.error;
           const route = agent.provider && agent.model ? `${agent.provider}/${agent.model}` : 'inherited model';
           const activity = agent.state === 'cancelled' && agent.cancelReason ? agent.cancelReason : agent.activeTool ? `${agent.stage ?? 'tool'} ${agent.activeTool}` : agent.activityDetail ?? agent.stage ?? 'queued';
-          const telemetry = `${formatTokens((agent.inputTokens ?? 0) + (agent.outputTokens ?? 0))} tok${glyphs.separator}${agent.toolCalls ?? 0} tools`;
+          const agentCost = agent.cost?.status === 'priced'
+            ? `$${(agent.cost.amountMicros / 1_000_000).toFixed(6)}`
+            : agent.cost ? 'unpriced' : 'cost pending';
+          const telemetry = `${formatTokens((agent.inputTokens ?? 0) + (agent.outputTokens ?? 0))} tok${glyphs.separator}${agent.toolCalls ?? 0} tools${glyphs.separator}${agentCost}${glyphs.separator}${agent.hostedToolCalls ?? 0} hosted${glyphs.separator}${agent.sourceCount ?? 0} sources`;
           return (
             <Box key={agent.id} flexDirection="column">
               <Text color={index === selectedIndex ? theme.textStrong : theme.text}>{truncateDisplay(`${marker}${stateGlyph} ${agent.profile}${agent.phase && agent.phase !== 'work' ? ` ${glyphs.separator} ${agent.phase}` : ''}`, inner)}</Text>

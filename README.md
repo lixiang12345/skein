@@ -213,13 +213,48 @@ Observed gateway shapes are deliberately examples, not presets:
 
 | Gateway | Responses base | Anthropic base | Models base/auth |
 | --- | --- | --- | --- |
-| OpenRouter | `https://openrouter.ai/api/v1` | same base | same base; Bearer available |
+| OpenRouter | `https://openrouter.ai/api/v1` | SDK base `https://openrouter.ai/api` | `.../api/v1`; Bearer available |
 | Vercel AI Gateway | `https://ai-gateway.vercel.sh/v1` | `https://ai-gateway.vercel.sh` | `.../v1`; public catalog |
 | New API | deployment base ending in `/v1` | commonly the same `/v1` base | commonly `/v1`; deployment-defined auth |
 | LiteLLM | proxy root or `/v1` SDK base | root for unified Messages, `/anthropic` for passthrough | deployment-defined |
 
 Skein never turns this table into URL or authentication detection. Configure
 each transport and catalog exactly as the selected relay documents it.
+
+Provider-hosted search is a separate, explicit capability. Skein only sends a
+Responses `web_search` tool when both the named connection declares
+`hostedTools: ["web_search"]` and the selected route requests the same tool.
+It never grants the delegated agent a local network or shell permission for
+this. Search-call receipts and citation identities are persisted without query
+strings, fragments, URL credentials, or hidden reasoning.
+
+Relay pricing is also user-owned configuration. A connection or route may set
+per-million input, output, cache-read, and cache-write USD rates; Skein never
+substitutes an official price for a relay. Missing pricing is displayed as
+`unpriced`, not `$0`. `strict` cost enforcement requires both an explicit USD
+ceiling and explicit pricing; otherwise no model request is sent. `observe`
+remains the default and never stops work.
+
+The non-interactive setup command can persist the connection side of that
+contract without storing a key or making a model request:
+
+```bash
+skein agents setup --yes \
+  --name research-relay \
+  --provider compatible \
+  --protocol openai-responses \
+  --base-url https://relay.example/v1 \
+  --auth env \
+  --api-key-env TEAM_RELAY_API_KEY \
+  --hosted-tool web_search \
+  --input-price 2 \
+  --output-price 8 \
+  --cached-input-price 0.5 \
+  --model provider/research-model
+```
+
+The route must still opt into `hostedTools: ["web_search"]`; declaring a
+connection capability alone never enables a hosted tool.
 
 Capability routing is local and shadow-only in this release. It fingerprints
 the exact model, endpoint/auth reference, profile prompt, tool catalog, and

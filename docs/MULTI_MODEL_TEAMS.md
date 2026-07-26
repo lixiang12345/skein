@@ -288,6 +288,12 @@ connections may share the same credential reference:
         "protocol": "openai-responses",
         "baseUrl": "https://relay.example/v1",
         "defaultModel": "openai/coding-model",
+        "hostedTools": ["web_search"],
+        "pricing": {
+          "inputPerMillionUsd": 2,
+          "outputPerMillionUsd": 8,
+          "cachedInputPerMillionUsd": 0.5
+        },
         "auth": {"type": "env", "name": "TEAM_RELAY_API_KEY"}
       },
       "relay-anthropic": {
@@ -312,6 +318,45 @@ public catalogs such as Vercel's `/v1/models`. Omitted catalog auth retains the
 backward-compatible behavior of inheriting inference auth. Skein never probes
 one protocol and silently retries another: that could run the same inference
 twice and double bill the user.
+
+Hosted tools are capability intersections, not implied relay features. The
+connection declares what its exact Responses endpoint is documented or tested
+to support; an individual route separately opts in. For example:
+
+```json
+{
+  "agents": {
+    "budgetMode": "observe",
+    "connections": {
+      "research-relay": {
+        "provider": "compatible",
+        "protocol": "openai-responses",
+        "baseUrl": "https://relay.example/v1",
+        "hostedTools": ["web_search"],
+        "pricing": {
+          "inputPerMillionUsd": 2,
+          "outputPerMillionUsd": 8,
+          "cachedInputPerMillionUsd": 0.5
+        },
+        "auth": {"type": "env", "name": "TEAM_RELAY_API_KEY"}
+      }
+    },
+    "routes": {
+      "researcher": {
+        "connection": "research-relay",
+        "model": "provider/research-model",
+        "hostedTools": ["web_search"]
+      }
+    }
+  }
+}
+```
+
+The provider executes web search. The delegated agent still receives local
+`network: deny`, `shell: deny`, `git: deny`, and `write: deny`. Skein stores
+content-free hosted-tool events and citation identities with URL credentials,
+queries, and fragments removed; the exact source URL is represented by a
+SHA-256 binding.
 
 For a relay whose catalog is documented as public, make the no-secret boundary
 explicit:
@@ -577,9 +622,13 @@ Budget thresholds are opt-in policy, not a default task-size limit:
 - `strict` enforces configured thresholds and may stop a worker. Use it only
   when a user or an automation explicitly needs a hard ceiling.
 
-Team-wide thresholds use `maxAgentTokens`, `maxAgentToolCalls`, and
-`agentTimeoutMs`. Each route may override them with `tokenBudget`,
-`maxToolCalls`, `timeoutMs`, and its own `budgetMode`. For example:
+Team-wide thresholds use `maxAgentTokens`, `maxAgentToolCalls`,
+`agentTimeoutMs`, and optional `maxAgentCostUsd`. Each route may override them
+with `tokenBudget`, `maxToolCalls`, `timeoutMs`, `costBudgetUsd`, and its own
+`budgetMode`. Cost is computed only from prices explicitly configured on the
+route or its connection; route pricing wins. Missing pricing remains
+`unpriced`, and a strict USD ceiling fails closed before the first request if
+pricing is absent. For example:
 
 ```json
 {
@@ -588,10 +637,12 @@ Team-wide thresholds use `maxAgentTokens`, `maxAgentToolCalls`, and
     "maxAgentTokens": 120000,
     "maxAgentToolCalls": 120,
     "agentTimeoutMs": 600000,
+    "maxAgentCostUsd": 2,
     "routes": {
       "reviewer": {
         "budgetMode": "strict",
-        "tokenBudget": 30000
+        "tokenBudget": 30000,
+        "costBudgetUsd": 0.5
       }
     }
   }
@@ -603,10 +654,13 @@ session compaction/context limits. A context boundary still exists because a
 provider cannot accept an unlimited prompt; it is not treated as a user task
 budget.
 
-The Team Cockpit shows observable phase, current tool, elapsed time, token
-usage, tool count, soft warnings, and final acceptance state. It deliberately
-does not show hidden chain-of-thought; model reports, peer handoffs, tool
-activity, and reviewer decisions are the explainable artifacts.
+The Team Cockpit and Workbench show observable phase, current tool, elapsed
+time, token usage, priced cost or `unpriced`, hosted-tool/source counts, soft
+warnings, and final acceptance state. `agents runs --json` and `agents show
+--json` expose the same receipts plus the content-addressed provenance bundle.
+They deliberately do not show hidden chain-of-thought; model reports, peer
+handoffs, provider-hosted tool activity, source bindings, and reviewer
+decisions are the explainable artifacts.
 
 ## Current Safety Boundary
 

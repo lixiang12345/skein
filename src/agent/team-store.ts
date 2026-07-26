@@ -10,6 +10,8 @@ import {
 } from '../utils/namespace.js';
 import {withNamespaceLease} from '../utils/namespace-lease.js';
 import {assertNoSymlinkPath, ensureWorkspaceStorageDirectory} from '../utils/storage.js';
+import {canonicalJson} from '../utils/canonical-json.js';
+import type {ModelTokenUsage, RouteTokenPricing} from '../types.js';
 import {
   reviewContractSchema,
   reviewContractIntegrityValid,
@@ -29,11 +31,14 @@ import {
   reviewCriterionConflictSchema,
   reviewIndependenceIntegrityValid,
   reviewIndependenceSchema,
+  reviewRouteIdentityIntegrityValid,
+  reviewRouteIdentitySchema,
   type HumanArbitration,
   type HumanArbitrationDecision,
   type ReviewCriterionConflict,
   type ReviewIndependence,
 } from './review-arbitration.js';
+import {routeCostReceipt} from './route-cost.js';
 
 const runIdSchema = z.string().uuid();
 const hashSchema = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -44,6 +49,59 @@ const artifactSchema = z.object({
 }).strict();
 
 const phaseSchema = z.enum(['work', 'review', 'revision', 'write']);
+
+const tokenSourceSchema = z.enum(['actual', 'estimated', 'mixed', 'unknown']);
+const modelUsageSchema = z.object({
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  cachedInputTokens: z.number().int().nonnegative().optional(),
+  cacheWriteInputTokens: z.number().int().nonnegative().optional(),
+  reasoningTokens: z.number().int().nonnegative().optional(),
+  source: tokenSourceSchema.optional(),
+}).strict();
+const pricingSchema = z.object({
+  inputPerMillionUsd: z.number().finite().nonnegative(),
+  outputPerMillionUsd: z.number().finite().nonnegative(),
+  cachedInputPerMillionUsd: z.number().finite().nonnegative().optional(),
+  cacheWriteInputPerMillionUsd: z.number().finite().nonnegative().optional(),
+}).strict();
+const costReceiptSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('unpriced'),
+    currency: z.literal('USD'),
+    usageSource: tokenSourceSchema,
+    usage: modelUsageSchema,
+    reason: z.literal('pricing-not-configured'),
+  }).strict(),
+  z.object({
+    status: z.literal('priced'),
+    currency: z.literal('USD'),
+    usageSource: tokenSourceSchema,
+    usage: modelUsageSchema,
+    pricingSource: z.enum(['route', 'connection']),
+    protocol: z.enum(['openai-responses', 'openai-chat', 'anthropic-messages', 'gemini']),
+    pricing: pricingSchema,
+    pricingSha256: hashSchema,
+    amountMicros: z.number().int().nonnegative().safe(),
+  }).strict(),
+]);
+const hostedToolEventSchema = z.object({
+  id: z.string().min(1).max(256),
+  tool: z.literal('web_search'),
+  status: z.enum(['completed', 'incomplete', 'failed', 'unknown']),
+}).strict();
+const providerSourceUrlSchema = z.string().url().max(4_000).refine((value) => {
+  const url = new URL(value);
+  return (url.protocol === 'https:' || url.protocol === 'http:') &&
+    !url.username && !url.password && !url.search && !url.hash;
+}, {message: 'provider source URL must be content-safe'});
+const providerSourceSchema = z.object({
+  id: z.string().regex(/^source:[a-f0-9]{64}$/u),
+  type: z.literal('url_citation'),
+  url: providerSourceUrlSchema,
+  urlSha256: hashSchema,
+  title: z.string().max(500).optional(),
+}).strict();
 
 const agentRecordSchema = z.object({
   id: z.string().uuid(),
@@ -57,10 +115,11 @@ const agentRecordSchema = z.object({
   endedAt: z.string().optional(),
   durationMs: z.number().int().nonnegative().optional(),
   toolCalls: z.number().int().nonnegative().optional(),
-  usage: z.object({
-    inputTokens: z.number().int().nonnegative(),
-    outputTokens: z.number().int().nonnegative(),
-  }).strict().optional(),
+  usage: modelUsageSchema.optional(),
+  cost: costReceiptSchema.optional(),
+  route: reviewRouteIdentitySchema.optional(),
+  hostedTools: z.array(hostedToolEventSchema).max(128).optional(),
+  sources: z.array(providerSourceSchema).max(256).optional(),
   report: artifactSchema,
 }).strict();
 
@@ -116,6 +175,17 @@ const reviewRecordV4Schema = reviewRecordSchema.extend({
   criterionConflicts: z.array(reviewCriterionConflictSchema).max(64),
 }).strict();
 
+const provenanceSummarySchema = z.object({
+  version: z.literal(1),
+  bundle: artifactSchema,
+  agentCount: z.number().int().nonnegative().max(256),
+  reviewerDecisionCount: z.number().int().nonnegative().max(256),
+  hostedToolCalls: z.number().int().nonnegative(),
+  sourceCount: z.number().int().nonnegative(),
+  pricedCostMicros: z.number().int().nonnegative().safe(),
+  unpricedAgents: z.number().int().nonnegative().max(256),
+}).strict();
+
 const manifestFields = {
   id: runIdSchema,
   workspace: z.string(),
@@ -159,6 +229,7 @@ const manifestV4Schema = z.object({
   contract: reviewContractSchema.optional(),
   writer: writerLaneV4Schema.optional(),
   arbitrations: z.array(humanArbitrationSchema).max(128),
+  provenance: provenanceSummarySchema.optional(),
 }).strict();
 
 const manifestSchema = z.discriminatedUnion('version', [manifestV1Schema, manifestV2Schema, manifestV3Schema, manifestV4Schema]);
@@ -172,6 +243,7 @@ export type TeamRunWriterV4Record = z.infer<typeof writerLaneV4Schema>;
 export type TeamRunWriterIntegration = z.infer<typeof writerIntegrationSchema>;
 export type TeamRunReviewRecord = z.infer<typeof reviewRecordSchema>;
 export type TeamRunReviewV4Record = z.infer<typeof reviewRecordV4Schema>;
+export type TeamRunProvenanceSummary = z.infer<typeof provenanceSummarySchema>;
 
 export interface TeamRunSummary {
   id: string;
@@ -185,6 +257,10 @@ export interface TeamRunSummary {
   reviewRounds: number;
   totalTokens: number;
   toolCalls: number;
+  pricedCostMicros: number;
+  unpricedAgents: number;
+  hostedToolCalls: number;
+  sourceCount: number;
 }
 
 export class TeamRunStore {
@@ -203,7 +279,7 @@ export class TeamRunStore {
 
   async create(input: {objective: string; reviewer: string; maxReviewRounds: number}): Promise<TeamRunManifest> {
     const now = new Date().toISOString();
-    const manifest = manifestSchema.parse({
+    const initial = manifestSchema.parse({
       version: 4,
       id: randomUUID(),
       workspace: this.workspace,
@@ -219,7 +295,11 @@ export class TeamRunStore {
       reviews: [],
       arbitrations: [],
     });
-    await this.queueWrite(async () => this.withManagedLease(() => this.writeManifest(manifest)));
+    let manifest = initial;
+    await this.queueWrite(async () => this.withManagedLease(async () => {
+      manifest = await this.attachProvenance(initial);
+      await this.writeManifest(manifest);
+    }));
     return manifest;
   }
 
@@ -445,7 +525,9 @@ export class TeamRunStore {
         ...((manifest.version === 2 || manifest.version === 3 || manifest.version === 4) && manifest.writer
           ? [manifest.writer.patch, ...(manifest.writer.review ? [manifest.writer.review] : [])]
           : []),
+        ...(manifest.version === 4 && manifest.provenance ? [manifest.provenance.bundle] : []),
       ]) await this.verifyArtifact(runId, artifact);
+      if (manifest.version === 4 && manifest.provenance) await this.verifyProvenance(manifest);
     }
     return manifest;
   }
@@ -500,7 +582,8 @@ export class TeamRunStore {
     runIdSchema.parse(runId);
     await this.queueWrite(async () => this.withManagedLease(async () => {
       const current = await this.loadUnlocked(runId);
-      const next = manifestSchema.parse({...await operation(current), updatedAt: new Date().toISOString()});
+      const operated = manifestSchema.parse({...await operation(current), updatedAt: new Date().toISOString()});
+      const next = await this.attachProvenance(operated);
       assertStructuredManifestIntegrity(next);
       await this.writeManifest(next);
     }));
@@ -518,6 +601,7 @@ export class TeamRunStore {
     await this.assertRegularFile(path);
     const manifest = manifestSchema.parse(JSON.parse(await readFile(path, 'utf8')) as unknown);
     assertStructuredManifestIntegrity(manifest);
+    if (manifest.version === 4 && manifest.provenance) await this.verifyProvenance(manifest);
     return manifest;
   }
 
@@ -553,6 +637,28 @@ export class TeamRunStore {
       await atomicWrite(path, data, 0o600);
     }
     return {sha256, bytes};
+  }
+
+  private async attachProvenance(manifest: TeamRunManifest): Promise<TeamRunManifest> {
+    if (manifest.version !== 4) return manifest;
+    const bundle = buildProvenanceBundle(manifest);
+    const artifact = await this.writeArtifact(manifest.id, canonicalJson(bundle), false);
+    return manifestV4Schema.parse({
+      ...manifest,
+      provenance: provenanceSummary(manifest, artifact),
+    });
+  }
+
+  private async verifyProvenance(manifest: Extract<TeamRunManifest, {version: 4}>): Promise<void> {
+    if (!manifest.provenance) return;
+    await this.verifyArtifact(manifest.id, manifest.provenance.bundle);
+    const raw = await readFile(this.artifactPath(manifest.id, manifest.provenance.bundle.sha256), 'utf8');
+    const expected = canonicalJson(buildProvenanceBundle(manifest));
+    if (raw !== expected || canonicalJson(manifest.provenance) !== canonicalJson(
+      provenanceSummary(manifest, manifest.provenance.bundle),
+    )) {
+      throw new Error('Team run provenance bundle integrity check failed.');
+    }
   }
 
   private async withManagedLease<T>(operation: () => Promise<T>): Promise<T> {
@@ -597,6 +703,32 @@ export class TeamRunStore {
 }
 
 function assertStructuredManifestIntegrity(manifest: TeamRunManifest): void {
+  for (const agent of manifest.agents) {
+    if (agent.route && !reviewRouteIdentityIntegrityValid(agent.route)) {
+      throw new Error('Team run agent route identity integrity check failed.');
+    }
+    if (agent.cost) {
+      const costUsage = storedModelUsage(agent.cost.usage);
+      const expected = agent.cost.status === 'priced'
+        ? routeCostReceipt(costUsage, {
+            pricing: storedPricing(agent.cost.pricing),
+            pricingSource: agent.cost.pricingSource,
+            protocol: agent.cost.protocol,
+          })
+        : routeCostReceipt(costUsage);
+      if (canonicalJson(expected) !== canonicalJson(agent.cost) ||
+        (agent.usage && canonicalJson(agent.usage) !== canonicalJson(agent.cost.usage))) {
+        throw new Error('Team run agent cost receipt integrity check failed.');
+      }
+    }
+    const hostedIds = new Set(agent.hostedTools?.map((item) => item.id) ?? []);
+    const sourceIds = new Set(agent.sources?.map((source) => source.id) ?? []);
+    if (hostedIds.size !== (agent.hostedTools?.length ?? 0) ||
+      sourceIds.size !== (agent.sources?.length ?? 0) ||
+      agent.sources?.some((source) => source.id !== `source:${source.urlSha256}`)) {
+      throw new Error('Team run provider activity provenance is duplicate or corrupt.');
+    }
+  }
   if (manifest.version !== 3 && manifest.version !== 4) return;
   if (manifest.contract && (!reviewContractIntegrityValid(manifest.contract) ||
     manifest.reviews.some((review) => !reviewVerdictBindingValid(
@@ -696,6 +828,117 @@ function assertStructuredManifestIntegrity(manifest: TeamRunManifest): void {
   }
 }
 
+function storedModelUsage(usage: z.infer<typeof modelUsageSchema>): ModelTokenUsage {
+  return {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    ...(usage.cachedInputTokens === undefined ? {} : {cachedInputTokens: usage.cachedInputTokens}),
+    ...(usage.cacheWriteInputTokens === undefined
+      ? {} : {cacheWriteInputTokens: usage.cacheWriteInputTokens}),
+    ...(usage.reasoningTokens === undefined ? {} : {reasoningTokens: usage.reasoningTokens}),
+    ...(usage.source === undefined ? {} : {source: usage.source}),
+  };
+}
+
+function storedPricing(pricing: z.infer<typeof pricingSchema>): RouteTokenPricing {
+  return {
+    inputPerMillionUsd: pricing.inputPerMillionUsd,
+    outputPerMillionUsd: pricing.outputPerMillionUsd,
+    ...(pricing.cachedInputPerMillionUsd === undefined
+      ? {} : {cachedInputPerMillionUsd: pricing.cachedInputPerMillionUsd}),
+    ...(pricing.cacheWriteInputPerMillionUsd === undefined
+      ? {} : {cacheWriteInputPerMillionUsd: pricing.cacheWriteInputPerMillionUsd}),
+  };
+}
+
+function buildProvenanceBundle(manifest: Extract<TeamRunManifest, {version: 4}>): Record<string, unknown> {
+  return {
+    version: 1,
+    runId: manifest.id,
+    objectiveSha256: sha256(manifest.objective),
+    status: manifest.status,
+    contractSha256: manifest.contract?.sha256,
+    agents: manifest.agents.map((agent) => {
+      const sourceIds = (agent.sources ?? []).map((source) => source.id).sort();
+      const hostedEvents = (agent.hostedTools ?? [])
+        .map((item) => ({id: item.id, tool: item.tool, status: item.status}))
+        .sort((left, right) => left.id.localeCompare(right.id));
+      return {
+        id: agent.id,
+        profile: agent.profile,
+        phase: agent.phase,
+        ok: agent.ok,
+        reportSha256: agent.report.sha256,
+        routeFingerprintSha256: agent.route?.routeFingerprintSha256,
+        usage: agent.usage,
+        cost: agent.cost ? {
+          sha256: sha256(canonicalJson(agent.cost)),
+          status: agent.cost.status,
+          ...(agent.cost.status === 'priced' ? {
+            amountMicros: agent.cost.amountMicros,
+            pricingSource: agent.cost.pricingSource,
+            pricingSha256: agent.cost.pricingSha256,
+          } : {}),
+        } : undefined,
+        hostedToolCalls: hostedEvents.length,
+        hostedToolsSha256: sha256(canonicalJson(hostedEvents)),
+        sourceCount: sourceIds.length,
+        sourcesSha256: sha256(canonicalJson(sourceIds)),
+      };
+    }),
+    messages: manifest.messages.map((message) => ({
+      id: message.id,
+      from: message.from,
+      to: message.to,
+      contentSha256: message.content.sha256,
+    })),
+    reviews: manifest.reviews.map((review) => ({
+      artifactSha256: review.artifact.sha256,
+      verdictSha256: review.verdict.sha256,
+      decision: review.verdict.decision,
+      criterionEvidenceRefs: review.verdict.criteria.map((criterion) => ({
+        id: criterion.id,
+        status: criterion.status,
+        evidenceRefs: criterion.evidenceRefs,
+      })),
+      reviewerRouteFingerprintSha256:
+        review.independence.correlations[0]?.reviewer.routeFingerprintSha256,
+    })),
+    writer: manifest.writer ? {
+      patchSha256: manifest.writer.patch.sha256,
+      contractSha256: manifest.writer.contract.sha256,
+      verdictSha256: manifest.writer.verdict?.sha256,
+      outcome: manifest.writer.outcome,
+      reviewerRouteFingerprintSha256:
+        manifest.writer.independence?.correlations[0]?.reviewer.routeFingerprintSha256,
+      integrationStatus: manifest.writer.integration?.status,
+    } : undefined,
+    arbitrations: manifest.arbitrations.map((item) => item.sha256),
+  };
+}
+
+function provenanceSummary(
+  manifest: Extract<TeamRunManifest, {version: 4}>,
+  bundle: {sha256: string; bytes: number},
+): TeamRunProvenanceSummary {
+  return provenanceSummarySchema.parse({
+    version: 1,
+    bundle,
+    agentCount: manifest.agents.length,
+    reviewerDecisionCount: manifest.reviews.length +
+      (manifest.writer?.verdict ? 1 : 0) + manifest.arbitrations.length,
+    hostedToolCalls: manifest.agents.reduce((total, agent) => total + (agent.hostedTools?.length ?? 0), 0),
+    sourceCount: manifest.agents.reduce((total, agent) => total + (agent.sources?.length ?? 0), 0),
+    pricedCostMicros: manifest.agents.reduce((total, agent) =>
+      total + (agent.cost?.status === 'priced' ? agent.cost.amountMicros : 0), 0),
+    unpricedAgents: manifest.agents.filter((agent) => agent.cost?.status !== 'priced').length,
+  });
+}
+
+function sha256(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
 function activeStructuredReview(manifest: Extract<TeamRunManifest, {version: 4}>): {
   contract: ReviewContract;
   artifactSha256: string;
@@ -733,6 +976,19 @@ function boundedArtifactText(content: string, maxBytes: number, truncate: boolea
 }
 
 function toSummary(manifest: TeamRunManifest): TeamRunSummary {
+  const pricedCostMicros = manifest.version === 4 && manifest.provenance
+    ? manifest.provenance.pricedCostMicros
+    : manifest.agents.reduce((total, agent) =>
+      total + (agent.cost?.status === 'priced' ? agent.cost.amountMicros : 0), 0);
+  const unpricedAgents = manifest.version === 4 && manifest.provenance
+    ? manifest.provenance.unpricedAgents
+    : manifest.agents.filter((agent) => agent.cost?.status !== 'priced').length;
+  const hostedToolCalls = manifest.version === 4 && manifest.provenance
+    ? manifest.provenance.hostedToolCalls
+    : manifest.agents.reduce((total, agent) => total + (agent.hostedTools?.length ?? 0), 0);
+  const sourceCount = manifest.version === 4 && manifest.provenance
+    ? manifest.provenance.sourceCount
+    : manifest.agents.reduce((total, agent) => total + (agent.sources?.length ?? 0), 0);
   return {
     id: manifest.id,
     objective: manifest.objective,
@@ -745,5 +1001,9 @@ function toSummary(manifest: TeamRunManifest): TeamRunSummary {
     reviewRounds: manifest.reviewRounds,
     totalTokens: manifest.agents.reduce((total, agent) => total + (agent.usage?.inputTokens ?? 0) + (agent.usage?.outputTokens ?? 0), 0),
     toolCalls: manifest.agents.reduce((total, agent) => total + (agent.toolCalls ?? 0), 0),
+    pricedCostMicros,
+    unpricedAgents,
+    hostedToolCalls,
+    sourceCount,
   };
 }

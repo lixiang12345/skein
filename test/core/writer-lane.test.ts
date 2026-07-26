@@ -255,6 +255,7 @@ describe('isolated writer lane', () => {
       contract?: unknown;
       writer: {contract?: unknown; verdict?: unknown; independence?: unknown; criterionConflicts?: unknown};
       arbitrations?: unknown;
+      provenance?: unknown;
     };
     manifest.version = 2;
     delete manifest.reviews;
@@ -264,6 +265,7 @@ describe('isolated writer lane', () => {
     delete manifest.writer.independence;
     delete manifest.writer.criterionConflicts;
     delete manifest.arbitrations;
+    delete manifest.provenance;
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
     await expect(store.load(metadata.teamRunId)).resolves.toMatchObject({version: 2});

@@ -480,6 +480,11 @@ export class AgentRunner {
         assistantMessage.id = assistantId;
         this.session.messages.push(assistantMessage);
         if (response.content) await emit({type: 'assistant', id: assistantId, content: response.content});
+        const hostedTools = response.providerMetadata?.hostedTools ?? [];
+        const sources = response.providerMetadata?.sources ?? [];
+        if (hostedTools.length || sources.length) {
+          await emit({type: 'provider_activity', hostedTools, sources});
+        }
         const turnUsage = recordTokenUsage(
           this.session,
           response.usage,

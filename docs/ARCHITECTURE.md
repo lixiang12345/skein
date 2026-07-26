@@ -274,6 +274,21 @@ both credential resolution and credential headers, preventing an inference key
 from crossing into a public or separately hosted catalog. Omission preserves
 the prior behavior of inheriting inference authentication.
 
+Provider-hosted tools use an intersection of trusted connection capability and
+route opt-in. Today only Responses `web_search` is supported. It does not grant
+the worker a local network tool: the provider returns content-free search-call
+events and bounded citation identities, and Skein removes URL credentials,
+queries, and fragments before persistence while retaining a SHA-256 binding to
+the exact URL.
+
+Route costs come only from user-configured relay prices. Receipts bind detailed
+usage, protocol-specific cache semantics, price source, and a pricing hash;
+missing prices are `unpriced`. Team Run v4 adds an optional, content-addressed
+provenance bundle that binds report artifacts, route fingerprints, cost and
+hosted-tool/source receipt hashes, peer handoffs, review verdicts, criterion
+evidence, writer state, and human arbitration without retaining hidden
+reasoning.
+
 ## Evidence review and arbitration
 
 Team Run v4 separates three authorities:

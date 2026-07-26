@@ -79,6 +79,36 @@ describe('shared connection setup', () => {
     });
   });
 
+  it('persists explicit Responses hosted capabilities and user relay prices', () => {
+    expect(createAgentConnectionSetup({
+      name: 'research',
+      provider: 'compatible',
+      protocol: 'openai-responses',
+      baseUrl: 'https://relay.example/v1',
+      auth: 'none',
+      hostedTools: ['web_search'],
+      pricing: {
+        inputPerMillionUsd: 2,
+        outputPerMillionUsd: 8,
+        cachedInputPerMillionUsd: 0.5,
+      },
+      defaultModel: 'research-model',
+    }).connections.research).toMatchObject({
+      hostedTools: ['web_search'],
+      pricing: {inputPerMillionUsd: 2, outputPerMillionUsd: 8, cachedInputPerMillionUsd: 0.5},
+    });
+    expect(() => createAgentConnectionSetup({
+      name: 'messages',
+      provider: 'compatible',
+      protocol: 'anthropic-messages',
+      baseUrl: 'https://relay.example',
+      modelsBaseUrl: 'https://relay.example/v1',
+      auth: 'none',
+      hostedTools: ['web_search'],
+      defaultModel: 'model',
+    })).toThrow('require the openai-responses protocol');
+  });
+
   it('rejects unsafe or incomplete setup values', () => {
     expect(() => createAgentConnectionSetup({
       name: 'Team Relay', provider: 'compatible', baseUrl: 'https://relay.example/v1', defaultModel: 'coder',

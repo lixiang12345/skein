@@ -1,8 +1,10 @@
-import {randomUUID} from 'node:crypto';
+import {createHash, randomUUID} from 'node:crypto';
 import type {
   ChatMessage,
   ModelConfig,
   ModelResponse,
+  ProviderHostedToolEvent,
+  ProviderSource,
   ToolDefinition,
 } from '../types.js';
 import {
@@ -28,11 +30,19 @@ interface ResponsesUsage {
 interface ResponsesOutputItem {
   id?: string;
   type?: string;
+  status?: string;
   role?: string;
   call_id?: string;
   name?: string;
   arguments?: string;
-  content?: Array<{type?: string; text?: string}>;
+  action?: {
+    sources?: Array<{type?: string; url?: string; title?: string}>;
+  };
+  content?: Array<{
+    type?: string;
+    text?: string;
+    annotations?: Array<{type?: string; url?: string; title?: string}>;
+  }>;
 }
 
 interface ResponsesResponse {
@@ -182,14 +192,20 @@ export class ResponsesProvider implements ModelProvider {
       body: JSON.stringify({
         model: this.config.model,
         input: messages.flatMap(toResponsesInput),
-        tools: tools.map((tool) => ({
-          type: 'function',
-          name: tool.name,
-          description: tool.description,
-          parameters: tool.inputSchema,
-          strict: false,
-        })),
-        tool_choice: tools.length ? 'auto' : undefined,
+        tools: [
+          ...tools.map((tool) => ({
+            type: 'function',
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.inputSchema,
+            strict: false,
+          })),
+          ...(this.config.hostedTools ?? []).map((tool) => ({type: tool})),
+        ],
+        tool_choice: tools.length || this.config.hostedTools?.length ? 'auto' : undefined,
+        include: this.config.hostedTools?.includes('web_search')
+          ? ['web_search_call.action.sources']
+          : undefined,
         store: false,
         stream,
         max_output_tokens: maxOutputTokens ?? this.config.maxTokens,
@@ -239,16 +255,84 @@ function normalizeResponsesResponse(data: ResponsesResponse): ModelResponse {
   const outputText = output.flatMap((item) => item.type === 'message'
     ? (item.content ?? []).flatMap((part) => part.type === 'output_text' && typeof part.text === 'string' ? [part.text] : [])
     : []).join('');
+  const hostedTools = normalizeHostedTools(output);
+  const sources = normalizeSources(output);
+  const providerMetadata = {
+    ...(output.length ? {responses: {outputItems: boundedOutputItems(output)}} : {}),
+    ...(hostedTools.length ? {hostedTools} : {}),
+    ...(sources.length ? {sources} : {}),
+  };
   return {
     content: data.output_text ?? outputText,
     toolCalls,
     usage: normalizeResponsesUsage(data.usage),
-    ...(output.length ? {providerMetadata: {responses: {outputItems: boundedOutputItems(output)}}} : {}),
+    ...(Object.keys(providerMetadata).length ? {providerMetadata} : {}),
     ...(toolCalls.length
       ? {stopReason: 'tool_calls'}
       : data.incomplete_details?.reason
         ? {stopReason: data.incomplete_details.reason}
         : data.status ? {stopReason: data.status} : {}),
+  };
+}
+
+function normalizeHostedTools(output: ResponsesOutputItem[]): ProviderHostedToolEvent[] {
+  return output.flatMap((item, index) => item.type === 'web_search_call'
+    ? [{
+        id: hostedToolId(item.id, index),
+        tool: 'web_search' as const,
+        status: hostedToolStatus(item.status),
+      }]
+    : []);
+}
+
+function hostedToolId(value: string | undefined, index: number): string {
+  if (value && /^[A-Za-z0-9._:-]{1,256}$/u.test(value)) return value;
+  if (value) return `web-search:${createHash('sha256').update(value).digest('hex')}`;
+  return `web-search:${index}`;
+}
+
+function hostedToolStatus(value: string | undefined): ProviderHostedToolEvent['status'] {
+  if (value === 'completed' || value === 'incomplete' || value === 'failed') return value;
+  return 'unknown';
+}
+
+function normalizeSources(output: ResponsesOutputItem[]): ProviderSource[] {
+  const candidates = output.flatMap((item) => [
+    ...(item.action?.sources ?? []),
+    ...(item.content ?? []).flatMap((part) => part.annotations ?? []),
+  ]);
+  const sources = new Map<string, ProviderSource>();
+  for (const candidate of candidates) {
+    if (candidate.type !== undefined && candidate.type !== 'url_citation' && candidate.type !== 'url') continue;
+    const source = providerSource(candidate.url, candidate.title);
+    if (source) sources.set(source.id, source);
+  }
+  return [...sources.values()].slice(0, 256);
+}
+
+function providerSource(rawUrl: string | undefined, rawTitle: string | undefined): ProviderSource | undefined {
+  if (!rawUrl) return undefined;
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return undefined;
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return undefined;
+  const urlSha256 = createHash('sha256').update(rawUrl).digest('hex');
+  parsed.username = '';
+  parsed.password = '';
+  parsed.search = '';
+  parsed.hash = '';
+  const url = parsed.toString();
+  if (url.length > 4_000) return undefined;
+  const title = rawTitle?.replace(/[\u0000-\u001f\u007f-\u009f]/gu, ' ').trim().slice(0, 500);
+  return {
+    id: `source:${urlSha256}`,
+    type: 'url_citation',
+    url,
+    urlSha256,
+    ...(title ? {title} : {}),
   };
 }
 

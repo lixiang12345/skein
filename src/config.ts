@@ -74,6 +74,16 @@ const connectionUrlSchema = z.string().url().refine((value) => {
 }, {
   message: 'connection URL must use http or https without credentials, query parameters, or fragments',
 });
+const hostedToolsSchema = z.array(z.literal('web_search')).min(1).max(8)
+  .refine((tools) => new Set(tools).size === tools.length, {
+    message: 'hosted tools must be unique',
+  });
+const routeTokenPricingSchema = z.object({
+  inputPerMillionUsd: z.number().finite().nonnegative().max(1_000_000),
+  outputPerMillionUsd: z.number().finite().nonnegative().max(1_000_000),
+  cachedInputPerMillionUsd: z.number().finite().nonnegative().max(1_000_000).optional(),
+  cacheWriteInputPerMillionUsd: z.number().finite().nonnegative().max(1_000_000).optional(),
+}).strict();
 const agentConnectionSchema = z.object({
   provider: z.enum(['openai', 'anthropic', 'gemini', 'compatible']),
   label: z.string().min(1).max(128).optional(),
@@ -84,6 +94,8 @@ const agentConnectionSchema = z.object({
   defaultModel: z.string().min(1).max(256).optional(),
   auth: connectionAuthSchema.optional(),
   apiKeyEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/).optional(),
+  hostedTools: hostedToolsSchema.optional(),
+  pricing: routeTokenPricingSchema.optional(),
 }).strict().refine((value) => !(value.auth && value.apiKeyEnv), {
   message: 'agent connection auth and apiKeyEnv are mutually exclusive',
 });
@@ -102,6 +114,7 @@ const agentTeamConfigSchema = z.object({
   maxAgentTokens: z.number().int().positive().max(1_000_000).optional(),
   maxAgentToolCalls: z.number().int().positive().max(1_000).optional(),
   agentTimeoutMs: z.number().int().positive().max(1_800_000).optional(),
+  maxAgentCostUsd: z.number().finite().positive().max(1_000_000).optional(),
   budgetMode: z.enum(['observe', 'guard', 'strict']).optional(),
   writerEnabled: z.boolean().optional(),
   writerProfile: agentProfileNameSchema.optional(),
@@ -122,6 +135,9 @@ const agentTeamConfigSchema = z.object({
     tokenBudget: z.number().int().positive().max(1_000_000).optional(),
     maxToolCalls: z.number().int().positive().max(1_000).optional(),
     timeoutMs: z.number().int().positive().max(1_800_000).optional(),
+    hostedTools: hostedToolsSchema.optional(),
+    pricing: routeTokenPricingSchema.optional(),
+    costBudgetUsd: z.number().finite().positive().max(1_000_000).optional(),
     budgetMode: z.enum(['observe', 'guard', 'strict']).optional(),
   }).strict()).optional(),
   capability: z.object({
@@ -638,10 +654,27 @@ function validateAgentConnections(agents: AgentTeamConfig | undefined): void {
         connection.auth?.type !== 'env' && !connection.apiKeyEnv) {
       throw new Error(`Agent connection ${name} cannot set modelsAuthHeader without environment authentication.`);
     }
+    if (connection.hostedTools?.length && connection.protocol !== 'openai-responses') {
+      throw new Error(`Agent connection ${name} can declare hosted tools only with explicit openai-responses protocol.`);
+    }
   }
   for (const [profile, route] of Object.entries(agents?.routes ?? {})) {
     if (route.connection && !agents?.connections?.[route.connection]) {
       throw new Error(`Agent route ${profile} references unknown connection ${route.connection}.`);
+    }
+    if (route.hostedTools?.length) {
+      const connection = route.connection ? agents?.connections?.[route.connection] : undefined;
+      if (!connection) {
+        throw new Error(`Agent route ${profile} requires a named connection for hosted tools.`);
+      }
+      if ((route.runtime ?? 'api') !== 'api' || connection.protocol !== 'openai-responses') {
+        throw new Error(`Agent route ${profile} can use hosted tools only through an openai-responses API connection.`);
+      }
+      const capabilities = new Set(connection.hostedTools ?? []);
+      const missing = route.hostedTools.filter((tool) => !capabilities.has(tool));
+      if (missing.length) {
+        throw new Error(`Agent route ${profile} requests undeclared hosted tools: ${missing.join(', ')}.`);
+      }
     }
   }
   for (const [taskProfile, priors] of Object.entries(agents?.capability?.priors ?? {})) {
@@ -755,6 +788,7 @@ function sanitizeProjectConfig(
     delete agents.writerProfile;
     delete agents.writerReviewerProfile;
     delete agents.maxWriterPatchBytes;
+    delete agents.maxAgentCostUsd;
     delete agents.capability;
   }
   return {
@@ -858,6 +892,7 @@ export function configSummary(config: MosaicConfig): Record<string, unknown> {
       maxAgentTokens: config.agents.maxAgentTokens,
       maxAgentToolCalls: config.agents.maxAgentToolCalls,
       agentTimeoutMs: config.agents.agentTimeoutMs,
+      maxAgentCostUsd: config.agents.maxAgentCostUsd,
       budgetMode: config.agents.budgetMode,
       writerEnabled: config.agents.writerEnabled,
       writerProfile: config.agents.writerProfile,
@@ -882,6 +917,8 @@ export function configSummary(config: MosaicConfig): Record<string, unknown> {
         credentials: connection.auth?.type === 'env'
           ? `env:${connection.auth.name}/${connection.auth.header ?? 'bearer'}`
           : connection.auth?.type ?? (connection.apiKeyEnv ? `env:${connection.apiKeyEnv}` : 'provider default environment'),
+        hostedTools: connection.hostedTools,
+        pricing: connection.pricing ? 'configured' : 'unpriced',
       }])),
       routes: Object.fromEntries(Object.entries(config.agents.routes ?? {}).map(([profile, route]) => [profile, {
         runtime: route.runtime ?? 'api',
@@ -893,6 +930,11 @@ export function configSummary(config: MosaicConfig): Record<string, unknown> {
         tokenBudget: route.tokenBudget,
         maxToolCalls: route.maxToolCalls,
         timeoutMs: route.timeoutMs,
+        hostedTools: route.hostedTools,
+        pricing: route.pricing ? 'route' : route.connection && config.agents?.connections?.[route.connection]?.pricing
+          ? 'connection'
+          : 'unpriced',
+        costBudgetUsd: route.costBudgetUsd,
         budgetMode: route.budgetMode,
       }])),
     } : undefined,

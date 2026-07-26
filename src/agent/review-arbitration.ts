@@ -449,7 +449,7 @@ function defaultProtocol(provider: string): string {
   return 'openai-responses';
 }
 
-function reviewRouteIdentityIntegrityValid(identity: ReviewRouteIdentity): boolean {
+export function reviewRouteIdentityIntegrityValid(identity: ReviewRouteIdentity): boolean {
   const parsed = reviewRouteIdentitySchema.safeParse(identity);
   if (!parsed.success) return false;
   const {routeFingerprintSha256, ...body} = identity;

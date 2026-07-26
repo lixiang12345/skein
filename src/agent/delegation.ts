@@ -7,7 +7,19 @@ import {createProvider} from '../providers/index.js';
 import type {ContextProvider, AgentTool} from '../tools/types.js';
 import {jsonSchema} from '../tools/types.js';
 import {ToolRegistry} from '../tools/registry.js';
-import type {AgentEvent, AgentModelRoute, AgentPhase, AgentTeamConfig, ModelConfig, MosaicConfig, TaskContract} from '../types.js';
+import type {
+  AgentEvent,
+  AgentModelRoute,
+  AgentPhase,
+  AgentTeamConfig,
+  ModelConfig,
+  ModelTokenUsage,
+  MosaicConfig,
+  ProviderHostedToolEvent,
+  ProviderSource,
+  RouteCostReceipt,
+  TaskContract,
+} from '../types.js';
 import type {PromptContextProvider} from './prompt-context.js';
 import {AgentRunner} from './runner.js';
 import {AgentProfileCatalog, type AgentProfile} from './profiles.js';
@@ -42,7 +54,15 @@ import {
   reviewContractHighRisk,
   reviewCriterionConflicts,
   type ReviewIndependence,
+  type ReviewRouteIdentity,
 } from './review-arbitration.js';
+import {
+  defaultCostProtocol,
+  formatRouteCost,
+  routeCostExceeds,
+  routeCostReceipt,
+  type PricedRoute,
+} from './route-cost.js';
 
 export interface WriterAgentRequest {
   workspace: string;
@@ -85,7 +105,11 @@ interface DelegatedResult {
   summary: string;
   provider: string;
   model: string;
-  usage: {inputTokens: number; outputTokens: number};
+  usage: ModelTokenUsage;
+  cost: RouteCostReceipt;
+  route: ReviewRouteIdentity;
+  hostedTools: ProviderHostedToolEvent[];
+  sources: ProviderSource[];
   toolCalls: number;
   durationMs: number;
   termination?: 'cancelled' | 'timeout' | 'queue-cleared';
@@ -726,9 +750,20 @@ export class DelegationManager {
     signal?: AbortSignal,
   ): Promise<DelegatedResult> {
     const route = this.modelRoute(profile.name);
+    const accounting = this.routeAccounting(profile.name, route);
     const provider = route.provider;
     const model = route.model;
     const startedAt = Date.now();
+    let observedUsage: ModelTokenUsage = {inputTokens: 0, outputTokens: 0, source: 'unknown'};
+    let observedCost = routeCostReceipt(observedUsage, accounting.pricedRoute);
+    const hostedTools = new Map<string, ProviderHostedToolEvent>();
+    const sources = new Map<string, ProviderSource>();
+    const evidence = () => ({
+      cost: observedCost,
+      route: accounting.route,
+      hostedTools: [...hostedTools.values()],
+      sources: [...sources.values()],
+    });
     const controller = new AbortController();
     let termination: DelegatedResult['termination'];
     const onParentAbort = () => {
@@ -741,6 +776,11 @@ export class DelegationManager {
     this.writerAgents.add(id);
     await emit?.({type: 'agent_start', id, profile: profile.name, task, provider, model, phase: 'write'});
     try {
+      const budgetMode = this.team.routes?.[profile.name]?.budgetMode ?? this.team.budgetMode ?? 'observe';
+      let costBudgetWarned = false;
+      if (budgetMode === 'strict' && accounting.costBudgetUsd !== undefined && !accounting.pricedRoute) {
+        throw new Error('Strict cost budget requires explicit route or connection pricing; no model request was sent.');
+      }
       if (this.options.writerRunner) {
         const execution = await this.options.writerRunner({
           workspace,
@@ -748,6 +788,20 @@ export class DelegationManager {
           task,
           ...(controller.signal ? {signal: controller.signal} : {}),
         });
+        observedUsage = {...(execution.usage ?? observedUsage), source: 'unknown'};
+        observedCost = routeCostReceipt(observedUsage, accounting.pricedRoute);
+        if (budgetMode === 'strict' && accounting.costBudgetUsd !== undefined &&
+          routeCostExceeds(observedCost, accounting.costBudgetUsd)) {
+          throw new Error(`Writer cost budget exceeded (${formatRouteCost(observedCost)} > $${accounting.costBudgetUsd.toFixed(6)}).`);
+        }
+        if (budgetMode === 'guard' && accounting.costBudgetUsd !== undefined &&
+          routeCostExceeds(observedCost, accounting.costBudgetUsd)) {
+          await emit?.({
+            type: 'agent_update', id, profile: profile.name, stage: 'response',
+            detail: `soft cost threshold exceeded ($${accounting.costBudgetUsd.toFixed(6)}); continuing`,
+            cost: observedCost,
+          });
+        }
         const result = {
           id,
           profile: profile.name,
@@ -755,11 +809,12 @@ export class DelegationManager {
           summary: execution.summary.slice(0, 20_000),
           provider,
           model,
-          usage: execution.usage ?? {inputTokens: 0, outputTokens: 0},
+          usage: observedUsage,
+          ...evidence(),
           toolCalls: execution.toolCalls ?? 0,
           durationMs: execution.durationMs ?? Date.now() - startedAt,
         };
-        await emit?.({type: 'agent_done', ...result, phase: 'write'});
+        await emit?.(agentDoneEvent(result, 'write'));
         return result;
       }
       const childConfig: MosaicConfig = {
@@ -794,7 +849,6 @@ export class DelegationManager {
         persistSession: false,
       });
       let toolCalls = 0;
-      let usage = {inputTokens: 0, outputTokens: 0};
       const session = await runner.run(task, {
         askMode: false,
         maxTurns: profile.maxTurns,
@@ -806,8 +860,36 @@ export class DelegationManager {
           } else if (event.type === 'thinking') {
             await emit?.({type: 'agent_update', id, profile: profile.name, stage: 'thinking', detail: `writer turn ${event.turn}`});
           } else if (event.type === 'usage') {
-            usage = {inputTokens: event.inputTokens, outputTokens: event.outputTokens};
-            await emit?.({type: 'agent_update', id, profile: profile.name, stage: 'response', ...usage});
+            observedUsage = {
+              inputTokens: event.inputTokens,
+              outputTokens: event.outputTokens,
+              ...(event.actual?.cachedInputTokens === undefined
+                ? {} : {cachedInputTokens: event.actual.cachedInputTokens}),
+              ...(event.actual?.cacheWriteInputTokens === undefined
+                ? {} : {cacheWriteInputTokens: event.actual.cacheWriteInputTokens}),
+              ...(event.actual?.reasoningTokens === undefined
+                ? {} : {reasoningTokens: event.actual.reasoningTokens}),
+              ...(event.source ? {source: event.source} : {}),
+            };
+            observedCost = routeCostReceipt(observedUsage, accounting.pricedRoute);
+            await emit?.({type: 'agent_update', id, profile: profile.name, stage: 'response', inputTokens: observedUsage.inputTokens, outputTokens: observedUsage.outputTokens, cost: observedCost, hostedToolCalls: hostedTools.size, sourceCount: sources.size});
+            if (budgetMode === 'strict' && accounting.costBudgetUsd !== undefined &&
+              routeCostExceeds(observedCost, accounting.costBudgetUsd)) {
+              controller.abort(new Error(
+                `Writer cost budget exhausted (${formatRouteCost(observedCost)} > $${accounting.costBudgetUsd.toFixed(6)}).`,
+              ));
+            } else if (budgetMode === 'guard' && accounting.costBudgetUsd !== undefined &&
+              routeCostExceeds(observedCost, accounting.costBudgetUsd) && !costBudgetWarned) {
+              costBudgetWarned = true;
+              await emit?.({
+                type: 'agent_update', id, profile: profile.name, stage: 'response',
+                detail: `soft cost threshold exceeded ($${accounting.costBudgetUsd.toFixed(6)}); continuing`,
+                cost: observedCost,
+              });
+            }
+          } else if (event.type === 'provider_activity') {
+            for (const item of event.hostedTools) hostedTools.set(item.id, item);
+            for (const source of event.sources) sources.set(source.id, source);
           }
         },
       });
@@ -822,11 +904,12 @@ export class DelegationManager {
         summary: summary.slice(0, 20_000),
         provider,
         model,
-        usage,
+        usage: observedUsage,
+        ...evidence(),
         toolCalls,
         durationMs: Date.now() - startedAt,
       };
-      await emit?.({type: 'agent_done', ...result, phase: 'write'});
+      await emit?.(agentDoneEvent(result, 'write'));
       return result;
     } catch (error) {
       if (controller.signal.aborted) termination = 'cancelled';
@@ -837,12 +920,13 @@ export class DelegationManager {
         summary: errorMessage(error),
         provider,
         model,
-        usage: {inputTokens: 0, outputTokens: 0},
+        usage: observedUsage,
+        ...evidence(),
         toolCalls: 0,
         durationMs: Date.now() - startedAt,
         ...(termination ? {termination} : {}),
       };
-      await emit?.({type: 'agent_done', ...result, phase: 'write'});
+      await emit?.(agentDoneEvent(result, 'write'));
       return result;
     } finally {
       this.activeAgents.delete(id);
@@ -961,12 +1045,23 @@ export class DelegationManager {
   private queuedCancellation(item: ScheduledTask, summary: string): DelegatedResult {
     let provider: string = this.options.config.model.provider;
     let model = this.options.config.model.model;
+    let routeIdentity = buildReviewRouteIdentity({
+      runtime: 'api',
+      provider,
+      model,
+      ...(this.options.config.model.protocol ? {protocol: this.options.config.model.protocol} : {}),
+      ...(this.options.config.model.baseUrl ? {endpoint: this.options.config.model.baseUrl} : {}),
+    });
+    let cost = routeCostReceipt({inputTokens: 0, outputTokens: 0, source: 'unknown'});
     try {
       const route = this.modelRoute(item.task.profile);
       provider = route.provider;
       model = route.model;
       const runtime = this.team.routes?.[item.task.profile]?.runtime;
       if (runtime && runtime !== 'api') provider = runtime;
+      const accounting = this.routeAccounting(item.task.profile, route);
+      routeIdentity = accounting.route;
+      cost = routeCostReceipt({inputTokens: 0, outputTokens: 0, source: 'unknown'}, accounting.pricedRoute);
     } catch {
       // Preserve queue cleanup even when a route is invalid; normal validation
       // will report the configuration error before a future run starts.
@@ -978,7 +1073,11 @@ export class DelegationManager {
       summary,
       provider,
       model,
-      usage: {inputTokens: 0, outputTokens: 0},
+      usage: {inputTokens: 0, outputTokens: 0, source: 'unknown'},
+      cost,
+      route: routeIdentity,
+      hostedTools: [],
+      sources: [],
       toolCalls: 0,
       durationMs: 0,
       termination: 'queue-cleared',
@@ -1102,6 +1201,10 @@ export class DelegationManager {
       durationMs: result.durationMs,
       toolCalls: result.toolCalls,
       usage: result.usage,
+      cost: result.cost,
+      route: result.route,
+      hostedTools: result.hostedTools,
+      sources: result.sources,
       report: result.summary,
     });
   }
@@ -1128,25 +1231,55 @@ export class DelegationManager {
   ): Promise<DelegatedResult> {
     const id = scheduledId ?? randomUUID();
     const profile = this.options.profiles.get(task.profile);
-    const configuredRoute = this.team.routes?.[task.profile];
+    const configuredRoute = resolveAgentModelRoute(
+      this.team,
+      this.options.config.model,
+      task.profile,
+    ).route;
     const budgetMode = configuredRoute?.budgetMode ?? this.team.budgetMode ?? 'observe';
     const externalRuntime = configuredRoute?.runtime && configuredRoute.runtime !== 'api'
       ? configuredRoute.runtime
       : undefined;
     const route = this.modelRoute(task.profile);
+    const accounting = this.routeAccounting(task.profile, route);
     const providerName = externalRuntime ?? route.provider;
     const model = route.model;
     const startedAt = Date.now();
-    const emptyUsage = {inputTokens: 0, outputTokens: 0};
-    let observedUsage = emptyUsage;
+    const emptyUsage: ModelTokenUsage = {inputTokens: 0, outputTokens: 0, source: 'unknown'};
+    let observedUsage: ModelTokenUsage = emptyUsage;
+    let observedCost = routeCostReceipt(observedUsage, accounting.pricedRoute);
+    const hostedTools = new Map<string, ProviderHostedToolEvent>();
+    const sources = new Map<string, ProviderSource>();
     let observedToolCalls = 0;
     let observedStopReason: string | undefined;
     let termination: DelegatedResult['termination'];
+    const evidence = () => ({
+      cost: observedCost,
+      route: accounting.route,
+      hostedTools: [...hostedTools.values()],
+      sources: [...sources.values()],
+    });
     if (!profile) {
-      return {id, profile: task.profile, ok: false, summary: `Unknown expert profile: ${task.profile}`, provider: providerName, model, usage: emptyUsage, toolCalls: 0, durationMs: 0};
+      return {id, profile: task.profile, ok: false, summary: `Unknown expert profile: ${task.profile}`, provider: providerName, model, usage: emptyUsage, ...evidence(), toolCalls: 0, durationMs: 0};
     }
     if (!profile.readOnly) {
-      return {id, profile: task.profile, ok: false, summary: `Writable profile ${task.profile} requires the explicit writer_run lane.`, provider: providerName, model, usage: emptyUsage, toolCalls: 0, durationMs: 0};
+      return {id, profile: task.profile, ok: false, summary: `Writable profile ${task.profile} requires the explicit writer_run lane.`, provider: providerName, model, usage: emptyUsage, ...evidence(), toolCalls: 0, durationMs: 0};
+    }
+    if (budgetMode === 'strict' && accounting.costBudgetUsd !== undefined && !accounting.pricedRoute) {
+      const result = {
+        id,
+        profile: profile.name,
+        ok: false,
+        summary: 'Strict cost budget requires explicit route or connection pricing; no model request was sent.',
+        provider: providerName,
+        model,
+        usage: emptyUsage,
+        ...evidence(),
+        toolCalls: 0,
+        durationMs: 0,
+      };
+      await emit?.(agentDoneEvent(result, phase));
+      return result;
     }
     const agentController = new AbortController();
     const onParentAbort = () => {
@@ -1179,20 +1312,26 @@ export class DelegationManager {
         } finally {
           if (guardTimer) clearTimeout(guardTimer);
         }
-        observedUsage = external.usage ?? emptyUsage;
+        observedUsage = {...(external.usage ?? emptyUsage), source: 'unknown'};
+        observedCost = routeCostReceipt(observedUsage, accounting.pricedRoute);
         observedToolCalls = external.toolCalls ?? 0;
         const externalTokenBudget = configuredRoute?.tokenBudget ?? this.team.maxAgentTokens;
         const externalToolBudget = configuredRoute?.maxToolCalls ?? this.team.maxAgentToolCalls;
         const tokenExceeded = externalTokenBudget !== undefined &&
           observedUsage.inputTokens + observedUsage.outputTokens > externalTokenBudget;
         const toolsExceeded = externalToolBudget !== undefined && observedToolCalls > externalToolBudget;
+        const costExceeded = accounting.costBudgetUsd !== undefined &&
+          routeCostExceeds(observedCost, accounting.costBudgetUsd);
         if (budgetMode === 'strict' && tokenExceeded) {
           throw new Error(`External agent token budget exceeded (${externalTokenBudget}).`);
         }
         if (budgetMode === 'strict' && toolsExceeded) {
           throw new Error(`External agent tool budget exceeded (${externalToolBudget}).`);
         }
-        if (budgetMode === 'guard' && (tokenExceeded || toolsExceeded)) {
+        if (budgetMode === 'strict' && costExceeded) {
+          throw new Error(`External agent cost budget exceeded (${formatRouteCost(observedCost)} > $${accounting.costBudgetUsd!.toFixed(6)}).`);
+        }
+        if (budgetMode === 'guard' && (tokenExceeded || toolsExceeded || costExceeded)) {
           await emit?.({
             type: 'agent_update',
             id,
@@ -1201,12 +1340,14 @@ export class DelegationManager {
             detail: `soft budget exceeded; continuing (${[
               tokenExceeded ? `${externalTokenBudget} tokens` : '',
               toolsExceeded ? `${externalToolBudget} tools` : '',
+              costExceeded ? `${formatRouteCost(observedCost)} cost` : '',
             ].filter(Boolean).join(', ')})`,
+            cost: observedCost,
           });
         }
-        const result = {id, profile: profile.name, ok: true, summary: external.content.slice(0, 20_000), provider: providerName, model, usage: observedUsage, toolCalls: observedToolCalls, durationMs: external.durationMs};
-        await emit?.({type: 'agent_update', id, profile: profile.name, stage: 'response', detail: 'final report received', toolCalls: observedToolCalls, inputTokens: observedUsage.inputTokens, outputTokens: observedUsage.outputTokens});
-        await emit?.({type: 'agent_done', ...result, phase});
+        const result = {id, profile: profile.name, ok: true, summary: external.content.slice(0, 20_000), provider: providerName, model, usage: observedUsage, ...evidence(), toolCalls: observedToolCalls, durationMs: external.durationMs};
+        await emit?.({type: 'agent_update', id, profile: profile.name, stage: 'response', detail: 'final report received', toolCalls: observedToolCalls, inputTokens: observedUsage.inputTokens, outputTokens: observedUsage.outputTokens, cost: observedCost});
+        await emit?.(agentDoneEvent(result, phase));
         return result;
       }
       const toolBudget = configuredRoute?.maxToolCalls ?? this.team.maxAgentToolCalls;
@@ -1214,6 +1355,7 @@ export class DelegationManager {
       const timeoutMs = configuredRoute?.timeoutMs ?? this.team.agentTimeoutMs;
       let toolBudgetWarned = false;
       let tokenBudgetWarned = false;
+      let costBudgetWarned = false;
       const timeout = timeoutMs === undefined
         ? undefined
         : setTimeout(() => {
@@ -1282,13 +1424,53 @@ export class DelegationManager {
               observedUsage = {
                 inputTokens: event.inputTokens,
                 outputTokens: event.outputTokens,
+                ...(event.actual?.cachedInputTokens === undefined
+                  ? {} : {cachedInputTokens: event.actual.cachedInputTokens}),
+                ...(event.actual?.cacheWriteInputTokens === undefined
+                  ? {} : {cacheWriteInputTokens: event.actual.cacheWriteInputTokens}),
+                ...(event.actual?.reasoningTokens === undefined
+                  ? {} : {reasoningTokens: event.actual.reasoningTokens}),
+                ...(event.source ? {source: event.source} : {}),
               };
-              await emit?.({type: 'agent_update', id, profile: profile.name, stage: 'response', inputTokens: observedUsage.inputTokens, outputTokens: observedUsage.outputTokens});
+              observedCost = routeCostReceipt(observedUsage, accounting.pricedRoute);
+              await emit?.({type: 'agent_update', id, profile: profile.name, stage: 'response', inputTokens: observedUsage.inputTokens, outputTokens: observedUsage.outputTokens, cost: observedCost, hostedToolCalls: hostedTools.size, sourceCount: sources.size});
               if (budgetMode === 'guard' && tokenBudget !== undefined &&
                 observedUsage.inputTokens + observedUsage.outputTokens > tokenBudget && !tokenBudgetWarned) {
                 tokenBudgetWarned = true;
-                await emit?.({type: 'agent_update', id, profile: profile.name, stage: 'response', detail: `soft token threshold exceeded (${tokenBudget}); continuing`, inputTokens: observedUsage.inputTokens, outputTokens: observedUsage.outputTokens});
+                  await emit?.({type: 'agent_update', id, profile: profile.name, stage: 'response', detail: `soft token threshold exceeded (${tokenBudget}); continuing`, inputTokens: observedUsage.inputTokens, outputTokens: observedUsage.outputTokens});
               }
+              const costExceeded = accounting.costBudgetUsd !== undefined &&
+                routeCostExceeds(observedCost, accounting.costBudgetUsd);
+              if (budgetMode === 'strict' && costExceeded) {
+                agentController.abort(new Error(
+                  `Agent cost budget exhausted (${formatRouteCost(observedCost)} > $${accounting.costBudgetUsd!.toFixed(6)}).`,
+                ));
+              } else if (budgetMode === 'guard' && costExceeded && !costBudgetWarned) {
+                costBudgetWarned = true;
+                await emit?.({
+                  type: 'agent_update',
+                  id,
+                  profile: profile.name,
+                  stage: 'response',
+                  detail: `soft cost threshold exceeded ($${accounting.costBudgetUsd!.toFixed(6)}); continuing`,
+                  cost: observedCost,
+                  hostedToolCalls: hostedTools.size,
+                  sourceCount: sources.size,
+                });
+              }
+            } else if (event.type === 'provider_activity') {
+              for (const item of event.hostedTools) hostedTools.set(item.id, item);
+              for (const source of event.sources) sources.set(source.id, source);
+              await emit?.({
+                type: 'agent_update',
+                id,
+                profile: profile.name,
+                stage: 'response',
+                detail: `provider search ${hostedTools.size} call${hostedTools.size === 1 ? '' : 's'}; ${sources.size} source${sources.size === 1 ? '' : 's'}`,
+                hostedToolCalls: hostedTools.size,
+                sourceCount: sources.size,
+                cost: observedCost,
+              });
             } else if (event.type === 'done') {
               observedStopReason = event.reason;
             }
@@ -1309,12 +1491,23 @@ export class DelegationManager {
       observedUsage = {
         inputTokens: Math.max(observedUsage.inputTokens, session.usage.inputTokens),
         outputTokens: Math.max(observedUsage.outputTokens, session.usage.outputTokens),
+        ...(session.usage.actualCachedInputTokens === undefined
+          ? observedUsage.cachedInputTokens === undefined ? {} : {cachedInputTokens: observedUsage.cachedInputTokens}
+          : {cachedInputTokens: session.usage.actualCachedInputTokens}),
+        ...(session.usage.actualCacheWriteInputTokens === undefined
+          ? observedUsage.cacheWriteInputTokens === undefined ? {} : {cacheWriteInputTokens: observedUsage.cacheWriteInputTokens}
+          : {cacheWriteInputTokens: session.usage.actualCacheWriteInputTokens}),
+        ...(session.usage.actualReasoningTokens === undefined
+          ? observedUsage.reasoningTokens === undefined ? {} : {reasoningTokens: observedUsage.reasoningTokens}
+          : {reasoningTokens: session.usage.actualReasoningTokens}),
+        source: session.usage.source ?? observedUsage.source ?? 'unknown',
       };
+      observedCost = routeCostReceipt(observedUsage, accounting.pricedRoute);
       const summary = [...session.messages].reverse()
         .find((message) => message.role === 'assistant' && message.content.trim())?.content.trim() ||
         'The delegated agent returned no summary.';
-      const result = {id, profile: profile.name, ok: true, summary: summary.slice(0, 20_000), provider: providerName, model, usage: observedUsage, toolCalls: observedToolCalls, durationMs: Date.now() - startedAt};
-      await emit?.({type: 'agent_done', ...result, phase});
+      const result = {id, profile: profile.name, ok: true, summary: summary.slice(0, 20_000), provider: providerName, model, usage: observedUsage, ...evidence(), toolCalls: observedToolCalls, durationMs: Date.now() - startedAt};
+      await emit?.(agentDoneEvent(result, phase));
       return result;
     } catch (error) {
       const summary = error instanceof Error ? error.message : String(error);
@@ -1327,11 +1520,12 @@ export class DelegationManager {
         provider: providerName,
         model,
         usage: observedUsage,
+        ...evidence(),
         toolCalls: observedToolCalls,
         durationMs: Date.now() - startedAt,
         ...(termination ? {termination} : {}),
       };
-      await emit?.({type: 'agent_done', ...result, phase});
+      await emit?.(agentDoneEvent(result, phase));
       return result;
     } finally {
       this.activeAgents.delete(id);
@@ -1343,6 +1537,26 @@ export class DelegationManager {
     const {route} = resolveAgentModelRoute(this.team, this.options.config.model, profile);
     if (!route) return this.options.config.model;
     return modelConfigFromRoute(route, this.options.config.model, this.options.environment ?? process.env, this.team.connections);
+  }
+
+  private routeAccounting(profile: string, effective = this.modelRoute(profile)): {
+    route: ReviewRouteIdentity;
+    pricedRoute?: PricedRoute;
+    costBudgetUsd?: number;
+  } {
+    const resolved = resolveAgentModelRoute(this.team, this.options.config.model, profile);
+    const configured = resolved.route;
+    const connection = configured?.connection ? this.team.connections?.[configured.connection] : undefined;
+    const pricing = configured?.pricing ?? connection?.pricing;
+    const pricingSource = configured?.pricing ? 'route' as const : connection?.pricing ? 'connection' as const : undefined;
+    const protocol = defaultCostProtocol(effective.provider, connection?.protocol ?? effective.protocol);
+    return {
+      route: this.reviewRouteIdentity(profile),
+      ...(pricing && pricingSource ? {pricedRoute: {pricing, pricingSource, protocol}} : {}),
+      ...((configured?.costBudgetUsd ?? this.team.maxAgentCostUsd) !== undefined
+        ? {costBudgetUsd: configured?.costBudgetUsd ?? this.team.maxAgentCostUsd}
+        : {}),
+    };
   }
 
   private reviewRouteIdentity(profile: string) {
@@ -1547,6 +1761,7 @@ function modelConfigFromRoute(
     ...(apiKey ? {apiKey} : {}),
     ...(route.temperature !== undefined ? {temperature: route.temperature} : {}),
     ...(route.maxTokens !== undefined ? {maxTokens: route.maxTokens} : {}),
+    ...(route.hostedTools?.length ? {hostedTools: [...route.hostedTools]} : {}),
   };
 }
 
@@ -1574,8 +1789,34 @@ function resultMetadata(results: DelegatedResult[]) {
     durationMs: result.durationMs,
     toolCalls: result.toolCalls,
     usage: result.usage,
+    cost: result.cost,
+    routeFingerprintSha256: result.route.routeFingerprintSha256,
+    hostedToolCalls: result.hostedTools.length,
+    sourceCount: result.sources.length,
     ...(result.termination ? {termination: result.termination} : {}),
   }));
+}
+
+function agentDoneEvent(
+  result: DelegatedResult,
+  phase: AgentPhase,
+): Extract<AgentEvent, {type: 'agent_done'}> {
+  return {
+    type: 'agent_done',
+    id: result.id,
+    profile: result.profile,
+    ok: result.ok,
+    summary: result.summary,
+    provider: result.provider,
+    model: result.model,
+    phase,
+    durationMs: result.durationMs,
+    toolCalls: result.toolCalls,
+    usage: result.usage,
+    cost: result.cost,
+    hostedToolCalls: result.hostedTools.length,
+    sourceCount: result.sources.length,
+  };
 }
 
 function councilWasStopped(results: DelegatedResult[], signal?: AbortSignal): boolean {

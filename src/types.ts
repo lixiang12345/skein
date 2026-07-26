@@ -13,6 +13,62 @@ export type ConnectionAuth =
 
 export type ConnectionSource = 'cli' | 'user' | 'environment' | 'legacy';
 
+/** Hosted tools executed by an explicitly capable model endpoint, never by the local tool sandbox. */
+export type ProviderHostedTool = 'web_search';
+
+/** User-supplied relay prices. Skein never substitutes provider-list prices. */
+export interface RouteTokenPricing {
+  inputPerMillionUsd: number;
+  outputPerMillionUsd: number;
+  cachedInputPerMillionUsd?: number;
+  cacheWriteInputPerMillionUsd?: number;
+}
+
+export interface ModelTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens?: number;
+  cacheWriteInputTokens?: number;
+  reasoningTokens?: number;
+  source?: TokenMeasurementSource;
+}
+
+/** Content-safe citation identity returned by a provider-hosted tool. */
+export interface ProviderSource {
+  id: string;
+  type: 'url_citation';
+  url: string;
+  urlSha256: string;
+  title?: string;
+}
+
+/** Content-free hosted-tool event suitable for persistence and telemetry. */
+export interface ProviderHostedToolEvent {
+  id: string;
+  tool: ProviderHostedTool;
+  status: 'completed' | 'incomplete' | 'failed' | 'unknown';
+}
+
+export type RouteCostReceipt =
+  | {
+      status: 'unpriced';
+      currency: 'USD';
+      usageSource: TokenMeasurementSource;
+      usage: ModelTokenUsage;
+      reason: 'pricing-not-configured';
+    }
+  | {
+      status: 'priced';
+      currency: 'USD';
+      usageSource: TokenMeasurementSource;
+      usage: ModelTokenUsage;
+      pricingSource: 'route' | 'connection';
+      protocol: ConnectionProtocol;
+      pricing: RouteTokenPricing;
+      pricingSha256: string;
+      amountMicros: number;
+    };
+
 export type PermissionLevel = 'allow' | 'ask' | 'deny';
 
 /** Interactive grant scope. Session grants live only on the active runner. */
@@ -58,6 +114,8 @@ export interface ModelConfig {
   baseUrl?: string;
   temperature?: number;
   maxTokens?: number;
+  /** Explicit hosted-tool opt-in materialized from a trusted named route. */
+  hostedTools?: ProviderHostedTool[];
 }
 
 export interface PermissionConfig {
@@ -115,6 +173,8 @@ export interface AgentTeamConfig {
   maxAgentTokens?: number;
   maxAgentToolCalls?: number;
   agentTimeoutMs?: number;
+  /** Optional user-confirmed USD ceiling per delegated agent. */
+  maxAgentCostUsd?: number;
   budgetMode?: 'observe' | 'guard' | 'strict';
   /** Explicit opt-in for the isolated writer lane. Repository config cannot enable it. */
   writerEnabled?: boolean;
@@ -156,6 +216,10 @@ export interface AgentConnectionConfig {
   auth?: ConnectionAuth;
   /** Legacy environment reference retained for existing user configuration. */
   apiKeyEnv?: string;
+  /** Capabilities documented or verified for this exact relay connection. */
+  hostedTools?: ProviderHostedTool[];
+  /** Explicit relay prices; omitted means usage remains visibly unpriced. */
+  pricing?: RouteTokenPricing;
 }
 
 export interface ConnectionRuntimeInfo {
@@ -192,6 +256,12 @@ export interface AgentModelRoute {
   tokenBudget?: number;
   maxToolCalls?: number;
   timeoutMs?: number;
+  /** Hosted tools requested by this route; the connection must also declare support. */
+  hostedTools?: ProviderHostedTool[];
+  /** Optional route-specific price override. */
+  pricing?: RouteTokenPricing;
+  /** Optional user-confirmed USD ceiling; enforced only in strict mode. */
+  costBudgetUsd?: number;
   budgetMode?: 'observe' | 'guard' | 'strict';
 }
 
@@ -304,6 +374,10 @@ export interface ProviderMetadata {
     /** Exact response output items replayed before matching tool outputs. */
     outputItems: Record<string, unknown>[];
   };
+  /** Content-free provider-hosted execution receipts. */
+  hostedTools?: ProviderHostedToolEvent[];
+  /** Bounded, credential-free citation identities. */
+  sources?: ProviderSource[];
 }
 
 export interface ModelResponse {
@@ -916,7 +990,7 @@ export type AgentEvent =
   | {type: 'agent_queued'; id: string; profile: string; task: string; phase?: AgentPhase}
   | {type: 'agent_start'; id: string; profile: string; task: string; provider?: string; model?: string; phase?: AgentPhase; retryOf?: string}
   | {type: 'agent_message'; id: string; from: string; to: string; content: string}
-  | {type: 'agent_update'; id: string; profile: string; stage: 'context' | 'thinking' | 'tool' | 'response' | 'review'; detail?: string; tool?: string; toolCalls?: number; inputTokens?: number; outputTokens?: number}
+  | {type: 'agent_update'; id: string; profile: string; stage: 'context' | 'thinking' | 'tool' | 'response' | 'review'; detail?: string; tool?: string; toolCalls?: number; inputTokens?: number; outputTokens?: number; cost?: RouteCostReceipt; hostedToolCalls?: number; sourceCount?: number}
   | {type: 'agent_cancelled'; id: string; profile: string; phase?: AgentPhase; reason: string; queued: boolean}
   | {type: 'team_start'; id: string; objective: string}
   | {type: 'team_done'; id: string; accepted: boolean; reviewRounds: number; needsReview?: boolean; unresolvedCriteria?: string[]; review?: {
@@ -925,7 +999,7 @@ export type AgentEvent =
     fail: number;
     unknown: number;
   }}
-  | {type: 'agent_done'; id: string; profile: string; ok: boolean; summary: string; provider?: string; model?: string; phase?: AgentPhase; durationMs?: number; toolCalls?: number; usage?: {inputTokens: number; outputTokens: number}}
+  | {type: 'agent_done'; id: string; profile: string; ok: boolean; summary: string; provider?: string; model?: string; phase?: AgentPhase; durationMs?: number; toolCalls?: number; usage?: ModelTokenUsage; cost?: RouteCostReceipt; hostedToolCalls?: number; sourceCount?: number}
   | {type: 'writer_lane'; id: string; status: WriterLaneStatus; detail: string; files?: string[]; checkpointId?: string}
   | {type: 'workflow'; name: string; step: string; status: TaskStatus}
   | {type: 'context_compacted'; omittedMessages: number; summaryTokens: number; status: ContextCompactionStatus; reason: ContextCompactionReason; receipt: ContextCompactionReceipt}
@@ -933,6 +1007,7 @@ export type AgentEvent =
   | {type: 'intent'; assessment: IntentAssessment}
   | {type: 'needs_input'; pending: PendingInput}
   | {type: 'input_resolved'; pendingId: string; runId: string; answer: string}
+  | {type: 'provider_activity'; hostedTools: ProviderHostedToolEvent[]; sources: ProviderSource[]}
   | {type: 'usage'; inputTokens: number; outputTokens: number; source?: TokenMeasurementSource; inputSource?: TokenMeasurementSource; outputSource?: TokenMeasurementSource; actual?: {inputTokens: number; outputTokens: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; reasoningTokens?: number}; estimated?: {inputTokens: number; outputTokens: number}; receipt?: TokenLedgerEntry}
   | {type: 'error'; error: Error}
   | {type: 'done'; reason: string; completion?: RunCompletion};

@@ -71,6 +71,8 @@ describe('agents show CLI', () => {
     expect(textResult.stdout).toContain('Structured council verdict 1/1');
     expect(textResult.stdout).toContain('Decision: accept');
     expect(textResult.stdout).toContain('Structured reviewer output is normalized below');
+    expect(textResult.stdout).toContain('unpriced');
+    expect(textResult.stdout).toContain('Provenance ');
     expect(textResult.stdout).not.toContain(rawMarker);
 
     const jsonResult = await runCli(['agents', 'show', run.id, '--workspace', workspace, '--json']);
@@ -78,11 +80,14 @@ describe('agents show CLI', () => {
     const output = JSON.parse(jsonResult.stdout) as {
       agents: Array<{reportText: string}>;
       reviews: Array<{artifact: {sha256: string}; verdict: {decision: string}}>;
+      provenance: {bundle: {sha256: string}; agentCount: number; unpricedAgents: number};
     };
     expect(output.agents[0]?.reportText).toBe(rawMarker);
     expect(output.reviews[0]).toMatchObject({
       artifact: {sha256: artifactSha256}, verdict: {decision: 'accept'},
     });
+    expect(output.provenance).toMatchObject({agentCount: 1, unpricedAgents: 1});
+    expect(output.provenance.bundle.sha256).toMatch(/^[a-f0-9]{64}$/u);
 
     const arbitration = await runCli([
       'agents', 'arbitrate', run.id, contract.criteria[0]!.id,

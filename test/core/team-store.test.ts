@@ -4,6 +4,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {afterEach, describe, expect, it} from 'vitest';
 import {TeamRunStore} from '../../src/agent/team-store.js';
+import {routeCostReceipt} from '../../src/agent/route-cost.js';
 import {
   buildWriterReviewContract,
   makeReviewEvidence,
@@ -44,6 +45,73 @@ describe('team run blackboard', () => {
     expect(loaded.messages).toHaveLength(1);
     expect(await store.readArtifact(run.id, loaded.agents[0]!.report)).toContain('cancellation');
     expect((await store.list())[0]).toMatchObject({id: run.id, status: 'rejected', agentCount: 1, messageCount: 1});
+  });
+
+  it('binds route, cost, hosted search, sources, and reviewer state into provenance', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-team-provenance-'));
+    roots.push(root);
+    const store = new TeamRunStore(root);
+    const run = await store.create({objective: 'Research current APIs', reviewer: 'reviewer', maxReviewRounds: 0});
+    const route = buildReviewRouteIdentity({
+      runtime: 'api',
+      provider: 'compatible',
+      protocol: 'openai-responses',
+      model: 'research-model',
+      endpoint: 'https://relay.example/v1',
+    });
+    const usage = {
+      inputTokens: 1_000,
+      outputTokens: 200,
+      cachedInputTokens: 100,
+      source: 'actual' as const,
+    };
+    const cost = routeCostReceipt(usage, {
+      protocol: 'openai-responses',
+      pricingSource: 'connection',
+      pricing: {inputPerMillionUsd: 2, outputPerMillionUsd: 8, cachedInputPerMillionUsd: 0.5},
+    });
+    const exactUrl = 'https://example.com/source?private=query#fragment';
+    const urlSha256 = createHash('sha256').update(exactUrl).digest('hex');
+    await store.recordAgent(run.id, {
+      id: randomUUID(),
+      profile: 'researcher',
+      provider: 'compatible',
+      model: 'research-model',
+      phase: 'work',
+      ok: true,
+      usage,
+      cost,
+      route,
+      hostedTools: [{id: 'ws-1', tool: 'web_search', status: 'completed'}],
+      sources: [{
+        id: `source:${urlSha256}`,
+        type: 'url_citation',
+        url: 'https://example.com/source',
+        urlSha256,
+        title: 'Source',
+      }],
+      report: 'The current API is documented by the bound source.',
+    });
+    const loaded = await store.load(run.id);
+    expect(loaded).toMatchObject({version: 4, provenance: {
+      agentCount: 1,
+      hostedToolCalls: 1,
+      sourceCount: 1,
+      unpricedAgents: 0,
+    }});
+    if (loaded.version !== 4 || !loaded.provenance) throw new Error('provenance missing');
+    const bundle = await store.readArtifact(run.id, loaded.provenance.bundle);
+    expect(bundle).toContain(route.routeFingerprintSha256);
+    expect(bundle).toContain(loaded.agents[0]!.report.sha256);
+    expect(bundle).not.toContain('private=query');
+
+    const manifestPath = join(store.directory, run.id, 'manifest.json');
+    const tampered = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+      agents: Array<{cost: {amountMicros: number}}>;
+    };
+    tampered.agents[0]!.cost.amountMicros += 1;
+    await writeFile(manifestPath, `${JSON.stringify(tampered, null, 2)}\n`);
+    await expect(store.load(run.id)).rejects.toThrow('cost receipt integrity');
   });
 
   it('detects tampered artifacts and preserves the original manifest', async () => {
@@ -290,6 +358,7 @@ describe('team run blackboard', () => {
     manifest.version = 1;
     delete manifest.reviews;
     delete manifest.arbitrations;
+    delete manifest.provenance;
     await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`);
     const loaded = await store.load(run.id);
     expect(loaded.version).toBe(1);
@@ -306,6 +375,7 @@ describe('team run blackboard', () => {
     manifest.version = 2;
     delete manifest.reviews;
     delete manifest.arbitrations;
+    delete manifest.provenance;
     await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`);
     await expect(store.load(run.id)).resolves.toMatchObject({version: 2, id: run.id});
   });
@@ -338,9 +408,11 @@ describe('team run blackboard', () => {
       version: number;
       reviews: Array<{independence?: unknown; criterionConflicts?: unknown}>;
       arbitrations?: unknown;
+      provenance?: unknown;
     };
     manifest.version = 3;
     delete manifest.arbitrations;
+    delete manifest.provenance;
     for (const review of manifest.reviews) {
       delete review.independence;
       delete review.criterionConflicts;

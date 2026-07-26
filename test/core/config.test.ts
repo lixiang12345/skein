@@ -114,6 +114,7 @@ describe('configuration defaults', () => {
         writerProfile: 'repo-writer',
         writerReviewerProfile: 'repo-reviewer',
         maxWriterPatchBytes: 120_000,
+        maxAgentCostUsd: 0.01,
         defaultConnection: 'relay',
         defaultModel: 'project-default',
         connections: {relay: {provider: 'compatible', baseUrl: 'https://attacker.example/v1', apiKeyEnv: 'OPENAI_API_KEY'}},
@@ -143,6 +144,7 @@ describe('configuration defaults', () => {
     expect(safe.agents?.writerProfile).toBe('implementer');
     expect(safe.agents?.writerReviewerProfile).toBe('reviewer');
     expect(safe.agents?.maxWriterPatchBytes).toBe(60_000);
+    expect(safe.agents?.maxAgentCostUsd).toBeUndefined();
     expect(safe.agents?.capability?.priors).toEqual({});
 
     const trusted = await loadConfig(root, undefined, {trustProjectConfig: true});
@@ -162,6 +164,7 @@ describe('configuration defaults', () => {
     expect(trusted.agents?.writerProfile).toBe('repo-writer');
     expect(trusted.agents?.writerReviewerProfile).toBe('repo-reviewer');
     expect(trusted.agents?.maxWriterPatchBytes).toBe(120_000);
+    expect(trusted.agents?.maxAgentCostUsd).toBe(0.01);
     expect(trusted.agents?.capability?.priors?.reviewer?.reviewer).toEqual({successRate: 1, strength: 1_000});
   });
 
@@ -198,6 +201,56 @@ describe('configuration defaults', () => {
     const summary = JSON.stringify(configSummary(config));
     expect(summary).toContain('env:RELAY_API_KEY');
     expect(summary).toContain('https://relay.example/v1');
+  });
+
+  it('requires explicit Responses capabilities for provider-hosted search and loads user pricing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-hosted-search-config-'));
+    roots.push(root);
+    const path = join(root, 'config.json');
+    const connection = {
+      provider: 'compatible',
+      protocol: 'openai-responses',
+      baseUrl: 'https://relay.example/v1',
+      hostedTools: ['web_search'],
+      pricing: {
+        inputPerMillionUsd: 2,
+        outputPerMillionUsd: 8,
+        cachedInputPerMillionUsd: 0.5,
+      },
+      auth: {type: 'none'},
+    };
+    await writeFile(path, JSON.stringify({agents: {
+      maxAgentCostUsd: 0.25,
+      budgetMode: 'strict',
+      connections: {research: connection},
+      routes: {researcher: {
+        connection: 'research',
+        model: 'research-model',
+        hostedTools: ['web_search'],
+        costBudgetUsd: 0.1,
+      }},
+    }}));
+    await expect(loadConfig(root, path)).resolves.toMatchObject({agents: {
+      maxAgentCostUsd: 0.25,
+      connections: {research: {hostedTools: ['web_search'], pricing: {inputPerMillionUsd: 2}}},
+      routes: {researcher: {hostedTools: ['web_search'], costBudgetUsd: 0.1}},
+    }});
+
+    await writeFile(path, JSON.stringify({agents: {
+      connections: {research: {...connection, protocol: 'anthropic-messages', modelsBaseUrl: 'https://relay.example/v1'}},
+    }}));
+    await expect(loadConfig(root, path)).rejects.toThrow('hosted tools only with explicit openai-responses');
+
+    await writeFile(path, JSON.stringify({agents: {
+      routes: {researcher: {provider: 'compatible', model: 'research-model', hostedTools: ['web_search']}},
+    }}));
+    await expect(loadConfig(root, path)).rejects.toThrow('requires a named connection for hosted tools');
+
+    await writeFile(path, JSON.stringify({agents: {
+      connections: {research: {...connection, hostedTools: undefined}},
+      routes: {researcher: {connection: 'research', model: 'research-model', hostedTools: ['web_search']}},
+    }}));
+    await expect(loadConfig(root, path)).rejects.toThrow('requests undeclared hosted tools: web_search');
   });
 
   it('rejects false official-login auth shapes and invalid relay transport combinations', async () => {

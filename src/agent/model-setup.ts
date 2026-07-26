@@ -5,7 +5,9 @@ import type {
   ConnectionAuth,
   ConnectionModelAuth,
   ConnectionProtocol,
+  ProviderHostedTool,
   ProviderName,
+  RouteTokenPricing,
 } from '../types.js';
 
 export interface AgentConnectionSetupInput {
@@ -18,6 +20,8 @@ export interface AgentConnectionSetupInput {
   authHeader?: ConnectionApiKeyHeader;
   modelsAuthHeader?: ConnectionModelAuth;
   apiKeyEnv?: string;
+  hostedTools?: ProviderHostedTool[];
+  pricing?: RouteTokenPricing;
   defaultModel: string;
 }
 
@@ -41,6 +45,17 @@ export function createAgentConnectionSetup(input: AgentConnectionSetupInput): Ag
   }
   const protocol = input.protocol ?? 'openai-responses';
   if (protocol === 'gemini') throw new Error('Relay protocol must use openai-responses, openai-chat, or anthropic-messages.');
+  const hostedTools = [...new Set(input.hostedTools ?? [])];
+  if (hostedTools.some((tool) => tool !== 'web_search')) {
+    throw new Error('Only the web_search provider-hosted tool is supported.');
+  }
+  if (hostedTools.length && protocol !== 'openai-responses') {
+    throw new Error('Provider-hosted tools require the openai-responses protocol.');
+  }
+  if (input.pricing && Object.values(input.pricing).some((value) =>
+    value !== undefined && (!Number.isFinite(value) || value < 0))) {
+    throw new Error('Relay token prices must be finite, non-negative USD amounts per million tokens.');
+  }
   const baseUrl = input.baseUrl?.trim() || undefined;
   if (!baseUrl) throw new Error('Compatible relay connections require an inference base URL.');
   const modelsBaseUrl = input.modelsBaseUrl?.trim() || undefined;
@@ -87,6 +102,8 @@ export function createAgentConnectionSetup(input: AgentConnectionSetupInput): Ag
         baseUrl,
         ...(modelsBaseUrl ? {modelsBaseUrl} : {}),
         ...(input.modelsAuthHeader ? {modelsAuthHeader: input.modelsAuthHeader} : {}),
+        ...(hostedTools.length ? {hostedTools} : {}),
+        ...(input.pricing ? {pricing: input.pricing} : {}),
         auth: auth === 'env'
           ? {type: 'env', name: apiKeyEnv as string, ...(input.authHeader ? {header: input.authHeader} : {})}
           : {type: 'none'},

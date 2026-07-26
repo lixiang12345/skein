@@ -503,6 +503,14 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         append({id: nextId(), kind: 'notice', tone: 'success', text: `Clarification resolved${separator}${event.answer}`});
         refreshSession();
         break;
+      case 'provider_activity':
+        append({
+          id: nextId(),
+          kind: 'notice',
+          tone: 'info',
+          text: `Provider search${separator}${event.hostedTools.length} call${event.hostedTools.length === 1 ? '' : 's'}${separator}${event.sources.length} source${event.sources.length === 1 ? '' : 's'}`,
+        });
+        break;
       case 'intent':
         refreshSession();
         break;

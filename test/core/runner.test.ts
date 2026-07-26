@@ -810,6 +810,39 @@ describe('AgentRunner', () => {
     });
   });
 
+  it('emits and persists content-safe provider-hosted search activity', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-provider-activity-'));
+    roots.push(root);
+    const provider = new QueueProvider([{
+      content: 'Research complete.',
+      toolCalls: [],
+      usage: {inputTokens: 10, outputTokens: 2},
+      providerMetadata: {
+        hostedTools: [{id: 'ws-1', tool: 'web_search', status: 'completed'}],
+        sources: [{
+          id: `source:${'a'.repeat(64)}`,
+          type: 'url_citation',
+          url: 'https://example.com/source',
+          urlSha256: 'a'.repeat(64),
+        }],
+      },
+    }]);
+    const events: AgentEvent[] = [];
+    const runner = new AgentRunner({config: config(root), provider, contextEngine: context});
+
+    const session = await runner.run('research the current API', {
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(events.find((event) => event.type === 'provider_activity')).toMatchObject({
+      type: 'provider_activity',
+      hostedTools: [{id: 'ws-1', tool: 'web_search', status: 'completed'}],
+      sources: [{url: 'https://example.com/source'}],
+    });
+    expect(session.messages.find((message) => message.role === 'assistant')?.providerMetadata)
+      .toMatchObject({hostedTools: [{id: 'ws-1'}], sources: [{id: `source:${'a'.repeat(64)}`}]});
+  });
+
   it('marks missing provider usage estimated instead of actual', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-usage-estimated-'));
     roots.push(root);

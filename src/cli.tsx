@@ -665,6 +665,9 @@ agentsCommand
           tokenBudget: route.tokenBudget,
           maxToolCalls: route.maxToolCalls,
           timeoutMs: route.timeoutMs,
+          hostedTools: route.hostedTools ?? [],
+          pricing: route.pricing ? 'route' : connection?.pricing ? 'connection' : 'unpriced',
+          costBudgetUsd: route.costBudgetUsd ?? config.agents?.maxAgentCostUsd,
           budgetMode: route.budgetMode ?? config.agents?.budgetMode ?? 'observe',
         } : {
           runtime: 'api',
@@ -677,7 +680,10 @@ agentsCommand
     });
     if (options.json) printObject(roster, true);
     else for (const profile of roster) {
-      process.stdout.write(`${profile.name.padEnd(14)} ${profile.readOnly ? 'read-only' : 'writer   '} ${profile.route.runtime}:${profile.route.provider}/${profile.route.model} (${profile.routeSource})  ${profile.description}\n`);
+      const routeTelemetry = 'pricing' in profile.route
+        ? ` hosted=${profile.route.hostedTools?.join(',') || 'none'} pricing=${profile.route.pricing} cost-cap=${profile.route.costBudgetUsd ?? 'none'} mode=${profile.route.budgetMode}`
+        : '';
+      process.stdout.write(`${profile.name.padEnd(14)} ${profile.readOnly ? 'read-only' : 'writer   '} ${profile.route.runtime}:${profile.route.provider}/${profile.route.model} (${profile.routeSource})${routeTelemetry}  ${profile.description}\n`);
     }
   });
 agentsCommand
@@ -693,6 +699,11 @@ agentsCommand
   .option('--auth-header <header>', 'inference credential header: bearer or x-api-key')
   .option('--models-auth-header <header>', 'model-directory auth: bearer, x-api-key, or none; defaults to inference')
   .option('--api-key-env <name>', 'environment variable containing the credential')
+  .option('--hosted-tool <tool>', 'provider-hosted tool: web_search; repeatable, or none to clear', collect, [])
+  .option('--input-price <usd>', 'relay input price in USD per million tokens; pair none values to clear')
+  .option('--output-price <usd>', 'relay output price in USD per million tokens; pair none values to clear')
+  .option('--cached-input-price <usd>', 'relay cached-input price in USD per million tokens, or none')
+  .option('--cache-write-input-price <usd>', 'relay cache-write input price in USD per million tokens, or none')
   .option('--model <model>', 'default model identifier')
   .option('--yes', 'use supplied or existing defaults without prompting')
   .option('--json', 'print JSON')
@@ -709,26 +720,31 @@ agentsCommand
     const workspace = workspaceOption(options.workspace);
     const config = await runtimeConfig(workspace, runtimeOptions(options));
     const catalog = discoverConnectionCatalog(config);
-    const connections = catalog.profiles.map((connection) => ({
-      name: connection.id,
-      provider: connection.provider,
-      protocol: connection.protocol,
-      source: connection.source,
-      endpoint: redactEndpoint(connection.baseUrl),
-      modelsEndpoint: redactEndpoint(connection.modelsBaseUrl ?? connection.baseUrl),
-      credentials: connectionCredentialReference(connection),
-      authHeader: connection.auth.type === 'env' ? connection.auth.header ?? 'bearer' : null,
-      modelsAuthHeader: connection.auth.type === 'env'
-        ? connection.modelsAuthHeader ?? connection.auth.header ?? 'bearer'
-        : null,
-      routes: Object.values(config.agents?.routes ?? {}).filter((route) => route.connection === connection.id).length,
-      default: catalog.defaultConnection === connection.id,
-      complete: connectionRuntimeCatalog({profiles: [connection]}).profiles[0]?.complete ?? false,
-    }));
+    const connections = catalog.profiles.map((connection) => {
+      const configured = config.agents?.connections?.[connection.id];
+      return {
+        name: connection.id,
+        provider: connection.provider,
+        protocol: connection.protocol,
+        source: connection.source,
+        endpoint: redactEndpoint(connection.baseUrl),
+        modelsEndpoint: redactEndpoint(connection.modelsBaseUrl ?? connection.baseUrl),
+        credentials: connectionCredentialReference(connection),
+        authHeader: connection.auth.type === 'env' ? connection.auth.header ?? 'bearer' : null,
+        modelsAuthHeader: connection.auth.type === 'env'
+          ? connection.modelsAuthHeader ?? connection.auth.header ?? 'bearer'
+          : null,
+        routes: Object.values(config.agents?.routes ?? {}).filter((route) => route.connection === connection.id).length,
+        hostedTools: configured?.hostedTools ?? [],
+        pricing: configured?.pricing ? 'configured' : 'unpriced',
+        default: catalog.defaultConnection === connection.id,
+        complete: connectionRuntimeCatalog({profiles: [connection]}).profiles[0]?.complete ?? false,
+      };
+    });
     if (options.json) printObject(connections, true);
     else if (!connections.length) process.stdout.write('No named model connections configured.\n');
     else for (const connection of connections) {
-      process.stdout.write(`${connection.name.padEnd(16)} ${connection.protocol.padEnd(20)} ${connection.credentials.padEnd(28)} ${connection.source.padEnd(11)} ${connection.complete ? 'ready' : 'incomplete'}${connection.default ? ' + default' : ''}  inference=${connection.endpoint} auth=${connection.authHeader ?? 'none'} models=${connection.modelsEndpoint} models-auth=${connection.modelsAuthHeader ?? 'none'}\n`);
+      process.stdout.write(`${connection.name.padEnd(16)} ${connection.protocol.padEnd(20)} ${connection.credentials.padEnd(28)} ${connection.source.padEnd(11)} ${connection.complete ? 'ready' : 'incomplete'}${connection.default ? ' + default' : ''}  inference=${connection.endpoint} auth=${connection.authHeader ?? 'none'} models=${connection.modelsEndpoint} models-auth=${connection.modelsAuthHeader ?? 'none'} hosted=${connection.hostedTools.join(',') || 'none'} pricing=${connection.pricing}\n`);
     }
   });
 agentsCommand
@@ -915,7 +931,13 @@ agentsCommand
     if (options.json) printObject(runs, true);
     else if (!runs.length) process.stdout.write('No team runs found.\n');
     else for (const run of runs) {
-      process.stdout.write(`${run.id.slice(0, 8)}  ${run.status.padEnd(12)} ${run.createdAt}  ${run.agentCount} agents  ${run.totalTokens} tok  ${run.toolCalls} tools  ${run.objective.replace(/\s+/gu, ' ').slice(0, 180)}\n`);
+      const pricedAgents = Math.max(0, run.agentCount - run.unpricedAgents);
+      const cost = !run.agentCount
+        ? 'cost pending'
+        : pricedAgents
+        ? `$${(run.pricedCostMicros / 1_000_000).toFixed(6)}${run.unpricedAgents ? ` + ${run.unpricedAgents} unpriced` : ''}`
+        : `${run.unpricedAgents} unpriced`;
+      process.stdout.write(`${run.id.slice(0, 8)}  ${run.status.padEnd(12)} ${run.createdAt}  ${run.agentCount} agents  ${run.totalTokens} tok  ${run.toolCalls} tools  ${cost}  ${run.hostedToolCalls} hosted  ${run.sourceCount} sources  ${run.objective.replace(/\s+/gu, ' ').slice(0, 180)}\n`);
     }
   });
 agentsCommand
@@ -949,7 +971,13 @@ agentsCommand
         const report = hasStructuredReviews && agent.phase === 'review'
           ? '[Structured reviewer output is normalized below; use --json for the raw report.]'
           : agent.reportText;
-        process.stdout.write(`## ${agent.profile} ${agent.phase} ${agent.provider}/${agent.model} ${agent.ok ? 'ok' : 'failed'}  ${tokens} tok  ${agent.toolCalls ?? 0} tools  ${agent.durationMs ?? 0}ms\n${report}\n\n`);
+        const cost = agent.cost?.status === 'priced'
+          ? `$${(agent.cost.amountMicros / 1_000_000).toFixed(6)}`
+          : 'unpriced';
+        process.stdout.write(`## ${agent.profile} ${agent.phase} ${agent.provider}/${agent.model} ${agent.ok ? 'ok' : 'failed'}  ${tokens} tok  ${agent.toolCalls ?? 0} tools  ${cost}  ${agent.hostedTools?.length ?? 0} hosted  ${agent.sources?.length ?? 0} sources  ${agent.durationMs ?? 0}ms\n${report}\n\n`);
+      }
+      if (run.version === 4 && run.provenance) {
+        process.stdout.write(`Provenance ${run.provenance.bundle.sha256}  ${run.provenance.agentCount} agents  ${run.provenance.reviewerDecisionCount} decisions  ${run.provenance.sourceCount} sources\n\n`);
       }
       if (writer) {
         process.stdout.write(`Writer patch ${writer.patch.sha256}  ${writer.outcome}  ${writer.files.length} files  cleanup ${writer.worktreeCleaned ? 'verified' : 'failed'}\n`);
@@ -1541,6 +1569,11 @@ interface AgentSetupOptions {
   authHeader?: string;
   modelsAuthHeader?: string;
   apiKeyEnv?: string;
+  hostedTool?: string[];
+  inputPrice?: string;
+  outputPrice?: string;
+  cachedInputPrice?: string;
+  cacheWriteInputPrice?: string;
   model?: string;
   yes?: boolean;
   json?: boolean;
@@ -1902,6 +1935,13 @@ async function runAgentSetup(options: AgentSetupOptions): Promise<void> {
   const currentApiKeyEnv = currentConnection?.apiKeyEnv ??
     (currentConnection?.auth?.type === 'env' ? currentConnection.auth.name : undefined);
   let apiKeyEnv = options.apiKeyEnv ?? (auth === 'env' ? currentApiKeyEnv ?? providerEnvironment(provider) : '');
+  let hostedTools = options.hostedTool?.length
+    ? validateHostedTools(options.hostedTool)
+    : currentConnection?.hostedTools ?? [];
+  let inputPrice = options.inputPrice ?? priceInput(currentConnection?.pricing?.inputPerMillionUsd);
+  let outputPrice = options.outputPrice ?? priceInput(currentConnection?.pricing?.outputPerMillionUsd);
+  let cachedInputPrice = options.cachedInputPrice ?? priceInput(currentConnection?.pricing?.cachedInputPerMillionUsd);
+  let cacheWriteInputPrice = options.cacheWriteInputPrice ?? priceInput(currentConnection?.pricing?.cacheWriteInputPerMillionUsd);
   let model = options.model ?? current.agents?.defaultModel ?? current.model.model;
 
   if (!options.yes && process.stdin.isTTY && process.stdout.isTTY) {
@@ -1928,11 +1968,35 @@ async function runAgentSetup(options: AgentSetupOptions): Promise<void> {
       apiKeyEnv = auth === 'env'
         ? await question(readline, 'Credential environment variable', apiKeyEnv || providerEnvironment(provider))
         : '';
+      hostedTools = validateHostedTools([
+        await question(readline, 'Provider-hosted tools (web_search or none)', hostedTools.join(',') || 'none'),
+      ]);
+      inputPrice = await question(readline, 'Input USD per million tokens (none keeps usage unpriced)', inputPrice || 'none');
+      outputPrice = await question(readline, 'Output USD per million tokens (none keeps usage unpriced)', outputPrice || 'none');
+      cachedInputPrice = await question(readline, 'Cached-input USD per million tokens (optional)', cachedInputPrice || 'none');
+      cacheWriteInputPrice = await question(readline, 'Cache-write input USD per million tokens (optional)', cacheWriteInputPrice || 'none');
       model = await question(readline, 'Default model', model);
     } finally {
       readline.close();
     }
   }
+
+  const parsedInputPrice = optionalPrice(inputPrice, 'Input price');
+  const parsedOutputPrice = optionalPrice(outputPrice, 'Output price');
+  const parsedCachedInputPrice = optionalPrice(cachedInputPrice, 'Cached-input price');
+  const parsedCacheWriteInputPrice = optionalPrice(cacheWriteInputPrice, 'Cache-write input price');
+  const hasPricing = parsedInputPrice !== undefined || parsedOutputPrice !== undefined ||
+    parsedCachedInputPrice !== undefined || parsedCacheWriteInputPrice !== undefined;
+  if (hasPricing && (parsedInputPrice === undefined || parsedOutputPrice === undefined)) {
+    throw new Error('Relay pricing requires both input and output USD-per-million values.');
+  }
+  const pricing = hasPricing ? {
+    inputPerMillionUsd: parsedInputPrice as number,
+    outputPerMillionUsd: parsedOutputPrice as number,
+    ...(parsedCachedInputPrice === undefined ? {} : {cachedInputPerMillionUsd: parsedCachedInputPrice}),
+    ...(parsedCacheWriteInputPrice === undefined
+      ? {} : {cacheWriteInputPerMillionUsd: parsedCacheWriteInputPrice}),
+  } : undefined;
 
   const setup = createAgentConnectionSetup({
     name,
@@ -1943,6 +2007,8 @@ async function runAgentSetup(options: AgentSetupOptions): Promise<void> {
     auth,
     ...(auth === 'env' ? {authHeader, modelsAuthHeader} : {}),
     ...(apiKeyEnv ? {apiKeyEnv} : {}),
+    ...(hostedTools.length ? {hostedTools} : {}),
+    ...(pricing ? {pricing} : {}),
     defaultModel: model,
   });
   const path = await saveUserConfig({agents: mergeAgentSetup(undefined, setup)});
@@ -1959,6 +2025,8 @@ async function runAgentSetup(options: AgentSetupOptions): Promise<void> {
     modelsAuthHeader: auth === 'env' ? modelsAuthHeader : null,
     apiKeyEnv: apiKeyEnv || null,
     credentialConfigured,
+    hostedTools,
+    pricing: pricing ?? null,
     defaultModel: setup.defaultModel,
   };
   if (options.json) {
@@ -1969,6 +2037,8 @@ async function runAgentSetup(options: AgentSetupOptions): Promise<void> {
   process.stdout.write(`  Default: ${protocol}/${setup.defaultModel} via ${redactEndpoint(baseUrl)}\n`);
   process.stdout.write(`  Models: ${PRODUCT_COMMAND} agents models ${setup.defaultConnection} via ${redactEndpoint(modelsBaseUrl || baseUrl)}\n`);
   process.stdout.write(`  Credential: ${auth === 'none' ? 'none' : `env:${apiKeyEnv} via ${authHeader}; models via ${modelsAuthHeader} (${credentialConfigured ? 'configured' : 'not set'})`}\n`);
+  process.stdout.write(`  Hosted tools: ${hostedTools.join(', ') || 'none'}\n`);
+  process.stdout.write(`  Pricing: ${pricing ? 'configured by user' : 'unpriced'}\n`);
   process.stdout.write(`  Routes: ${PRODUCT_COMMAND} agents list\n`);
 }
 
@@ -2352,6 +2422,30 @@ function runtimeOptions(options: RuntimeConfigOptions): RuntimeConfigOptions {
 function positiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function validateHostedTools(values: string[]): Array<'web_search'> {
+  const normalized = values.flatMap((value) => value.split(','))
+    .map((value) => value.trim().toLocaleLowerCase())
+    .filter(Boolean);
+  if (normalized.length === 1 && normalized[0] === 'none') return [];
+  if (normalized.some((value) => value !== 'web_search')) {
+    throw new Error('Unknown provider-hosted tool; use web_search or none.');
+  }
+  return [...new Set(normalized)] as Array<'web_search'>;
+}
+
+function optionalPrice(value: string | undefined, label: string): number | undefined {
+  if (value === undefined || !value.trim() || value.trim().toLocaleLowerCase() === 'none') return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1_000_000) {
+    throw new Error(`${label} must be a finite value between 0 and 1000000 USD per million tokens.`);
+  }
+  return parsed;
+}
+
+function priceInput(value: number | undefined): string {
+  return value === undefined ? '' : String(value);
 }
 
 function validateProvider(value: string): ProviderName {

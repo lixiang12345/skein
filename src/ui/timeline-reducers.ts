@@ -160,6 +160,9 @@ export function updateAgent(items: TimelineItem[], event: Extract<AgentEvent, {t
       ...(event.durationMs !== undefined ? {durationMs: event.durationMs} : {}),
       ...(event.toolCalls !== undefined ? {toolCalls: event.toolCalls} : {}),
       ...(event.usage ? {inputTokens: event.usage.inputTokens, outputTokens: event.usage.outputTokens} : {}),
+      ...(event.cost ? {cost: event.cost} : {}),
+      ...(event.hostedToolCalls !== undefined ? {hostedToolCalls: event.hostedToolCalls} : {}),
+      ...(event.sourceCount !== undefined ? {sourceCount: event.sourceCount} : {}),
     }].slice(-100);
   }
   return items.map((item) => item.kind === 'agent' && item.id === event.id
@@ -172,6 +175,9 @@ export function updateAgent(items: TimelineItem[], event: Extract<AgentEvent, {t
       ...(event.durationMs !== undefined ? {durationMs: event.durationMs} : item.startedAt ? {durationMs: Date.now() - item.startedAt} : {}),
       ...(event.toolCalls !== undefined ? {toolCalls: event.toolCalls} : {}),
       ...(event.usage ? {inputTokens: event.usage.inputTokens, outputTokens: event.usage.outputTokens} : {}),
+      ...(event.cost ? {cost: event.cost} : {}),
+      ...(event.hostedToolCalls !== undefined ? {hostedToolCalls: event.hostedToolCalls} : {}),
+      ...(event.sourceCount !== undefined ? {sourceCount: event.sourceCount} : {}),
     }
     : item);
 }
@@ -229,6 +235,9 @@ export function updateAgentTelemetry(items: TimelineItem[], event: Extract<Agent
       ...(event.toolCalls !== undefined ? {toolCalls: event.toolCalls} : {}),
       ...(event.inputTokens !== undefined ? {inputTokens: event.inputTokens} : {}),
       ...(event.outputTokens !== undefined ? {outputTokens: event.outputTokens} : {}),
+      ...(event.cost ? {cost: event.cost} : {}),
+      ...(event.hostedToolCalls !== undefined ? {hostedToolCalls: event.hostedToolCalls} : {}),
+      ...(event.sourceCount !== undefined ? {sourceCount: event.sourceCount} : {}),
       ...(alerts?.length ? {alerts} : {}),
     };
   });

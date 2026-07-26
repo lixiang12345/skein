@@ -32,6 +32,12 @@ const toolCallSchema = z.object({
   arguments: z.record(z.string(), z.unknown()),
 }).strict();
 
+const providerSourceUrlSchema = z.string().url().max(4_000).refine((value) => {
+  const url = new URL(value);
+  return (url.protocol === 'https:' || url.protocol === 'http:') &&
+    !url.username && !url.password && !url.search && !url.hash;
+}, {message: 'provider source URL must be content-safe'});
+
 const providerMetadataSchema = z.object({
   responses: z.object({
     outputItems: z.array(z.record(z.string(), z.unknown())).max(128).superRefine((items, context) => {
@@ -40,6 +46,18 @@ const providerMetadataSchema = z.object({
       }
     }),
   }).strict().optional(),
+  hostedTools: z.array(z.object({
+    id: z.string().min(1).max(256),
+    tool: z.literal('web_search'),
+    status: z.enum(['completed', 'incomplete', 'failed', 'unknown']),
+  }).strict()).max(128).optional(),
+  sources: z.array(z.object({
+    id: z.string().regex(/^source:[a-f0-9]{64}$/u),
+    type: z.literal('url_citation'),
+    url: providerSourceUrlSchema,
+    urlSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    title: z.string().max(500).optional(),
+  }).strict()).max(256).optional(),
 }).strict();
 
 const messageSchema = z.object({

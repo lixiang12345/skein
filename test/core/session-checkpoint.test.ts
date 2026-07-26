@@ -45,10 +45,19 @@ describe('sessions and checkpoints', () => {
       content: '',
       createdAt: '2026-07-26T00:00:00.000Z',
       toolCalls: [{id: 'call-1', name: 'read_file', arguments: {path: 'a.ts'}}],
-      providerMetadata: {responses: {outputItems: [
-        {id: 'rs-1', type: 'reasoning', encrypted_content: 'opaque-provider-state', summary: []},
-        {id: 'fc-1', type: 'function_call', call_id: 'call-1', name: 'read_file', arguments: '{"path":"a.ts"}'},
-      ]}},
+      providerMetadata: {
+        responses: {outputItems: [
+          {id: 'rs-1', type: 'reasoning', encrypted_content: 'opaque-provider-state', summary: []},
+          {id: 'fc-1', type: 'function_call', call_id: 'call-1', name: 'read_file', arguments: '{"path":"a.ts"}'},
+        ]},
+        hostedTools: [{id: 'ws-1', tool: 'web_search', status: 'completed'}],
+        sources: [{
+          id: `source:${'a'.repeat(64)}`,
+          type: 'url_citation',
+          url: 'https://example.com/source',
+          urlSha256: 'a'.repeat(64),
+        }],
+      },
     });
 
     await store.save(session);
@@ -70,6 +79,23 @@ describe('sessions and checkpoints', () => {
     });
 
     await expect(store.save(session)).rejects.toThrow('Responses replay state exceeds 4 MiB');
+  });
+
+  it('rejects provider source URLs that still contain credentials, queries, or fragments', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-session-unsafe-source-'));
+    roots.push(root);
+    const store = new SessionStore(root);
+    const session = createSession({workspace: root, model: 'test', provider: 'compatible'});
+    session.messages.push({
+      id: 'assistant-source', role: 'assistant', content: 'answer', createdAt: '2026-07-26T00:00:00.000Z',
+      providerMetadata: {sources: [{
+        id: `source:${'a'.repeat(64)}`,
+        type: 'url_citation',
+        url: 'https://user:secret@example.com/source?query=private#fragment',
+        urlSha256: 'a'.repeat(64),
+      }]},
+    });
+    await expect(store.save(session)).rejects.toThrow('provider source URL must be content-safe');
   });
 
   it('round-trips context epochs and pending clarification without hidden reasoning', async () => {

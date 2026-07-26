@@ -7,6 +7,7 @@ import {toolMetaSummary} from '../src/ui/timeline-reducers.js';
 import {displayWidth, sanitizeTerminalText} from '../src/ui/text.js';
 import {detectTerminalAppearance, resolveTheme, resolveThemeWithColor, ThemeProvider} from '../src/ui/theme.js';
 import {resolveKittyKeyboardConfig, resolveTerminalAccessibility} from '../src/ui/terminal-capabilities.js';
+import {routeCostReceipt} from '../src/agent/route-cost.js';
 import type {MosaicConfig, ToolCall} from '../src/types.js';
 
 const config: MosaicConfig = {
@@ -551,8 +552,8 @@ describe('terminal presentation', () => {
 
   it.each([20, 40, 80, 120])('renders a bounded interactive team workbench at %i columns', (columns) => {
     const items = [
-      {id: 'worker', kind: 'agent' as const, profile: 'architect', provider: 'anthropic', model: 'claude', phase: 'work' as const, task: 'Map 跨模块 boundaries and verify ownership', state: 'ok' as const, durationMs: 42_000, inputTokens: 12_000, outputTokens: 2_000, toolCalls: 7, summary: 'Architecture report ready.', alerts: ['soft token threshold exceeded (10000); continuing']},
-      {id: 'reviewer', kind: 'agent' as const, profile: 'reviewer', provider: 'openai', model: 'gpt', phase: 'review' as const, task: 'Review evidence', state: 'running' as const, startedAt: Date.now() - 2_000},
+      {id: 'worker', kind: 'agent' as const, profile: 'architect', provider: 'anthropic', model: 'claude', phase: 'work' as const, task: 'Map 跨模块 boundaries and verify ownership', state: 'ok' as const, durationMs: 42_000, inputTokens: 12_000, outputTokens: 2_000, toolCalls: 7, cost: routeCostReceipt({inputTokens: 12_000, outputTokens: 2_000, source: 'actual'}, {protocol: 'anthropic-messages', pricingSource: 'route', pricing: {inputPerMillionUsd: 3, outputPerMillionUsd: 15}}), hostedToolCalls: 1, sourceCount: 3, summary: 'Architecture report ready.', alerts: ['soft token threshold exceeded (10000); continuing']},
+      {id: 'reviewer', kind: 'agent' as const, profile: 'reviewer', provider: 'openai', model: 'gpt', phase: 'review' as const, task: 'Review evidence', state: 'running' as const, startedAt: Date.now() - 2_000, cost: routeCostReceipt({inputTokens: 0, outputTokens: 0, source: 'unknown'}), hostedToolCalls: 0, sourceCount: 0},
       {id: 'message', kind: 'agent-message' as const, from: 'architect', to: 'reviewer', text: 'Boundary report ready.'},
     ];
     const output = renderToString(<TeamWorkbench
@@ -572,7 +573,12 @@ describe('terminal presentation', () => {
     expect(output).toContain('[agents]');
     expect(output).toContain('architect');
     expect(output).toContain('soft token');
-    if (columns >= 80) expect(output).toContain('judge escalate 2/1/3');
+    if (columns >= 80) {
+      expect(output).toContain('judge escalate 2/1/3');
+      expect(output).toContain('$0.066000');
+      expect(output).toContain('unpriced');
+      expect(output).toContain('3 sources');
+    }
     for (const line of output.split('\n')) {
       expect(displayWidth(line), `${columns}-column workbench row overflowed: ${JSON.stringify(line)}`).toBeLessThanOrEqual(columns);
     }
@@ -591,6 +597,25 @@ describe('terminal presentation', () => {
     expect(taskOutput).toContain('Run acceptance checks');
     expect(messageOutput).toContain('[messages]');
     expect(messageOutput).toContain('backend→reviewer');
+  });
+
+  it('keeps cost and source telemetry readable in the ASCII accessibility mode', () => {
+    const output = renderToString(<TeamWorkbench
+      glyphMode="ascii"
+      width={72}
+      items={[{
+        id: 'researcher', kind: 'agent', profile: 'researcher', task: 'Research APIs', state: 'ok',
+        inputTokens: 100, outputTokens: 20, toolCalls: 0,
+        cost: routeCostReceipt({inputTokens: 100, outputTokens: 20, source: 'actual'}),
+        hostedToolCalls: 1, sourceCount: 2,
+      }]}
+      tasks={[]}
+    />, {columns: 72});
+    expect(output).toContain('unpriced');
+    expect(output).toContain('1 hosted');
+    expect(output).toContain('2 sources');
+    expect(output).not.toMatch(/[✓◌·→]/u);
+    for (const line of output.split('\n')) expect(displayWidth(line)).toBeLessThanOrEqual(72);
   });
 
   it.each([20, 50, 72])('renders each permission shortcut once at %i columns', (columns) => {

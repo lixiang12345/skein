@@ -1,4 +1,5 @@
 import {afterEach, describe, expect, it, vi} from 'vitest';
+import {createHash} from 'node:crypto';
 import {AnthropicProvider} from '../../src/providers/anthropic.js';
 import {GeminiProvider} from '../../src/providers/gemini.js';
 import {OpenAIProvider} from '../../src/providers/openai.js';
@@ -146,6 +147,71 @@ describe('provider streaming helpers', () => {
       usage: {inputTokens: 12, outputTokens: 4, cachedInputTokens: 7, reasoningTokens: 2},
       stopReason: 'tool_calls',
     });
+  });
+
+  it('uses explicitly enabled hosted web search and records content-safe source provenance', async () => {
+    const exactUrl = 'https://user:pass@example.com/research/item?token=secret#section';
+    const urlSha256 = createHash('sha256').update(exactUrl).digest('hex');
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      expect(body).toMatchObject({
+        tools: [{type: 'web_search'}],
+        tool_choice: 'auto',
+        include: ['web_search_call.action.sources'],
+        store: false,
+      });
+      return new Response(JSON.stringify({
+        status: 'completed',
+        output: [
+          {
+            id: 'ws-1',
+            type: 'web_search_call',
+            status: 'completed',
+            action: {sources: [{type: 'url', url: exactUrl, title: ' Source\u0000 title '}]},
+          },
+          {
+            id: `unsafe\u0000${'x'.repeat(300)}`,
+            type: 'web_search_call',
+            status: 'completed',
+            action: {sources: [{type: 'url', url: `https://example.com/${'x'.repeat(5_000)}`}]},
+          },
+          {
+            type: 'message',
+            role: 'assistant',
+            content: [{
+              type: 'output_text',
+              text: 'Answer',
+              annotations: [{type: 'url_citation', url: exactUrl, title: 'Source title'}],
+            }],
+          },
+        ],
+        usage: {input_tokens: 10, output_tokens: 2},
+      }), {headers: {'content-type': 'application/json'}});
+    }));
+    const provider = new ResponsesProvider({
+      provider: 'compatible',
+      protocol: 'openai-responses',
+      model: 'research-model',
+      baseUrl: 'https://relay.example/v1',
+      apiKey: 'relay-key',
+      hostedTools: ['web_search'],
+    });
+
+    const response = await provider.complete([], []);
+
+    expect(response.providerMetadata).toMatchObject({
+      hostedTools: [
+        {id: 'ws-1', tool: 'web_search', status: 'completed'},
+        {id: expect.stringMatching(/^web-search:[a-f0-9]{64}$/u), tool: 'web_search', status: 'completed'},
+      ],
+      sources: [{
+        id: `source:${urlSha256}`,
+        type: 'url_citation',
+        url: 'https://example.com/research/item',
+        urlSha256,
+      }],
+    });
+    expect(response.providerMetadata?.sources).toHaveLength(1);
   });
 
   it('uses the Anthropic relay base convention and bearer authentication', async () => {
