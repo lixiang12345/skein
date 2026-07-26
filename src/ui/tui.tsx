@@ -5,6 +5,7 @@ import type {AgentRunner} from '../agent/index.js';
 import {PLAN_MODE_INSTRUCTIONS} from '../agent/prompt.js';
 import {resolveAgentModelRoute} from '../agent/model-route.js';
 import {listConnectionModels} from '../agent/model-catalog.js';
+import {discoverCustomCommands, expandCustomCommand, type CustomCommand} from './custom-commands.js';
 import {providerApiKeyEnv, saveUiPreference} from '../config.js';
 import {
   activeMentionToken,
@@ -49,7 +50,7 @@ import {
   type TimelineItem,
 } from './components.js';
 import type {WorkspaceReadiness} from './workspace-preparation.js';
-import {commandDefinitions, commandSuggestions} from './commands.js';
+import {commandDefinitions, commandSuggestions, reservedCommandNames} from './commands.js';
 import {refreshUpdateCache, resolveCachedUpdateNotice, type UpdateNotice} from '../utils/update-check.js';
 import {ComposerInput} from './composer.js';
 import {
@@ -104,6 +105,9 @@ interface PermissionRequest {
  * card appears. Denial (n/Esc) stays instant — refusing fast is always safe.
  */
 const PERMISSION_ARMING_MS = 300;
+
+/** Second Ctrl+C within this window exits; outside it, the press only warns. */
+const EXIT_CONFIRM_WINDOW_MS = 2_000;
 
 interface AgentQueueItem {
   kind: 'agent';
@@ -203,12 +207,25 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const lastEventError = useRef<string | undefined>(undefined);
   const historyDraft = useRef('');
   const mentionRequest = useRef(0);
+  const exitArmedAt = useRef(0);
 
   const workflows = useMemo(() => extensions?.listWorkflows() ?? [], [extensions]);
+  const [customCommands, setCustomCommands] = useState<CustomCommand[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void discoverCustomCommands(runner.workspace.primaryRoot, reservedCommandNames)
+      .then((commands) => {
+        if (!cancelled && commands.length) setCustomCommands(commands);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [runner]);
   const commandMatches = useMemo(() => commandSuggestions(input, {
     themes: ['auto', ...Object.keys(themes)],
     workflows,
-  }), [input, themeCatalogRevision, workflows]);
+    custom: customCommands,
+  }), [customCommands, input, themeCatalogRevision, workflows]);
   const mentionToken = useMemo(() => activeMentionToken(input, composerCursor), [composerCursor, input]);
   const rawSuggestionMode = historySearch
     ? 'history' as const
@@ -237,6 +254,22 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const append = useCallback((item: TimelineItem) => {
     setTimeline((items) => [...items, item].slice(-500));
   }, []);
+
+  // A cleared draft is never lost: it joins prompt history so ArrowUp
+  // restores it, and longer drafts say so because silently losing a
+  // paragraph of typing is the actual failure mode being fixed.
+  const clearDraftRecoverably = useCallback(() => {
+    setInput((draft) => {
+      if (draft) {
+        setHistory((prev) => prev[prev.length - 1] === draft ? prev : [...prev, draft]);
+        if (draft.length >= 20) {
+          append({id: nextId(), kind: 'notice', tone: 'info', text: 'Draft cleared. Press ArrowUp to restore it.'});
+        }
+      }
+      return '';
+    });
+    setHistoryIndex(-1);
+  }, [append]);
 
   // The runner mutates its durable session while a turn is streaming. Keep the
   // inspector on a detached snapshot so React observes each working-memory and
@@ -669,6 +702,12 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         label: `/${definition.name}${definition.usage ? `  ${definition.usage}` : ''}`,
         detail: definition.description,
       })));
+      if (customCommands.length) {
+        appendList('Workspace commands (.agents/commands)', customCommands.map((entry) => ({
+          label: `/${entry.name}`,
+          detail: entry.description || entry.path,
+        })));
+      }
       return true;
     }
     if (command === 'hotkeys') {
@@ -683,7 +722,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         {label: 'Ctrl+L', detail: 'clear the visible transcript'},
         {label: 'Alt+E', detail: 'edit the current draft with VISUAL or EDITOR'},
         {label: 'Esc', detail: busy ? 'interrupt the active run' : 'clear the composer'},
-        {label: 'Ctrl+C', detail: 'interrupt, clear, then exit'},
+        {label: 'Ctrl+C', detail: 'interrupt or clear; press twice on an empty composer to exit'},
       ]);
       return true;
     }
@@ -1413,6 +1452,24 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       ]);
       return true;
     }
+    // Workspace command templates resolve last so built-ins can never be
+    // shadowed; a fresh on-demand discovery keeps newly added files usable
+    // without restarting the session.
+    let custom = customCommands.find((candidate) => candidate.name === command);
+    if (!custom) {
+      const discovered = await discoverCustomCommands(runner.workspace.primaryRoot, reservedCommandNames);
+      if (discovered.length) setCustomCommands(discovered);
+      custom = discovered.find((candidate) => candidate.name === command);
+    }
+    if (custom) {
+      append({
+        id: nextId(),
+        kind: 'notice',
+        tone: 'info',
+        text: `Expanded ${custom.path} (${custom.content.length} chars). The full prompt is recorded in the transcript.`,
+      });
+      return {kind: 'agent', display: value, runInput: expandCustomCommand(custom, argument)};
+    }
     append({id: nextId(), kind: 'notice', tone: 'error', text: `Unknown command: /${command}`});
     return true;
 
@@ -1520,7 +1577,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       })));
       return true;
     }
-  }, [append, appendList, compact, config, ellipsis, exit, extensions, interactionMode, openExternalEditor, refreshSession, requestPermission, runner, separator, showToolOutput, tasks, theme, workflows]);
+  }, [append, appendList, compact, config, customCommands, ellipsis, exit, extensions, interactionMode, openExternalEditor, refreshSession, requestPermission, runner, separator, showToolOutput, tasks, theme, workflows]);
 
   const submit = useCallback(async (raw: string, mode: 'steer' | 'follow-up' | 'normal' = 'normal') => {
     const trimmed = raw.trim();
@@ -1896,7 +1953,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       } else if (busy) {
         requestRunStop();
       } else if (input) {
-        setInput('');
+        clearDraftRecoverably();
       }
       return;
     }
@@ -1907,9 +1964,12 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       } else if (busy) {
         requestRunStop();
       } else if (input) {
-        setInput('');
-      } else {
+        clearDraftRecoverably();
+      } else if (Date.now() - exitArmedAt.current < EXIT_CONFIRM_WINDOW_MS) {
         exit();
+      } else {
+        exitArmedAt.current = Date.now();
+        append({id: nextId(), kind: 'notice', tone: 'info', text: 'Press Ctrl+C again to exit.'});
       }
       return;
     }

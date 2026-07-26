@@ -64,11 +64,16 @@ if (mode !== 'unicode' && /[^\x00-\x7F]/u.test(cleaned)) {
 if (mode !== 'unicode' && hasColorSgr(raw)) {
   throw new Error(`${path} emitted ANSI colors in ${mode} mode`);
 }
+if (!cleaned.includes('Git diff was not')) {
+  throw new Error(`${path} never rendered the Git permission denial`);
+}
 const finalFrame = await emulateFinalFrame(raw, width, scenario === 'short' ? 10 : 24);
 const finalText = finalFrame.lines.join('\n');
+// The exit confirmation is the last notice before quitting; on the 10-row
+// screen it legitimately scrolls the earlier permission denial out of view.
 const finalRequired = scenario === 'short'
-  ? ['SKEIN', 'Type a request', 'ready', 'Git diff was not']
-  : [productName, 'Type a request', 'ready', 'Git diff was not'];
+  ? ['SKEIN', 'Type a request', 'ready', 'Press Ctrl+C']
+  : [productName, 'Type a request', 'ready', 'Git diff was not', 'Press Ctrl+C'];
 for (const value of finalRequired) {
   if (!finalText.includes(value)) throw new Error(`${path} final frame did not render ${value}`);
 }

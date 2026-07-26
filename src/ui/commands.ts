@@ -50,9 +50,14 @@ export const commandDefinitions: CommandDefinition[] = [
   command('exit', 'Exit Skein', undefined, ['quit']),
 ];
 
+/** Built-in names and aliases that workspace command templates cannot shadow. */
+export const reservedCommandNames: ReadonlySet<string> = new Set(
+  commandDefinitions.flatMap((definition) => [definition.name, ...(definition.aliases ?? [])]),
+);
+
 export function commandSuggestions(
   input: string,
-  options: {themes?: string[]; workflows?: WorkflowDefinition[]} = {},
+  options: {themes?: string[]; workflows?: WorkflowDefinition[]; custom?: Array<{name: string; description: string}>} = {},
 ): CommandSuggestion[] {
   if (!input.startsWith('/')) return [];
   const raw = input.slice(1);
@@ -189,7 +194,16 @@ export function commandSuggestions(
       value: `/${definition.name}${definition.usage?.includes('<') || definition.usage?.includes('[') ? ' ' : ''}`,
       label: `/${definition.name}`,
       description: definition.description,
-    }));
+    }))
+    .concat((options.custom ?? [])
+      .filter((custom) => custom.name.includes(commandName))
+      .slice(0, 4)
+      .map((custom) => ({
+        value: `/${custom.name} `,
+        label: `/${custom.name}`,
+        description: `${custom.description || 'Workspace command'} · .agents/commands`,
+      })))
+    .slice(0, 8);
 }
 
 export function findCommand(name: string): CommandDefinition | undefined {

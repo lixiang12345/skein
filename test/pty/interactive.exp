@@ -187,10 +187,13 @@ send -- $ctrl_c
 await_pattern {Type a request} {the cleared composer}
 await_frame {the cleared composer frame}
 send -- $ctrl_c
+await_pattern {Press Ctrl\+C} {the exit confirmation notice}
+await_frame {the exit confirmation frame}
+send -- $ctrl_c
 expect {
   eof {}
   timeout {
-    puts stderr "Skein did not exit after Ctrl+C"
+    puts stderr "Skein did not exit after double Ctrl+C"
     exit 1
   }
 }
