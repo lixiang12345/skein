@@ -142,41 +142,78 @@ function testSession(root: string): Session {
   });
 }
 
+type MockInput = PassThrough & {
+  isTTY: boolean;
+  isRaw: boolean;
+  setRawMode: (mode: boolean) => MockInput;
+  ref: () => MockInput;
+  unref: () => MockInput;
+};
+
+type MockOutput = PassThrough & {
+  isTTY: boolean;
+  columns: number;
+  rows: number;
+  captured: string;
+};
+
+function mockInput(): MockInput {
+  const stream = new PassThrough() as MockInput;
+  stream.isTTY = true;
+  stream.isRaw = false;
+  stream.setRawMode = (mode: boolean) => {
+    stream.isRaw = mode;
+    return stream;
+  };
+  stream.ref = () => stream;
+  stream.unref = () => stream;
+  return stream;
+}
+
+function mockOutput(): MockOutput {
+  const stream = new PassThrough() as MockOutput;
+  stream.isTTY = true;
+  stream.columns = 100;
+  stream.rows = 32;
+  stream.captured = '';
+  stream.on('data', (chunk: Buffer) => {
+    stream.captured += chunk.toString();
+  });
+  return stream;
+}
+
 async function mountApp(runner: AgentRunner, root: string): Promise<{
-  stdin: PassThrough & {isTTY?: boolean; setRawMode?: () => void; ref?: () => void; unref?: () => void};
+  stdin: MockInput;
   instance: Instance;
   output(): string;
   cleanup(): Promise<void>;
 }> {
-  const stdin = Object.assign(new PassThrough(), {
-    isTTY: true,
-    setRawMode: () => undefined,
-    ref: () => undefined,
-    unref: () => undefined,
-  });
-  let buffer = '';
-  const stdout = Object.assign(new PassThrough(), {columns: 100, rows: 30, isTTY: true});
-  stdout.on('data', (chunk: Buffer) => { buffer += chunk.toString('utf8'); });
+  const stdin = mockInput();
+  const stdout = mockOutput();
+  const stderr = mockOutput();
   const base = defaultConfig(root);
   const config = {
     ...base,
     model: {provider: 'compatible' as const, model: 'test-model', baseUrl: 'http://localhost'},
+    context: {...base.context},
     ui: {...base.ui, color: false, compact: true},
   };
   const instance = render(<SkeinApp runner={runner} config={config} />, {
     stdin: stdin as unknown as NodeJS.ReadStream,
     stdout: stdout as unknown as NodeJS.WriteStream,
+    stderr: stderr as unknown as NodeJS.WriteStream,
+    interactive: true,
     exitOnCtrlC: false,
     patchConsole: false,
   });
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await instance.waitUntilRenderFlush();
   return {
     stdin,
     instance,
-    output: () => buffer,
+    output: () => stdout.captured,
     async cleanup() {
       instance.unmount();
-      await instance.waitUntilExit().catch(() => undefined);
+      await instance.waitUntilExit();
     },
   };
 }
