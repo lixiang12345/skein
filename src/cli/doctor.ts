@@ -200,9 +200,9 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
     name: 'Model credentials',
     ok: config.model.provider === 'compatible' || Boolean(config.model.apiKey),
     detail: config.model.apiKey
-      ? `${config.model.provider} key configured`
+      ? `${config.model.provider} key configured; live transport not verified by doctor`
       : config.model.provider === 'compatible'
-        ? 'not set; allowed when the endpoint does not require authentication'
+        ? 'not set; allowed when the endpoint does not require authentication; live transport not verified by doctor'
         : `set ${keyEnvironmentName(config.model.provider)}`,
     required: true,
   });
@@ -212,10 +212,10 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
   const rg = await commandCheck('rg', ['--version'], root, config.workspaceRoots);
   checks.push({name: 'ripgrep', ...rg, required: false});
 
-  const externalRuntimes = [...new Set(Object.values(config.agents?.routes ?? {})
+  const configuredExternalRuntimes = [...new Set(Object.values(config.agents?.routes ?? {})
     .map((route) => route.runtime)
     .filter((runtime): runtime is 'codex' | 'claude' | 'grok' => Boolean(runtime && runtime !== 'api')))];
-  for (const runtime of externalRuntimes) {
+  for (const runtime of configuredExternalRuntimes) {
     const resolved = await resolveExecutableRuntime(runtime, root, config.workspaceRoots);
     checks.push({
       name: `Agent runtime: ${runtime}`,
@@ -224,6 +224,18 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
       required: false,
     });
   }
+  const recoveryRuntimes = (await Promise.all((['codex', 'claude', 'grok'] as const).map(async (runtime) => ({
+    runtime,
+    resolved: await resolveExecutableRuntime(runtime, root, config.workspaceRoots),
+  })))).filter(({resolved}) => Boolean(resolved)).map(({runtime}) => runtime);
+  checks.push({
+    name: 'Read-only recovery',
+    ok: recoveryRuntimes.length > 0,
+    detail: recoveryRuntimes.length
+      ? `${recoveryRuntimes.join(', ')} available; run ${PRODUCT_COMMAND} agents run product --runtime ${recoveryRuntimes[0]} -- <prompt>`
+      : `no trusted external CLI found; configure another API connection or install codex, claude, or grok`,
+    required: false,
+  });
   if (config.lsp?.enabled) {
     for (const [name, server] of Object.entries(config.lsp.servers)) {
       const resolved = await resolveExecutableRuntime(server.command, root, config.workspaceRoots);

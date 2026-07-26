@@ -71,6 +71,14 @@ describe('doctor runtime checks', () => {
         required: false,
         detail: expect.stringMatching(/deprecated in 0\.3\.0.*removed in 0\.5\.0.*skein migrate/u),
       }));
+      expect(report.checks).toContainEqual(expect.objectContaining({
+        name: 'Model credentials',
+        detail: expect.stringContaining('live transport not verified by doctor'),
+      }));
+      expect(report.checks).toContainEqual(expect.objectContaining({
+        name: 'Read-only recovery',
+        required: false,
+      }));
     } finally {
       restoreEnvironment('SKEIN_HOME', previous.SKEIN_HOME);
       restoreEnvironment('SKEIN_MODEL', previous.SKEIN_MODEL);

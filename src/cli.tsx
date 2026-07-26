@@ -26,11 +26,13 @@ import {
   evaluateCapabilityShadow,
   formatReviewVerdict,
   listConnectionModels,
+  runExternalAgent,
   TeamRunStore,
   type AgentProfile,
   type CapabilityShadowReport,
   type CapabilityReplayReport,
   type CapabilityHealthFailure,
+  type ExternalAgentRuntime,
 } from './agent/index.js';
 import {resolveAgentModelRoute} from './agent/model-route.js';
 import {deterministicEvidenceReceiptValid} from './agent/evidence-receipt.js';
@@ -845,6 +847,80 @@ agentsCommand
         ? ` hosted=${profile.route.hostedTools?.join(',') || 'none'} pricing=${profile.route.pricing} cost-cap=${profile.route.costBudgetUsd ?? 'none'} mode=${profile.route.budgetMode}`
         : '';
       process.stdout.write(`${profile.name.padEnd(14)} ${profile.readOnly ? 'read-only' : 'writer   '} ${profile.route.runtime}:${profile.route.provider}/${profile.route.model} (${profile.routeSource})${routeTelemetry}  ${profile.description}\n`);
+    }
+  });
+agentsCommand
+  .command('run <profile> <prompt...>')
+  .description('Run one expert through an installed external CLI in read-only mode')
+  .addOption(new Option('--runtime <runtime>', 'external runtime').choices(['codex', 'claude', 'grok']))
+  .option('--model <model>', 'model identifier passed to the external runtime')
+  .option('--timeout <ms>', 'runtime limit in milliseconds', '180000')
+  .option('--max-cost-usd <usd>', 'maximum Claude CLI spend for this run', '1')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--json', 'print JSON')
+  .action(async (
+    profileName: string,
+    promptParts: string[],
+    options: ConfigOptions & {runtime?: ExternalAgentRuntime; model?: string; timeout: string; maxCostUsd: string},
+  ) => {
+    const workspace = workspaceOption(options.workspace);
+    const config = await runtimeConfig(workspace, runtimeOptions(options));
+    const catalog = new AgentProfileCatalog(workspace);
+    await catalog.discover();
+    const profile = catalog.get(profileName);
+    if (!profile) throw new Error(`Unknown agent profile: ${profileName}`);
+    if (!profile.readOnly) {
+      throw new Error(`Agent profile ${profileName} is writable; external CLI runs are read-only.`);
+    }
+    const resolved = resolveAgentModelRoute(config.agents, config.model, profile.name).route;
+    const runtime = options.runtime ?? (resolved?.runtime !== 'api' ? resolved?.runtime : undefined);
+    if (!runtime) {
+      throw new Error(`Agent profile ${profileName} resolves to the API runtime; pass --runtime codex, claude, or grok.`);
+    }
+    const prompt = promptParts.join(' ').trim();
+    if (!prompt) throw new Error('External agent prompt cannot be empty.');
+    const timeoutMs = Number(options.timeout);
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 1_800_000) {
+      throw new Error('--timeout must be an integer between 1000 and 1800000 milliseconds.');
+    }
+    const costBudgetUsd = Number(options.maxCostUsd);
+    if (!Number.isFinite(costBudgetUsd) || costBudgetUsd <= 0 || costBudgetUsd > 1_000) {
+      throw new Error('--max-cost-usd must be a number greater than 0 and at most 1000.');
+    }
+    const model = options.model ?? resolved?.model ?? config.model.model;
+    const startedAt = Date.now();
+    const heartbeat = setInterval(() => {
+      const elapsedSeconds = Math.max(1, Math.floor((Date.now() - startedAt) / 1_000));
+      process.stderr.write(`External agent ${profile.name} via ${runtime} is still running (${elapsedSeconds}s).\n`);
+    }, 15_000);
+    heartbeat.unref();
+    let result;
+    try {
+      result = await runExternalAgent({
+        runtime,
+        model,
+        workspace,
+        prompt: `${profile.prompt}\n\nUser task:\n${prompt}`,
+        timeoutMs,
+        ...(runtime === 'claude' ? {costBudgetUsd} : {}),
+      });
+    } finally {
+      clearInterval(heartbeat);
+    }
+    if (options.json) {
+      printObject({
+        profile: profile.name,
+        readOnly: true,
+        content: result.content,
+        runtime: result.runtime,
+        model: result.model,
+        durationMs: result.durationMs,
+        usage: result.usage ?? {inputTokens: 0, outputTokens: 0},
+        toolCalls: result.toolCalls ?? 0,
+      }, true);
+    } else {
+      process.stdout.write(`${result.content}\n`);
     }
   });
 agentsCommand

@@ -9,6 +9,7 @@ export interface ExternalAgentRequest {
   workspace: string;
   prompt: string;
   timeoutMs?: number;
+  costBudgetUsd?: number;
   signal?: AbortSignal;
 }
 
@@ -33,10 +34,8 @@ export async function runExternalAgent(request: ExternalAgentRequest): Promise<E
     maxOutputBytes: 2_000_000,
     ...(request.signal ? {signal: request.signal} : {}),
   });
-  if (result.exitCode !== 0) {
-    const detail = cleanFailure(result);
-    throw new Error(`${request.runtime} agent failed${result.timedOut ? ' (timeout)' : ''}: ${detail}`);
-  }
+  const failure = externalAgentFailure(request.runtime, result);
+  if (failure) throw failure;
   const content = parseExternalAgentOutput(request.runtime, result.stdout);
   if (!content) throw new Error(`${request.runtime} agent returned no final report.`);
   const telemetry = parseExternalAgentTelemetry(result.stdout);
@@ -48,6 +47,14 @@ export async function runExternalAgent(request: ExternalAgentRequest): Promise<E
     usage: telemetry.usage,
     toolCalls: telemetry.toolCalls,
   };
+}
+
+export function externalAgentFailure(runtime: ExternalAgentRuntime, result: ProcessResult): Error | undefined {
+  if (result.timedOut) {
+    return new Error(`${runtime} agent timed out after ${result.durationMs}ms; partial output was not accepted as complete.`);
+  }
+  if (result.exitCode !== 0) return new Error(`${runtime} agent failed: ${cleanFailure(result)}`);
+  return undefined;
 }
 
 /** Pass only terminal, locale, OS-home, and runtime-owned configuration facts. */
@@ -81,7 +88,12 @@ export function externalAgentCommand(request: ExternalAgentRequest): {binary: st
     case 'claude':
       return {
         binary: 'claude',
-        args: ['--print', '--output-format', 'json', '--permission-mode', 'plan', '--no-session-persistence', '--safe-mode', '--model', request.model, prompt],
+        args: [
+          '--print', '--output-format', 'json', '--permission-mode', 'plan',
+          '--tools', 'Read,Glob,Grep', '--no-session-persistence', '--safe-mode',
+          ...(request.costBudgetUsd ? ['--max-budget-usd', String(request.costBudgetUsd)] : []),
+          '--model', request.model, prompt,
+        ],
       };
     case 'grok':
       return {
