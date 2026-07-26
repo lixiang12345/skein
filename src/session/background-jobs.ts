@@ -447,10 +447,16 @@ export async function runBackgroundWorker(
     });
     child.stdout?.on('data', (chunk: Buffer) => append(chunk, 'stdout'));
     child.stderr?.on('data', (chunk: Buffer) => append(chunk, 'stderr'));
-    await new Promise<void>((resolvePromise, reject) => {
+    const spawned = new Promise<void>((resolvePromise, reject) => {
       child?.once('spawn', resolvePromise);
       child?.once('error', reject);
     });
+    // Bind close before awaiting spawn or metadata I/O: a very short command
+    // can otherwise exit between those steps and leave the worker waiting forever.
+    const closed = new Promise<{code: number | null; signal: NodeJS.Signals | null}>((resolvePromise) => {
+      child?.once('close', (code, signal) => resolvePromise({code, signal}));
+    });
+    await spawned;
     await update({status: 'running', workerPid: process.pid, ...(child.pid ? {processPid: child.pid} : {})});
     const heartbeat = setInterval(() => {
       void update({stdoutBytes, stderrBytes, retainedBytes, truncated: stdoutBytes + stderrBytes > retainedBytes});
@@ -461,9 +467,7 @@ export async function runBackgroundWorker(
       });
     }, 100);
     const timeout = setTimeout(() => terminate('timed_out'), descriptor.timeoutMs);
-    const result = await new Promise<{code: number | null; signal: NodeJS.Signals | null}>((resolvePromise) => {
-      child?.once('close', (code, signal) => resolvePromise({code, signal}));
-    });
+    const result = await closed;
     if (forceKillTimer) clearTimeout(forceKillTimer);
     clearInterval(heartbeat);
     clearInterval(cancelPoll);

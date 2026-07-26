@@ -55,6 +55,18 @@ describe('durable background jobs', () => {
     expect(final.truncated).toBe(true);
   });
 
+  it('does not lose close events from repeated short-lived commands', async () => {
+    const {store} = await setup({...configuration(), maxJobsPerSession: 32});
+    const jobs = [];
+    for (let index = 0; index < 24; index += 1) {
+      const job = await store.start('short-session', {command: `printf ${index}`});
+      await workers.at(-1);
+      jobs.push(await store.get('short-session', job.id));
+    }
+    expect(jobs).toHaveLength(24);
+    expect(jobs.every((job) => job.status === 'completed')).toBe(true);
+  });
+
   it('cancels the process tree through a durable control file', async () => {
     const {store, recreate} = await setup();
     const command = `${shellQuote(process.execPath)} -e 'setInterval(() => process.stdout.write("tick\\n"), 25)'`;

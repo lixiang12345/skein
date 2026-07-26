@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.39`.
+- Current repository version: `0.3.40`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -42,8 +42,8 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.39.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.39.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.40.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.40.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
@@ -551,6 +551,9 @@ bind the approved descriptor by one-time HMAC, and cancel the process group.
 Both adapters are disabled by default and stripped from untrusted project
 configuration. Model start/kill always require a live human, and starts keep
 completion evidence unresolved instead of claiming asynchronous mutations.
+Version `0.3.40` binds the child close event before any awaited spawn or
+metadata work, closing the fast-command race discovered by the `0.3.39` tag
+verification, with repeated short-lived commands as a release regression.
 
 ### P3: Distribution
 
