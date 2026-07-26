@@ -196,7 +196,7 @@ configCommand
   .option('--config <path>', 'explicit config file')
   .option('--json', 'print JSON')
   .action(async (options: ConfigOptions) => {
-    const config = await runtimeConfig(workspaceOption(options.workspace), runtimeOptions(options));
+    const config = await runtimeConfig(workspaceOption(options.workspace), {...runtimeOptions(options), connectionSelection: 'optional'});
     printObject(configSummary(config), options.json === true);
   });
 configCommand
@@ -216,7 +216,7 @@ program
   .option('--config <path>', 'explicit config file')
   .option('--json', 'print JSON')
   .action(async (options: IndexOptions) => {
-    const config = await runtimeConfig(workspaceOption(options.workspace), runtimeOptions(options));
+    const config = await runtimeConfig(workspaceOption(options.workspace), {...runtimeOptions(options), connectionSelection: 'optional'});
     const engine = new ContextEngine(config);
     let last = '';
     const result = await engine.index((progress) => {
@@ -239,7 +239,7 @@ program
   .option('-k, --top-k <n>', 'number of results', '12')
   .option('--json', 'print JSON')
   .action(async (query: string, options: SearchOptions) => {
-    const config = await runtimeConfig(workspaceOption(options.workspace), runtimeOptions(options));
+    const config = await runtimeConfig(workspaceOption(options.workspace), {...runtimeOptions(options), connectionSelection: 'optional'});
     const engine = new ContextEngine(config);
     const hits = await engine.search(query, positiveInt(options.topK, 12));
     const degradation = engine.lastDegradation();
@@ -266,7 +266,7 @@ program
   .option('--max-tokens <n>', 'token cap')
   .option('--json', 'print JSON')
   .action(async (query: string, options: ContextOptions) => {
-    const config = await runtimeConfig(workspaceOption(options.workspace), runtimeOptions(options));
+    const config = await runtimeConfig(workspaceOption(options.workspace), {...runtimeOptions(options), connectionSelection: 'optional'});
     const engine = new ContextEngine(config);
     const packed = options.maxTokens
       ? await new ContextEngine({...config, context: {
@@ -291,7 +291,7 @@ program
   .option('--config <path>', 'explicit config file')
   .option('--json', 'print JSON')
   .action(async (options: ConfigOptions) => {
-    const config = await runtimeConfig(workspaceOption(options.workspace), runtimeOptions(options));
+    const config = await runtimeConfig(workspaceOption(options.workspace), {...runtimeOptions(options), connectionSelection: 'optional'});
     const engine = new ContextEngine(config);
     const status = await engine.status();
     const namespace = resolveProjectNamespaceSync(config.workspaceRoots[0] ?? process.cwd());
@@ -317,7 +317,7 @@ program
   .option('--json', 'print JSON')
   .option('--visual', 'inspect terminal rendering, glyphs, and keyboard support')
   .action(async (options: ConfigOptions & {visual?: boolean}) => {
-    const config = await runtimeConfig(workspaceOption(options.workspace), runtimeOptions(options));
+    const config = await runtimeConfig(workspaceOption(options.workspace), {...runtimeOptions(options), connectionSelection: 'optional'});
     const ok = await runDoctor(config, {json: options.json === true, visual: options.visual === true});
     if (!ok) process.exitCode = 1;
   });
@@ -1875,7 +1875,7 @@ interface RuntimeConfigOptions {
   config?: string;
   addWorkspace?: string[];
   connection?: string;
-  connectionSelection?: 'inspect' | 'required' | 'interactive';
+  connectionSelection?: 'inspect' | 'optional' | 'required' | 'interactive';
   provider?: string;
   model?: string;
   baseUrl?: string;
@@ -2364,7 +2364,18 @@ async function runtimeConfig(
     if (options.connection) throw new Error('--connection cannot be combined with --provider or --base-url.');
     activeConnection = {...activeConnection, id: 'cli', source: 'cli'};
   } else if (options.connectionSelection !== 'inspect' || options.connection) {
-    let selection = planConnectionSelection(catalog, process.env, options.connection);
+    let selection: ReturnType<typeof planConnectionSelection>;
+    try {
+      selection = planConnectionSelection(catalog, process.env, options.connection);
+    } catch (error) {
+      // Local-only surfaces (index/search/status/doctor) must keep working
+      // without a complete model connection; explicit --connection stays strict.
+      if (options.connectionSelection === 'optional' && !options.connection) {
+        selection = {kind: 'legacy'};
+      } else {
+        throw error;
+      }
+    }
     if (selection.kind === 'ambiguous') {
       if (options.connectionSelection === 'interactive') {
         selection = {kind: 'selected', profile: await promptConnectionSelection(selection.profiles)};
@@ -2373,11 +2384,17 @@ async function runtimeConfig(
       }
     }
     if (selection.kind === 'selected') {
-      const resolved = resolveConnectionModel(legacyModel, selection.profile, {
-        ...(options.model ? {model: options.model} : {}),
-      });
-      model = resolved.model;
-      activeConnection = resolved.activeConnection;
+      try {
+        const resolved = resolveConnectionModel(legacyModel, selection.profile, {
+          ...(options.model ? {model: options.model} : {}),
+        });
+        model = resolved.model;
+        activeConnection = resolved.activeConnection;
+      } catch (error) {
+        // Same local-only degradation: an incomplete default connection must
+        // not block index/search/status/doctor; explicit --connection stays strict.
+        if (!(options.connectionSelection === 'optional' && !options.connection)) throw error;
+      }
     }
   }
   return {
