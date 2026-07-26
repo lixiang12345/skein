@@ -120,7 +120,7 @@ export async function buildCapabilityCandidates(
       route: materialized,
       environment,
     });
-    if (runtime !== 'api' && options.profile.readOnly && !ineligibleReasons.length) {
+    if (runtime !== 'api' && !ineligibleReasons.length) {
       const available = options.externalRuntimeAvailable
         ? await options.externalRuntimeAvailable(runtime)
         : Boolean(await resolveExecutableRuntime(runtime, options.config.workspaceRoots[0] ?? process.cwd(), options.config.workspaceRoots));
@@ -313,7 +313,13 @@ function routeIneligibleReasons(input: {
   const reasons: string[] = [];
   const {profile, route, config, environment} = input;
   if (!route.model.trim()) reasons.push('model is not configured');
-  if (!profile.readOnly && route.runtime !== 'api') reasons.push('writer profiles require the API runtime');
+  if (!profile.readOnly && route.runtime !== 'api' && route.runtime !== 'claude') {
+    reasons.push('external writer profiles currently require the Claude runtime');
+  }
+  if (!profile.readOnly && route.runtime === 'claude' &&
+      route.route.costBudgetUsd === undefined && config.agents?.maxAgentCostUsd === undefined) {
+    reasons.push('external Claude writers require an explicit USD cost budget');
+  }
   if (!profile.readOnly && profile.source === 'workspace') reasons.push('workspace-authored profiles cannot receive writer authority');
   if (route.runtime !== 'api') return reasons;
   const connection = route.connection ? config.agents?.connections?.[route.connection] : undefined;

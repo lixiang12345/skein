@@ -124,10 +124,22 @@ The first writer lane is deliberately opt-in and single-lane:
 `writer_run` asks for write, Git, and shell permission, creates a detached
 worktree at the current `HEAD`, and gives the writer only `read_file`,
 `list_files`, `search_code`, `write_file`, and `apply_patch`. Shell, Git,
-network, hooks, MCP, memory, external CLI runtimes, workspace-authored writer
-profiles, and recursive agents remain unavailable. The reviewer must also use
-an API route so it receives the complete patch. The patch is rejected rather
-than truncated above `maxWriterPatchBytes` (60,000 by default; 120,000 maximum).
+network, hooks, MCP, memory, workspace-authored writer profiles, and recursive
+agents remain unavailable. The built-in `implementer` may instead use an
+installed Claude CLI when its route declares `runtime: claude`, a positive
+`costBudgetUsd`, and an optional hard `timeoutMs`. Skein still owns the
+worktree; Claude runs with `acceptEdits`, safe mode, no session persistence, and
+only `Read,Glob,Grep,Edit,Write`. Claude Code confines automatic edits to its
+working directory, and symlink targets are checked by its file permission
+rules; Bash is absent, so no subprocess can bypass that file-tool boundary. See
+[Claude Code permissions](https://code.claude.com/docs/en/permissions). The
+Team Cockpit receives only streamed tool names and counts, never file arguments,
+content, or hidden reasoning. Claude combines the stable writer Profile with a
+dynamic engineering brief derived from the active Review Contract, then infers
+the relevant specialty from that brief and inspected files without gaining new
+authority. The reviewer must use an API route so it receives
+the complete patch. The patch is rejected rather than truncated above
+`maxWriterPatchBytes` (60,000 by default; 120,000 maximum).
 
 The worktree is removed and pruned before the tool returns. Team Run v4 stores
 the Git `--binary` text patch, SHA-256, base commit, file list, writer and
@@ -149,8 +161,8 @@ reported without overwriting the active workspace. A successful result prints
 the exact `skein checkpoint restore <session> <checkpoint>` rollback command.
 
 Dirty main-workspace state is not mirrored into the writer worktree. Parallel
-writers, automatic merge or rebase, submodule mutation, and external CLI writer
-mode remain future increments.
+writers, automatic merge or rebase, submodule mutation, and non-Claude external
+CLI writer modes remain future increments.
 
 ## Independent Review And Human Arbitration
 
@@ -667,6 +679,8 @@ decisions are the explainable artifacts.
 - Specialist agents are read-only and cannot recursively delegate.
 - Only the main agent may mutate the active workspace. An enabled writer can
   mutate only its disposable worktree and returns a reviewed patch.
+- A Claude external writer requires a positive pre-request CLI cost cap and a
+  hard process timeout; missing bounds stop before launching the CLI.
 - Writer and integration operations share a repo-scoped exclusive lease, while
   Team Run and checkpoint storage retain their separate namespace leases.
 - Workspace-authored profiles cannot receive writer authority, and repository
@@ -691,6 +705,6 @@ decisions are the explainable artifacts.
    rollback evidence justify relaxing the single-lane gate.
 5. Score routes from project-local eval outcomes instead of relying on model
    brand assumptions.
-6. Add Gemini CLI and optional tmux/iTerm visible-pane hosts. Codex, Claude,
-   and Grok headless adapters already use the shared event and acceptance
-   protocol.
+6. Add optional tmux/iTerm visible-pane hosts. Codex, Claude, and Grok
+   read-only adapters plus the bounded Claude writer use the shared event and
+   acceptance protocol.

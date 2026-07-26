@@ -654,14 +654,30 @@ agents:
   writerProfile: implementer
   writerReviewerProfile: reviewer
   maxWriterPatchBytes: 60000
+  routes:
+    implementer:
+      runtime: claude
+      provider: anthropic
+      model: claude-opus-4-8
+      timeoutMs: 180000
+      costBudgetUsd: 1
 ```
 
 `writer_run` requires write, Git, and shell approval because it creates a
 temporary worktree. It cannot change the active workspace. A reviewed patch is
 applied only through `writer_integrate`, which requires its Team Run ID and
 SHA-256, rejects HEAD drift or dirty targets, and records a checkpoint rollback
-command. Team Run v4 stores the semantic Review Contract, exact patch and
-Council artifact hashes, content-addressed evidence receipts, normalized
+command. An optional Claude CLI writer runs with `acceptEdits` only inside the
+same disposable worktree, receives `Read,Glob,Grep,Edit,Write` but no Bash,
+Git, network, plugins, hooks, project instructions, or nested agents, and
+requires a pre-request USD cap plus a hard timeout. Claude tool names and counts
+stream into the Team Cockpit without exposing file content or model reasoning.
+Each run combines the stable writable Profile with a dynamic engineering brief
+derived from the current objective, scope, constraints, non-goals, verification
+requirements, and acceptance criteria; inferred specialty never expands
+authority. The Reviewer remains an API route so it receives the complete patch. Team Run
+v4 stores the semantic Review Contract, exact patch and Council artifact
+hashes, content-addressed evidence receipts, normalized
 pass/fail/unknown verdicts, Author/Reviewer independence evidence, criterion
 conflicts, and artifact-bound human arbitration. Blind review removes Author
 self-report and route identity, while deterministic oracle failures remain

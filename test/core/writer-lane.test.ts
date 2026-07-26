@@ -81,6 +81,137 @@ describe('isolated writer lane', () => {
     await expect(readFile(join(root, 'binary.bin'))).rejects.toMatchObject({code: 'ENOENT'});
   });
 
+  it('runs a cost-capped Claude writer only inside the isolated worktree and keeps main unchanged', async () => {
+    const root = await repository('before\n');
+    const cfg = externalClaudeWriterConfig(root);
+    const context = contextProvider();
+    const store = new TeamRunStore(root);
+    const events: AgentEvent[] = [];
+    let request: Parameters<NonNullable<ConstructorParameters<typeof DelegationManager>[0]['externalRunner']>>[0] | undefined;
+    const manager = await externalWriterManager(root, cfg, context, store, async (input) => {
+      request = input;
+      expect(input.workspace).not.toBe(root);
+      expect(await realpath(input.workspace)).not.toBe(await realpath(root));
+      input.onProgress?.({stage: 'tool', tool: 'Read', toolCalls: 1});
+      input.onProgress?.({stage: 'tool', tool: 'Edit', toolCalls: 2});
+      await writeFile(join(input.workspace, 'source.txt'), 'claude writer\n');
+      return {
+        content: 'Updated source inside the Skein worktree.',
+        runtime: 'claude',
+        model: input.model,
+        durationMs: 120,
+        usage: {inputTokens: 80, outputTokens: 20},
+        toolCalls: 2,
+      };
+    });
+
+    const result = await manager.writerTool().execute({task: 'Update source through Claude.'},
+      {...executionContext(root, cfg, context), emit(event) { events.push(event); }});
+    expect(result.ok, result.content).toBe(true);
+    expect(request).toMatchObject({
+      runtime: 'claude',
+      access: 'workspace-write',
+      model: 'claude-opus-4-8',
+      timeoutMs: 120_000,
+      costBudgetUsd: 0.5,
+    });
+    expect(request?.prompt).toContain('Adopt the engineering specialty best supported by the assignment');
+    expect(request?.prompt).toContain('Dynamic engineering brief');
+    expect(request?.prompt).toContain('writer-objective');
+    expect(request?.prompt).toContain('preserve unrelated work');
+    expect(await readFile(join(root, 'source.txt'), 'utf8')).toBe('before\n');
+    expect(await auxiliaryWorktrees(root)).toEqual([]);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'agent_update', stage: 'tool', tool: 'Read', toolCalls: 1,
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'agent_update', stage: 'tool', tool: 'Edit', toolCalls: 2,
+    }));
+    const metadata = result.metadata as {teamRunId: string};
+    const persisted = await store.load(metadata.teamRunId);
+    expect(persisted.version === 4 ? persisted.writer : undefined).toMatchObject({
+      outcome: 'accepted',
+      worktreeCleaned: true,
+      files: ['source.txt'],
+    });
+  });
+
+  it('does not start an external Claude writer without a pre-request cost cap', async () => {
+    const root = await repository('before\n');
+    const cfg = externalClaudeWriterConfig(root);
+    delete cfg.agents?.routes?.implementer?.costBudgetUsd;
+    const context = contextProvider();
+    const store = new TeamRunStore(root);
+    let calls = 0;
+    const manager = await externalWriterManager(root, cfg, context, store, async () => {
+      calls += 1;
+      throw new Error('must not run');
+    });
+
+    const result = await manager.writerTool().execute({task: 'Update source.'},
+      executionContext(root, cfg, context));
+    expect(result.ok).toBe(false);
+    expect(result.content).toContain('explicit USD cost budget');
+    expect(calls).toBe(0);
+    expect(await readFile(join(root, 'source.txt'), 'utf8')).toBe('before\n');
+    expect(await auxiliaryWorktrees(root)).toEqual([]);
+  });
+
+  it('records external Claude timeouts as failures and removes the writer worktree', async () => {
+    const root = await repository('before\n');
+    const cfg = externalClaudeWriterConfig(root);
+    const context = contextProvider();
+    const store = new TeamRunStore(root);
+    const events: AgentEvent[] = [];
+    const manager = await externalWriterManager(root, cfg, context, store, async () => {
+      throw new Error('claude agent timed out after 120045ms; partial output was not accepted as complete.');
+    });
+
+    const result = await manager.writerTool().execute({task: 'Update source.'}, {
+      ...executionContext(root, cfg, context),
+      emit(event) { events.push(event); },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.content).toContain('timed out after 120045ms');
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'agent_done', ok: false, summary: expect.stringContaining('timed out after 120045ms'),
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'writer_lane', status: 'failed', detail: expect.stringContaining('timed out after 120045ms'),
+    }));
+    expect(await auxiliaryWorktrees(root)).toEqual([]);
+    expect(await readFile(join(root, 'source.txt'), 'utf8')).toBe('before\n');
+  });
+
+  it('cancels a running external Claude writer and removes its worktree', async () => {
+    const root = await repository('before\n');
+    const cfg = externalClaudeWriterConfig(root);
+    const context = contextProvider();
+    const store = new TeamRunStore(root);
+    let started!: (id: string) => void;
+    const agentStarted = new Promise<string>((resolve) => { started = resolve; });
+    const manager = await externalWriterManager(root, cfg, context, store, ({signal}) =>
+      new Promise((_resolve, reject) => {
+        const cancel = () => reject(signal?.reason ?? new Error('cancelled'));
+        if (signal?.aborted) cancel();
+        else signal?.addEventListener('abort', cancel, {once: true});
+      }));
+
+    const execution = manager.writerTool().execute({task: 'Wait until cancelled.'}, {
+      ...executionContext(root, cfg, context),
+      emit(event) {
+        if (event.type === 'agent_start' && event.phase === 'write') started(event.id);
+      },
+    });
+    const id = await agentStarted;
+    expect(manager.cancelAgent(id)).toBe(true);
+    const result = await execution;
+    expect(result.ok).toBe(false);
+    expect(result.content).toMatch(/stopped by operator|cancel/iu);
+    expect(await auxiliaryWorktrees(root)).toEqual([]);
+    expect(await readFile(join(root, 'source.txt'), 'utf8')).toBe('before\n');
+  });
+
   it('fails fast on a second repo writer and rejects oversize patches without dangling worktrees', async () => {
     const root = await repository('base\n');
     const lane = new WriterLane(root, [root]);
@@ -485,6 +616,39 @@ async function writerManager(
   });
 }
 
+async function externalWriterManager(
+  root: string,
+  config: MosaicConfig,
+  context: ContextProvider,
+  store: TeamRunStore,
+  externalRunner: NonNullable<ConstructorParameters<typeof DelegationManager>[0]['externalRunner']>,
+): Promise<DelegationManager> {
+  const profiles = new AgentProfileCatalog(root);
+  await profiles.discover();
+  const provider: ModelProvider = {
+    name: 'test',
+    async complete(messages) {
+      const prompt = messages.map((message) => message.content).join('\n');
+      return {
+        content: prompt.includes('Review a proposed isolated-writer patch')
+          ? structuredReview(prompt, 'accept')
+          : 'Completed.',
+        toolCalls: [],
+      };
+    },
+  };
+  return new DelegationManager({
+    config,
+    provider,
+    providerFactory: () => provider,
+    contextEngine: context,
+    parentTools: createDefaultToolRegistry(),
+    profiles,
+    teamStore: store,
+    externalRunner,
+  });
+}
+
 function structuredReview(
   prompt: string,
   decision: 'accept' | 'revise' | 'escalate',
@@ -577,6 +741,24 @@ function writerConfig(root: string): MosaicConfig {
     routes: {
       implementer: {provider: 'compatible', model: 'writer-model'},
       reviewer: {provider: 'compatible', model: 'judge-model'},
+    },
+  };
+  return config;
+}
+
+function externalClaudeWriterConfig(root: string): MosaicConfig {
+  const config = writerConfig(root);
+  config.agents = {
+    ...config.agents!,
+    routes: {
+      ...config.agents?.routes,
+      implementer: {
+        runtime: 'claude',
+        provider: 'anthropic',
+        model: 'claude-opus-4-8',
+        timeoutMs: 120_000,
+        costBudgetUsd: 0.5,
+      },
     },
   };
   return config;

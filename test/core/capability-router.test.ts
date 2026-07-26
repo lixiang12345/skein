@@ -208,7 +208,7 @@ describe('capability shadow router', () => {
       .toMatchObject({epoch: 2, driftReasons: ['model']});
   });
 
-  it('rejects external runtimes for writable profiles even when installed', async () => {
+  it('rejects non-Claude external runtimes for writable profiles even when installed', async () => {
     const root = await workspace();
     const config = testConfig(root);
     config.agents!.routes!.implementer = {runtime: 'codex', provider: 'openai', model: 'writer-model'};
@@ -221,7 +221,34 @@ describe('capability shadow router', () => {
     });
     const writer = candidates.find((candidate) => candidate.ref === 'implementer');
     expect(writer?.eligible).toBe(false);
-    expect(writer?.ineligibleReasons).toContain('writer profiles require the API runtime');
+    expect(writer?.ineligibleReasons).toContain('external writer profiles currently require the Claude runtime');
+  });
+
+  it('requires a pre-request cost cap before a Claude writer route becomes eligible', async () => {
+    const root = await workspace();
+    const config = testConfig(root);
+    config.agents!.routes!.implementer = {
+      runtime: 'claude', provider: 'anthropic', model: 'claude-opus-4-8', timeoutMs: 120_000,
+    };
+    const profile = builtIn('implementer');
+    const withoutCap = await buildCapabilityCandidates({
+      config,
+      profile,
+      externalRuntimeAvailable: () => true,
+    });
+    expect(withoutCap.find((candidate) => candidate.ref === 'implementer')?.ineligibleReasons)
+      .toContain('external Claude writers require an explicit USD cost budget');
+
+    config.agents!.routes!.implementer!.costBudgetUsd = 0.5;
+    const withCap = await buildCapabilityCandidates({
+      config,
+      profile,
+      externalRuntimeAvailable: () => true,
+    });
+    expect(withCap.find((candidate) => candidate.ref === 'implementer')).toMatchObject({
+      eligible: true,
+      ineligibleReasons: [],
+    });
   });
 
   it('excludes quarantined routes from shadow recommendations and restores them after canaries', async () => {

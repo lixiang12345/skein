@@ -1,5 +1,6 @@
 import {describe, expect, it} from 'vitest';
 import {
+  createExternalAgentProgressObserver,
   externalAgentCommand,
   externalAgentFailure,
   externalRuntimeEnvironment,
@@ -31,6 +32,37 @@ describe('external agent runtimes', () => {
     expect(grok.args).toContain('--no-subagents');
   });
 
+  it('builds one cost-capped Claude writer command without Bash, Git, or bypass permissions', () => {
+    const claude = externalAgentCommand({
+      runtime: 'claude',
+      access: 'workspace-write',
+      model: 'claude-opus-4-8',
+      workspace: '/tmp/skein-writer',
+      prompt: 'Implement the bounded change',
+      costBudgetUsd: 0.75,
+    });
+
+    expect(claude.args).toContain('acceptEdits');
+    expect(claude.args).toContain('stream-json');
+    expect(claude.args).toContain('--verbose');
+    expect(claude.args).toContain('Read,Glob,Grep,Edit,Write');
+    expect(claude.args).toContain('--safe-mode');
+    expect(claude.args).toContain('--no-session-persistence');
+    expect(claude.args).toContain('--max-budget-usd');
+    expect(claude.args).toContain('0.75');
+    expect(claude.args).not.toContain('Bash');
+    expect(claude.args).not.toContain('--dangerously-skip-permissions');
+  });
+
+  it('fails closed when external writer mode lacks a cost cap or selects another CLI', () => {
+    expect(() => externalAgentCommand({
+      runtime: 'claude', access: 'workspace-write', model: 'opus', workspace: '/tmp/writer', prompt: 'Write',
+    })).toThrow('explicit USD cost budget');
+    expect(() => externalAgentCommand({
+      runtime: 'codex', access: 'workspace-write', model: 'gpt', workspace: '/tmp/writer', prompt: 'Write', costBudgetUsd: 1,
+    })).toThrow('supports the Claude CLI only');
+  });
+
   it('normalizes final reports from JSON and JSONL runtimes', () => {
     expect(parseExternalAgentOutput('claude', JSON.stringify({type: 'result', result: 'Claude report'}))).toBe('Claude report');
     expect(parseExternalAgentOutput('grok', JSON.stringify({content: 'Grok report'}))).toBe('Grok report');
@@ -46,6 +78,22 @@ describe('external agent runtimes', () => {
       JSON.stringify({type: 'turn.completed', usage: {input_tokens: 1200, output_tokens: 300}}),
     ].join('\n'));
     expect(telemetry).toEqual({usage: {inputTokens: 1200, outputTokens: 300}, toolCalls: 1});
+  });
+
+  it('streams only deduplicated Claude tool names and counts from split JSONL chunks', () => {
+    const events: Array<{stage: 'tool'; tool: string; toolCalls: number}> = [];
+    const observer = createExternalAgentProgressObserver('claude', (event) => events.push(event));
+    expect(observer).toBeDefined();
+    observer!.onChunk('{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tool-1",');
+    observer!.onChunk('"name":"Read","input":{"file_path":"secret.ts"}}]}}\n');
+    observer!.onChunk('{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tool-1","name":"Read"},{"type":"tool_use","id":"tool-2","name":"Edit"}]}}');
+    observer!.flush();
+
+    expect(events).toEqual([
+      {stage: 'tool', tool: 'Read', toolCalls: 1},
+      {stage: 'tool', tool: 'Edit', toolCalls: 2},
+    ]);
+    expect(JSON.stringify(events)).not.toContain('secret.ts');
   });
 
   it('passes only runtime-owned configuration and a minimal process environment', () => {

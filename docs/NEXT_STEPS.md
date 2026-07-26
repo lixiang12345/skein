@@ -423,8 +423,11 @@ Implementation progress:
   cancelled states with distinct glyphs, colors, and the cancellation reason.
 - The first writer lane is implemented behind `agents.writerEnabled=false` by
   default. `writer_run` creates one repo-leased disposable worktree, confines an
-  API writer to five path-safe read/write tools, requires an API Reviewer, and
-  persists a bounded patch plus lifecycle evidence in Team Run v4.
+  API writer to five path-safe read/write tools, or runs one explicitly routed
+  Claude CLI writer with `Read,Glob,Grep,Edit,Write`, safe mode, no session
+  persistence, a pre-request USD cap, and a hard timeout. Both paths require an
+  API Reviewer and persist a bounded patch plus lifecycle evidence in Team Run
+  v4; neither can mutate the active workspace directly.
 - `writer_integrate` is the only main-workspace integration path. It gates on
   patch SHA, a structured evidence-backed verdict bound to the current semantic
   Task Contract, base `HEAD`, clean target paths, patch parsing,
@@ -454,7 +457,7 @@ Implementation progress:
   `needs_review` with exit code 9. High-risk integration, release, deployment,
   migration, destructive, and external-mutation actions require live-human
   approval that model review and config cannot replace. Parallel writers and
-  external CLI writer mode remain deferred.
+  non-Claude external CLI writer modes remain deferred.
 - G4 Drift Detection and local Evals is implemented in `0.3.34`: Registry v2
   migrates v1, records labelled model/endpoint/auth/prompt/tool/generation
   epochs, drives degraded/quarantine/two-canary recovery from deterministic

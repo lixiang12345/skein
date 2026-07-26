@@ -2,15 +2,24 @@ import type {AgentModelRoute} from '../types.js';
 import {resolveExecutableRuntime, runProcess, type ProcessResult} from '../utils/process.js';
 
 export type ExternalAgentRuntime = Exclude<NonNullable<AgentModelRoute['runtime']>, 'api'>;
+export type ExternalAgentAccess = 'read-only' | 'workspace-write';
+
+export interface ExternalAgentProgress {
+  stage: 'tool';
+  tool: string;
+  toolCalls: number;
+}
 
 export interface ExternalAgentRequest {
   runtime: ExternalAgentRuntime;
   model: string;
   workspace: string;
   prompt: string;
+  access?: ExternalAgentAccess;
   timeoutMs?: number;
   costBudgetUsd?: number;
   signal?: AbortSignal;
+  onProgress?: (progress: ExternalAgentProgress) => void;
 }
 
 export interface ExternalAgentResult {
@@ -26,6 +35,7 @@ export async function runExternalAgent(request: ExternalAgentRequest): Promise<E
   const command = externalAgentCommand(request);
   const executable = await resolveExecutableRuntime(command.binary, request.workspace, [request.workspace]);
   if (!executable) throw new Error(`${command.binary} CLI is not installed or resolves inside the workspace.`);
+  const progress = createExternalAgentProgressObserver(request.runtime, request.onProgress);
   const result = await runProcess(executable.executable, command.args, {
     cwd: request.workspace,
     inheritEnv: false,
@@ -33,7 +43,9 @@ export async function runExternalAgent(request: ExternalAgentRequest): Promise<E
     timeoutMs: request.timeoutMs ?? 180_000,
     maxOutputBytes: 2_000_000,
     ...(request.signal ? {signal: request.signal} : {}),
+    ...(progress ? {onStdout: progress.onChunk} : {}),
   });
+  progress?.flush();
   const failure = externalAgentFailure(request.runtime, result);
   if (failure) throw failure;
   const content = parseExternalAgentOutput(request.runtime, result.stdout);
@@ -79,6 +91,14 @@ export function externalRuntimeEnvironment(
 
 export function externalAgentCommand(request: ExternalAgentRequest): {binary: string; args: string[]} {
   const prompt = request.prompt.slice(0, 60_000);
+  const access = request.access ?? 'read-only';
+  if (access === 'workspace-write' && request.runtime !== 'claude') {
+    throw new Error('External writer mode currently supports the Claude CLI only.');
+  }
+  if (access === 'workspace-write' &&
+      (request.costBudgetUsd === undefined || !Number.isFinite(request.costBudgetUsd) || request.costBudgetUsd <= 0)) {
+    throw new Error('External Claude writers require an explicit USD cost budget.');
+  }
   switch (request.runtime) {
     case 'codex':
       return {
@@ -89,8 +109,10 @@ export function externalAgentCommand(request: ExternalAgentRequest): {binary: st
       return {
         binary: 'claude',
         args: [
-          '--print', '--output-format', 'json', '--permission-mode', 'plan',
-          '--tools', 'Read,Glob,Grep', '--no-session-persistence', '--safe-mode',
+          '--print', '--output-format', 'stream-json', '--verbose',
+          '--permission-mode', access === 'workspace-write' ? 'acceptEdits' : 'plan',
+          '--tools', access === 'workspace-write' ? 'Read,Glob,Grep,Edit,Write' : 'Read,Glob,Grep',
+          '--no-session-persistence', '--safe-mode',
           ...(request.costBudgetUsd ? ['--max-budget-usd', String(request.costBudgetUsd)] : []),
           '--model', request.model, prompt,
         ],
@@ -101,6 +123,38 @@ export function externalAgentCommand(request: ExternalAgentRequest): {binary: st
         args: ['--single', prompt, '--output-format', 'json', '--permission-mode', 'plan', '--no-memory', '--no-subagents', '--cwd', request.workspace, '--model', request.model],
       };
   }
+}
+
+export function createExternalAgentProgressObserver(
+  runtime: ExternalAgentRuntime,
+  onProgress?: (progress: ExternalAgentProgress) => void,
+): {onChunk: (chunk: string) => void; flush: () => void} | undefined {
+  if (runtime !== 'claude' || !onProgress) return undefined;
+  let pending = '';
+  const toolIds = new Set<string>();
+  const handle = (line: string) => {
+    let value: unknown;
+    try { value = JSON.parse(line) as unknown; } catch { return; }
+    walk(value, (record) => {
+      if (record.type !== 'tool_use' || typeof record.name !== 'string') return;
+      const id = typeof record.id === 'string' ? record.id : `${toolIds.size}:${record.name}`;
+      if (toolIds.has(id)) return;
+      toolIds.add(id);
+      onProgress({stage: 'tool', tool: record.name.slice(0, 128), toolCalls: toolIds.size});
+    });
+  };
+  return {
+    onChunk(chunk) {
+      pending += chunk;
+      const lines = pending.split(/\r?\n/u);
+      pending = lines.pop() ?? '';
+      for (const line of lines) handle(line);
+    },
+    flush() {
+      if (pending) handle(pending);
+      pending = '';
+    },
+  };
 }
 
 export function parseExternalAgentOutput(runtime: ExternalAgentRuntime, stdout: string): string {
