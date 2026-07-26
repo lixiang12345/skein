@@ -59,7 +59,13 @@ header{position:sticky;top:0;z-index:20;backdrop-filter:blur(14px);
   padding:6px 10px;cursor:pointer;font-size:13px}
 .tbtn:hover{color:var(--text)}
 /* hero */
-.hero{display:grid;grid-template-columns:1.05fr .95fr;gap:44px;align-items:center;padding:76px 0 60px}
+.hero{display:grid;grid-template-columns:1.05fr .95fr;gap:44px;align-items:center;padding:76px 0 60px;position:relative}
+.hero-goose{position:absolute;top:-6px;right:-8px;width:150px;height:150px;pointer-events:none;
+  filter:drop-shadow(0 12px 28px rgba(0,0,0,.35));animation:glide 7s ease-in-out infinite}
+:root[data-theme="light"] .hero-goose{filter:drop-shadow(0 10px 22px rgba(23,32,44,.22))}
+@keyframes glide{0%,100%{transform:translateY(0) rotate(0deg)}50%{transform:translateY(-10px) rotate(-2deg)}}
+@media (prefers-reduced-motion: reduce){.hero-goose{animation:none}}
+@media (max-width:900px){.hero-goose{display:none}}
 .eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--soft);
   border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
 .dot{width:7px;height:7px;border-radius:50%;background:var(--teal);box-shadow:0 0 10px var(--teal)}
@@ -162,7 +168,9 @@ footer{border-top:1px solid var(--line);padding:30px 0;color:var(--faint);font-s
   .tabs [role="tablist"]{flex-direction:row;overflow-x:auto}
   .tab{flex:none}
   .inv{grid-template-columns:1fr}
-  .nav nav{display:none}
+  .nav nav{overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none}
+  .nav nav::-webkit-scrollbar{display:none}
+  .nav nav a{flex:none;padding:7px 8px}
 }
 </style>
 </head>
@@ -196,6 +204,7 @@ footer{border-top:1px solid var(--line);padding:30px 0;color:var(--faint);font-s
       </div>
       <p class="meta">Also: <code>curl -fsSL https://raw.githubusercontent.com/lixiang12345/skein/main/scripts/install.sh | sh</code></p>
     </div>
+    <img class="hero-goose" src="./assets/skein-goose-flight.png" width="150" height="150" alt="" aria-hidden="true">
     <div class="term" role="img" aria-label="Animated Skein terminal session: searching the local index, editing, and finishing with a verified completion">
       <div class="term-top"><i></i><i></i><i></i><span>skein · ~/work/api</span></div>
       <div class="term-body" id="demo" aria-hidden="true"></div>
