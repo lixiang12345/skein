@@ -281,7 +281,8 @@ export async function runWorkspacePreparation(
   const terminalAccessibility = resolveTerminalAccessibility();
   const colorEnabled = config.ui.color && terminalAccessibility.color;
   const theme = resolveThemeWithColor(config.ui.theme, colorEnabled);
-  const instance = render(
+  let instance: ReturnType<typeof render>;
+  instance = render(
     <ThemeProvider theme={theme}>
       <WorkspacePreparationApp
         engine={engine}
@@ -289,7 +290,15 @@ export async function runWorkspacePreparation(
         workspace={options.workspace ?? config.workspaceRoots[0] ?? process.cwd()}
         forceBuild={options.forceBuild ?? false}
         readyDelayMs={options.readyDelayMs ?? 320}
-        onFinish={(next) => { result = next; }}
+        onFinish={(next) => {
+          result = next;
+          // Successful preparation is a temporal loading surface. Clear its
+          // final frame before the conversation mounts so the fresh composer
+          // does not look like a second dashboard below completed setup.
+          // Screen readers keep the linear announcement history instead of
+          // receiving cursor controls.
+          if (!terminalAccessibility.screenReader && next.status === 'ready') instance.clear();
+        }}
       />
     </ThemeProvider>,
     {

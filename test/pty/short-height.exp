@@ -65,8 +65,8 @@ stty rows 10 columns 40 < $spawn_out(slave,name)
 await_pattern {Inspecting} {workspace preparation}
 await_pattern {verified} {workspace index verification}
 
-# At ten rows the header is deliberately omitted. The test therefore starts
-# from the composer rather than relying on the normal branded header.
+# At ten rows the header collapses to its single-line signature. The composer
+# remains the input-ready signal because it is the primary action.
 await_pattern {Type a request} startup
 await_frame {the startup frame}
 expect {

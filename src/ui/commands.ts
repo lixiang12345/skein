@@ -43,7 +43,7 @@ export const commandDefinitions: CommandDefinition[] = [
   command('theme', 'Preview, select, or cycle terminal themes', '/theme [name|list]'),
   command('tasks', 'Show the current execution plan'),
   command('clear', 'Clear the visible transcript'),
-  command('about', 'Show the active model and context stack'),
+  command('status', 'Inspect workspace, route, mode, context, and extensions', undefined, ['about']),
   command('help', 'Show commands and keyboard controls', undefined, ['?']),
   command('exit', 'Exit Skein', undefined, ['quit']),
 ];

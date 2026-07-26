@@ -15,7 +15,7 @@ import {SkeinApp} from '../src/ui/tui.js';
 import type {AgentEvent, ChatMessage, ContextHit, Session} from '../src/types.js';
 
 describe('SkeinApp completion flows', () => {
-  it('keeps a fresh-session composer next to an actionable local-context summary', async () => {
+  it('keeps a fresh-session composer next to one factual readiness line', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-fresh-session-ui-'));
     const session = testSession(root);
     const {runner} = mockRunner(root, session);
@@ -24,22 +24,23 @@ describe('SkeinApp completion flows', () => {
     try {
       const frame = harness.lastFrame();
       const lines = frame.split('\n');
-      const summaryRow = lines.findIndex((line) => line.includes('context runs automatically'));
-      const composerRow = lines.findIndex((line) => line.includes('Type a request'));
+      const nonEmptyLines = lines.filter((line) => line.trim());
+      const summaryRow = nonEmptyLines.findIndex((line) => line.includes('Workspace ready'));
+      const composerRow = nonEmptyLines.findIndex((line) => line.includes('Type a request'));
       expect(summaryRow).toBeGreaterThanOrEqual(0);
       expect(composerRow).toBeGreaterThan(summaryRow);
-      expect(composerRow - summaryRow).toBeLessThanOrEqual(4);
-      expect(composerRow).toBeLessThan(10);
-      expect(lines.length).toBeLessThan(16);
-      expect(frame).toContain('@file pins');
-      expect(frame).toContain('/help commands');
+      expect(composerRow - summaryRow).toBeLessThanOrEqual(3);
+      expect(composerRow).toBeLessThan(8);
+      expect(lines.length).toBeLessThan(12);
+      expect(frame.match(/SKEIN/gu)).toHaveLength(1);
+      expect(frame).not.toContain('context runs automatically');
     } finally {
       await harness.cleanup();
       await rm(root, {recursive: true, force: true});
     }
   });
 
-  it('shows a branded factual workspace rail on wide fresh sessions', async () => {
+  it('keeps wide fresh sessions prompt-first and exposes details through /status', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-workspace-panel-ui-'));
     const session = testSession(root);
     const {runner} = mockRunner(root, session, [], {toolCount: 9});
@@ -60,17 +61,20 @@ describe('SkeinApp completion flows', () => {
     try {
       const frame = harness.lastFrame();
       expect(frame).toContain('SKEIN');
-      expect(frame).toContain('grounded coding workspace');
-      expect(frame).toContain('WORKSPACE');
-      expect(frame).toContain('CONTEXT');
-      expect(frame).toContain('local index ready');
-      expect(frame).toContain('28 files');
-      expect(frame).toContain('71 chunks');
-      expect(frame).toContain('RUNTIME');
-      expect(frame).toContain('EXTENSIONS');
-      expect(frame).toContain('9 tools');
-      expect(frame).toContain('guarded');
+      expect(frame).toContain('Workspace ready');
       expect(frame).toContain('Type a request');
+      expect(frame).not.toContain('WORKSPACE');
+      expect(frame).not.toContain('RUNTIME');
+      expect(frame).not.toContain('EXTENSIONS');
+
+      harness.stdin.write('/status\r');
+      await vi.waitFor(() => expect(harness.output()).toContain('28 files'));
+      const output = stripAnsi(harness.output());
+      expect(output).toContain('Status');
+      expect(output).toContain('71 chunks');
+      expect(output).toContain('9 tools');
+      expect(output).toContain('BUILD');
+      expect(output).toContain('guarded');
     } finally {
       await harness.cleanup();
       await rm(root, {recursive: true, force: true});

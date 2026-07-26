@@ -39,11 +39,8 @@ const required = scenario === 'short'
       '@src/ui/tui.tsx',
     ];
 if (scenario === 'full' && mode === 'unicode') required.push('项目');
-if (scenario === 'full' && width >= 48) required.push('context runs automatically', '@file pins');
+if (scenario === 'full') required.push('v0.3.40');
 if (scenario === 'full' && width >= 80) required.push('Ctrl+R');
-if (scenario === 'full' && width >= 96) {
-  required.push('WORKSPACE', 'CONTEXT', 'local index ready', 'RUNTIME', 'EXTENSIONS', 'files', 'chunks', 'mode BUILD', 'tools', 'MCP off', 'memory on');
-}
 for (const value of required) {
   if (!cleaned.includes(value)) throw new Error(`${path} did not render ${value}`);
 }
@@ -68,7 +65,7 @@ if (mode !== 'unicode' && hasColorSgr(raw)) {
 const finalFrame = await emulateFinalFrame(raw, width, scenario === 'short' ? 10 : 24);
 const finalText = finalFrame.lines.join('\n');
 const finalRequired = scenario === 'short'
-  ? ['Type a request', 'Context', 'ready', 'Git diff was not']
+  ? ['SKEIN', 'Type a request', 'ready', 'Git diff was not']
   : ['SKEIN', 'Type a request', 'ready', 'Git diff was not'];
 for (const value of finalRequired) {
   if (!finalText.includes(value)) throw new Error(`${path} final frame did not render ${value}`);

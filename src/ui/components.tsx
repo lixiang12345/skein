@@ -31,7 +31,7 @@ export type TimelineItem =
   | {id: string; kind: 'list'; title: string; entries: ListEntry[]}
   | {id: string; kind: 'context-inspector'; status: ContextInspectorStatus; working?: WorkingMemory; summary?: string; sources?: ContextSource[]}
   | {id: string; kind: 'theme'; name: string}
-  | {id: string; kind: 'banner'; model: string; engine: string; workspace: string; version: string}
+  | {id: string; kind: 'banner'; engine: string; status: 'ready' | 'empty' | 'blocked'; version: string}
   | {id: string; kind: 'notice'; text: string; tone?: 'info' | 'error' | 'success' | 'warning'; wrapWidth?: number}
   | {id: string; kind: 'update'; current: string; latest: string; command: string; highlights?: string[]};
 
@@ -481,9 +481,7 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
           return <ContextInspector key={item.id} status={item.status} working={item.working} summary={item.summary} width={width} compact={compact} glyphMode={glyphMode} />;
         }
         if (item.kind === 'theme') return <ThemePreview key={item.id} name={item.name} width={width} glyphs={glyphs} />;
-        if (item.kind === 'banner') {
-          return <Banner key={item.id} model={item.model} engine={item.engine} workspace={item.workspace} version={item.version} width={width} glyphs={glyphs} />;
-        }
+        if (item.kind === 'banner') return <Banner key={item.id} engine={item.engine} status={item.status} version={item.version} width={width} glyphs={glyphs} />;
         if (item.kind === 'update') {
           return <UpdateNotice key={item.id} current={item.current} latest={item.latest} command={item.command} width={width} glyphs={glyphs} {...(item.highlights ? {highlights: item.highlights} : {})} />;
         }
@@ -1427,10 +1425,9 @@ function ThemePreview({name, width, glyphs}: {name: string; width: number; glyph
   );
 }
 
-function Banner({model, engine, workspace, version, width, glyphs}: {
-  model: string;
+function Banner({engine, status, version, width, glyphs}: {
   engine: string;
-  workspace: string;
+  status: 'ready' | 'empty' | 'blocked';
   version: string;
   width: number;
   glyphs: UiGlyphs;
@@ -1440,41 +1437,23 @@ function Banner({model, engine, workspace, version, width, glyphs}: {
   const padding = rowWidth >= 24 ? 2 : 0;
   const innerWidth = Math.max(1, rowWidth - padding);
   const safeEngine = sanitizeInlineTerminalText(engine);
-  const expanded = rowWidth >= 48;
-  const ascii = glyphs.brand === '*';
-  const weaveTop = ascii ? '/\\/\\' : '╲╱╲╱';
-  const weaveBottom = ascii ? '\\/\\/' : '╱╲╱╲';
-  const meta = expanded
-    ? 'grounded coding workspace'
+  const glyph = status === 'ready' ? glyphs.success : glyphs.warning;
+  const label = status === 'ready'
+    ? 'Workspace ready'
+    : status === 'empty'
+      ? 'Empty workspace'
+      : 'Setup required';
+  const color = status === 'ready' ? theme.success : theme.warning;
+  const detail = rowWidth >= 48
+    ? `${label} ${glyphs.separator} ${safeEngine} context ${glyphs.separator} v${version}`
     : rowWidth >= 28
-      ? `New session ${glyphs.separator} v${version}`
-      : `New ${glyphs.separator} v${version}`;
-  const status = expanded
-    ? `${glyphs.success} ${safeEngine} index verified ${glyphs.separator} ${sanitizeInlineTerminalText(model)} ${glyphs.separator} v${version}`
-    : `cwd ${compactDisplayPath(sanitizeInlineTerminalText(workspace), Math.max(1, innerWidth - 4))}`;
-  const hint = `context runs automatically ${glyphs.separator} @file pins ${glyphs.separator} /help commands`;
+      ? `${label} ${glyphs.separator} v${version}`
+      : `${status === 'ready' ? 'Ready' : status === 'empty' ? 'Empty' : 'Setup'} ${glyphs.separator} v${version}`;
 
   return (
-    <Box
-      marginBottom={1}
-      flexDirection="column"
-      paddingLeft={padding}
-    >
-      {expanded ? <>
-        <Box height={1} overflowY="hidden">
-          <Text bold color={theme.accent}>{weaveTop}</Text>
-          <Text bold color={theme.textStrong}>  S K E I N</Text>
-        </Box>
-        <Box height={1} overflowY="hidden">
-          <Text bold color={theme.accent}>{weaveBottom}</Text>
-          <Text color={theme.muted}>  {truncateDisplay(meta, Math.max(1, innerWidth - displayWidth(weaveBottom) - 2))}</Text>
-        </Box>
-      </> : <Box height={1} overflowY="hidden">
-        <Text bold color={theme.accent}>{glyphs.brand} </Text>
-        <Text bold color={theme.textStrong}>{truncateDisplay(meta, Math.max(1, innerWidth - displayWidth(glyphs.brand) - 1))}</Text>
-      </Box>}
-      <Text color={expanded ? theme.success : theme.muted}>{truncateDisplay(status, innerWidth)}</Text>
-      {expanded ? <Text color={theme.dim}>{truncateDisplay(`${hint} ${glyphs.separator} cwd ${compactDisplayPath(sanitizeInlineTerminalText(workspace), 24)}`, innerWidth)}</Text> : null}
+    <Box marginBottom={1} paddingLeft={padding} height={1} overflowY="hidden">
+      <Text bold color={color}>{glyph} </Text>
+      <Text color={status === 'ready' ? theme.text : theme.warning}>{truncateDisplay(detail, Math.max(1, innerWidth - 2))}</Text>
     </Box>
   );
 }

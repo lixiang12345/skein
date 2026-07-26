@@ -767,21 +767,39 @@ describe('terminal presentation', () => {
     const output = renderToString(<Timeline width={columns} items={[{
       id: 'banner',
       kind: 'banner',
-      model: 'compatible/local-model',
       engine: 'local',
-      workspace: '/workspace/with/a/long/project-name',
+      status: 'ready',
       version: '0.3.5',
     }]} />, {columns});
 
-    expect(output).toContain(columns >= 48 ? 'index verified' : columns < 28 ? 'New ' : 'New session');
+    expect(output).toContain(columns < 28 ? 'Ready' : 'Workspace ready');
     expect(output).toContain('v0.3.5');
-    expect(output).toContain('cwd ');
-    expect(output.trimEnd().split('\n')).toHaveLength(columns >= 48 ? 4 : 2);
-    if (columns >= 48) expect(output).toContain('context runs automatically');
+    expect(output.trimEnd().split('\n')).toHaveLength(1);
+    expect(output).not.toContain('S K E I N');
+    expect(output).not.toContain('cwd ');
     expect(output).not.toMatch(/[┌┐└┘╭╮╰╯│█]/u);
     for (const line of output.split('\n')) {
       expect(displayWidth(line), `${columns}-column session summary overflowed: ${JSON.stringify(line)}`).toBeLessThanOrEqual(columns);
     }
+  });
+
+  it.each([
+    ['empty', 'Empty workspace'],
+    ['blocked', 'Setup required'],
+  ] as const)('keeps the %s entry state explicit without restoring dashboard chrome', (status, expected) => {
+    const output = renderToString(<Timeline width={80} glyphMode="ascii" items={[{
+      id: `banner-${status}`,
+      kind: 'banner',
+      engine: 'local',
+      status,
+      version: '0.3.40',
+    }]} />, {columns: 80});
+
+    expect(output).toContain(expected);
+    expect(output).toContain('v0.3.40');
+    expect(output.trimEnd().split('\n')).toHaveLength(1);
+    expect(output).not.toContain('WORKSPACE');
+    expect(output).not.toContain('S K E I N');
   });
 
   it('offers a deterministic ASCII fallback for terminals with unsafe glyph widths', () => {

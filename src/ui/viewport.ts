@@ -192,9 +192,10 @@ export function estimateTimelineItemRows(
   }
   if (item.kind === 'agent' || item.kind === 'agent-message') return rowWidth < 64 ? 2 : 1;
   if (item.kind === 'workflow') return rowWidth < 64 ? 2 : 1;
-  if (item.kind === 'banner') {
-    return rowWidth >= 48 ? 5 : 3;
+  if (item.kind === 'clarification') {
+    return 3 + item.pending.options.length * (rowWidth < 48 ? 2 : 1);
   }
+  if (item.kind === 'banner') return 2;
   return 1;
 }
 

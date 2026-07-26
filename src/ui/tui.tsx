@@ -39,7 +39,6 @@ import {
   TaskRail,
   TeamCockpit,
   TeamWorkbench,
-  WorkspacePanel,
   type TeamRunSummary,
   type TeamWorkbenchView,
   Timeline,
@@ -47,7 +46,6 @@ import {
   type ContextInspectorStatus,
   type ListEntry,
   type TimelineItem,
-  type WorkspacePanelStatus,
 } from './components.js';
 import type {WorkspaceReadiness} from './workspace-preparation.js';
 import {commandDefinitions, commandSuggestions} from './commands.js';
@@ -150,9 +148,8 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [timeline, setTimeline] = useState<TimelineItem[]>(() => initialTimeline(initialSession, {
-    model: `${config.model.provider}/${config.model.model}`,
     engine: 'local',
-    workspace: runner.workspace.primaryRoot ?? process.cwd(),
+    status: setupProblem ? 'blocked' : workspaceReadiness?.files === 0 ? 'empty' : 'ready',
     version: packageJson.version,
   }, setupProblem));
   const [tasks, setTasks] = useState<SessionTask[]>(initialSession.tasks.map((task) => ({...task})));
@@ -791,6 +788,9 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       return true;
     }
     if (command === 'diff') {
+      // A diff receipt is the new primary surface. Close a previously opened
+      // context inspector so compact terminals retain the permission result.
+      setShowContextInspector(false);
       const tool = runner.tools.get('git');
       if (!tool) throw new Error('The built-in Git tool is unavailable.');
       const id = nextId();
@@ -1240,12 +1240,28 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       append({id: nextId(), kind: 'notice', tone: 'success', text: `${next ? 'Compact' : 'Comfortable'} density enabled.`});
       return true;
     }
-    if (command === 'about') {
+    if (command === 'status' || command === 'about') {
       const usage = runner.getSession().usage;
       const status = runner.getContextStatus();
-      appendList('Skein', [
-        {label: `${config.model.provider}/${config.model.model}`, detail: 'model'},
-        {label: 'local', detail: 'context engine'},
+      const mcpServers = extensions?.mcpStatus() ?? [];
+      const connection = config.activeConnection && config.activeConnection.source !== 'legacy'
+        ? `@${config.activeConnection.id} ${config.model.provider}/${config.model.model}`
+        : `${config.model.provider}/${config.model.model}`;
+      appendList('Status', [
+        {label: runner.workspace.primaryRoot, detail: 'workspace'},
+        {label: connection, detail: 'active connection and model'},
+        {label: `${interactionMode.toUpperCase()} ${separator} ${permissionPosture(config)}`, detail: 'mode and permission posture'},
+        {
+          label: workspaceReadiness ? `${workspaceReadiness.files ? 'ready' : 'empty'} index` : 'index not reported',
+          detail: workspaceReadiness
+            ? `${workspaceReadiness.files} files ${separator} ${workspaceReadiness.chunks} chunks ${separator} local context`
+            : 'local context readiness is unavailable',
+          tone: workspaceReadiness?.files === 0 ? 'warning' : 'normal',
+        },
+        {
+          label: `${runner.tools.definitions().length} tools ${separator} ${extensions?.listSkills().length ?? 0} Skills`,
+          detail: `${mcpServers.filter((server) => server.state === 'connected').length}/${mcpServers.length} MCP connected`,
+        },
         {label: theme.name, detail: 'terminal theme'},
         {label: config.memory?.enabled ? 'enabled' : 'disabled', detail: 'durable memory'},
         {label: config.agents?.enabled ? `${config.agents.maxConcurrent} concurrent` : 'disabled', detail: 'expert delegation'},
@@ -1805,7 +1821,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const constrainedHeight = terminalHeight < 18;
   const compactComposer = terminalHeight < 18;
   const minimalInspector = terminalHeight < 22;
-  const showHeader = terminalHeight >= 14;
+  const showHeader = terminalHeight >= 10;
   const taskLimit = compactUi ? 3 : 6;
   const paletteVisible = suggestions.length > 0 || Boolean(historySearch) || suggestionMode === 'mention';
   const paletteSuggestions = constrainedHeight && suggestions.length
@@ -1839,12 +1855,8 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const chromeRows = headerRows + composerRows + footerRows + taskRows + paletteRows + inspectorRows + activityRows;
   const availableTimelineRows = Math.max(0, terminalHeight - chromeRows);
   const teamItems = timeline.filter((item) => item.kind === 'agent' || item.kind === 'agent-message');
-  const showWorkspacePanel = Boolean(workspaceReadiness) && contentWidth >= 88 && terminalHeight >= 20 && !teamWorkbenchOpen &&
-    !teamItems.some((item) => item.kind === 'agent');
-  const workspacePanelWidth = showWorkspacePanel ? Math.min(38, Math.max(32, Math.floor(contentWidth * 0.34))) : 0;
-  const workspaceTimelineWidth = Math.max(1, contentWidth - workspacePanelWidth - (showWorkspacePanel ? 1 : 0));
   const timelineContentRows = timeline.reduce((rows, item) => rows + estimateTimelineItemRows(item, {
-    width: workspaceTimelineWidth,
+    width: contentWidth,
     rows: availableTimelineRows,
     compact: compactUi,
     showToolOutput,
@@ -1854,11 +1866,11 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   // grows only as transcript content needs it, up to the real terminal height.
   const timelineRows = teamWorkbenchOpen
     ? availableTimelineRows
-    : Math.min(availableTimelineRows, Math.max(timelineContentRows, showWorkspacePanel ? 13 : 0));
+    : Math.min(availableTimelineRows, timelineContentRows);
   const showTeamCockpit = config.agents?.cockpit !== false && contentWidth >= 100 &&
     timelineRows >= 7 && teamItems.some((item) => item.kind === 'agent');
-  const cockpitWidth = showTeamCockpit ? Math.min(38, Math.max(30, Math.floor(contentWidth * 0.32))) : workspacePanelWidth;
-  const hasSidePanel = showTeamCockpit || showWorkspacePanel;
+  const cockpitWidth = showTeamCockpit ? Math.min(38, Math.max(30, Math.floor(contentWidth * 0.32))) : 0;
+  const hasSidePanel = showTeamCockpit;
   const timelineWidth = Math.max(1, contentWidth - cockpitWidth - (hasSidePanel ? 1 : 0));
   const visibleTimeline = fitTimelineToRows(timeline, {
     width: timelineWidth,
@@ -1870,20 +1882,6 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const activeAgents = timeline.filter((item) => item.kind === 'agent' && item.state === 'running').length;
   const mcpServers = extensions?.mcpStatus() ?? [];
   const memoryStats = extensions?.memoryStats();
-  const workspacePanelStatus: WorkspacePanelStatus | undefined = workspaceReadiness ? {
-    model: `${config.activeConnection && config.activeConnection.source !== 'legacy' ? `@${config.activeConnection.id} ` : ''}${config.model.provider}/${config.model.model}`,
-    mode: interactionMode,
-    context: workspaceReadiness.files ? 'ready' : 'empty',
-    files: workspaceReadiness.files,
-    chunks: workspaceReadiness.chunks,
-    permissions: permissionPosture(config),
-    tools: runner.tools.definitions().length,
-    skills: extensions?.listSkills().length ?? 0,
-    mcpConnected: mcpServers.filter((server) => server.state === 'connected').length,
-    mcpTotal: mcpServers.length,
-    memory: config.memory?.enabled ? 'on' : 'off',
-  } : undefined;
-
   if (terminalHeight < 8) {
     return (
       <ThemeProvider theme={theme}>
@@ -1926,10 +1924,6 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
               {showTeamCockpit ? (
                 <Box marginLeft={1}>
                   <TeamCockpit items={teamItems} width={cockpitWidth} glyphMode={glyphMode} />
-                </Box>
-              ) : showWorkspacePanel && workspacePanelStatus ? (
-                <Box marginLeft={1}>
-                  <WorkspacePanel status={workspacePanelStatus} width={workspacePanelWidth} glyphMode={glyphMode} />
                 </Box>
               ) : null}
             </>}
@@ -2044,7 +2038,7 @@ function initialTimeline(session: Session, banner: BannerInfo, setupProblem?: st
   // A fresh session opens on the product banner instead of an empty screen; a
   // resumed session keeps its transcript and skips the banner.
   if (!items.length) {
-    items.push({id: nextId(), kind: 'banner', model: banner.model, engine: banner.engine, workspace: banner.workspace, version: banner.version});
+    items.push({id: nextId(), kind: 'banner', engine: banner.engine, status: banner.status, version: banner.version});
   }
   if (session.taskContract && session.taskContract.state !== 'satisfied') {
     const required = session.taskContract.acceptanceCriteria.filter((item) => item.required);
@@ -2065,9 +2059,8 @@ function initialTimeline(session: Session, banner: BannerInfo, setupProblem?: st
 }
 
 interface BannerInfo {
-  model: string;
   engine: string;
-  workspace: string;
+  status: 'ready' | 'empty' | 'blocked';
   version: string;
 }
 
