@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.52",
+  "version": "0.3.53",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -24,6 +24,7 @@
   },
   "skein": {
     "releaseNotes": [
+      "The bilingual Fable 5 rewrite is now the deployed website: GitHub Pages serves website-fable-5, the old intro.html URL redirects to the guide, and the rewrite's verification joins npm run check",
       "A ground-up bilingual EN/zh-CN website rewrite ships under website-fable-5/ with pre-paint language selection, enforced string parity, truthful-claims guards, and its own verification script",
       "New /model command shows the active route, lists the named connection's catalog, and switches the model id within the connection without touching endpoint, protocol, or credentials",
       "New /resume command lists recent sessions and swaps the terminal to one by id prefix, clearing session approvals and steering on switch",
@@ -196,7 +197,7 @@
     "verify:package": "node scripts/verify-package.mjs",
     "release:verify": "npm run check && npm run verify:package --",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm test && npm run website:check && npm run build && npm run smoke:dist",
+    "check": "npm run typecheck && npm test && npm run website:check && npm run website:fable5:check && npm run build && npm run smoke:dist",
     "website:check": "node scripts/verify-website.mjs",
     "website:fable5:check": "node website-fable-5/check.mjs",
     "smoke:dist": "node dist/cli.js --help",

@@ -6,6 +6,7 @@ on:
     paths:
       - ".github/workflows/pages.yml"
       - "website/**"
+      - "website-fable-5/**"
       - "scripts/verify-website.mjs"
       - "package.json"
       - "package-lock.json"
@@ -42,7 +43,7 @@ jobs:
       - name: Upload website artifact
         uses: actions/upload-pages-artifact@v5
         with:
-          path: website
+          path: website-fable-5
 
   deploy:
     environment:
