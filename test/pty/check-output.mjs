@@ -8,6 +8,7 @@ const {Terminal} = xterm;
 const [path, widthText, mode, scenario = 'full'] = process.argv.slice(2);
 const width = Number(widthText);
 const raw = await readFile(path, 'utf8');
+const packageVersion = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8')).version;
 for (const sequence of ['\u001b[?u', '\u001b[?0u', '^[[?u', '^[[?0u']) {
   if (raw.includes(sequence)) {
     throw new Error(`${path} leaked a terminal capability probe: ${JSON.stringify(sequence)}`);
@@ -40,7 +41,7 @@ const required = scenario === 'short'
       '@src/ui/tui.tsx',
     ];
 if (scenario === 'full' && mode === 'unicode') required.push('项目');
-if (scenario === 'full') required.push('v0.3.40');
+if (scenario === 'full') required.push(`v${packageVersion}`);
 if (scenario === 'full' && width >= 80) required.push('Ctrl+R');
 for (const value of required) {
   if (!cleaned.includes(value)) throw new Error(`${path} did not render ${value}`);
