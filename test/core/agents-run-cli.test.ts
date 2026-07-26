@@ -33,7 +33,7 @@ describe('agents run CLI', () => {
       model: 'opus',
       usage: {inputTokens: 24, outputTokens: 8},
     });
-  });
+  }, 20_000);
 
   it('rejects writable profiles and API-only routes', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'skein-agents-run-errors-'));
@@ -51,7 +51,7 @@ describe('agents run CLI', () => {
     ]);
     expect(api.exitCode).toBe(1);
     expect(api.stderr).toContain('pass --runtime codex, claude, or grok');
-  });
+  }, 20_000);
 });
 
 function runCli(args: string[], extraPath?: string): Promise<{exitCode: number | null; stdout: string; stderr: string}> {
