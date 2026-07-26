@@ -823,7 +823,7 @@ export function TaskRail({tasks, width = 80, glyphMode = 'auto', maxItems}: {
   );
 }
 
-export function PermissionCard({call, category, reason, humanOnly = false, width = 80, glyphMode = 'auto', workspace, compact = false}: {
+export function PermissionCard({call, category, reason, humanOnly = false, width = 80, glyphMode = 'auto', workspace, compact = false, preview}: {
   call: ToolCall;
   category: ToolCategory;
   reason?: string;
@@ -832,6 +832,7 @@ export function PermissionCard({call, category, reason, humanOnly = false, width
   glyphMode?: GlyphMode;
   workspace?: string;
   compact?: boolean;
+  preview?: {lines: string[]; more: number};
 }) {
   const theme = useTheme();
   const glyphs = resolveGlyphs(glyphMode);
@@ -873,6 +874,22 @@ export function PermissionCard({call, category, reason, humanOnly = false, width
       <PermissionLine marker={marker}><Text color={theme.muted}>{reasonLine}</Text></PermissionLine>
       <PermissionLine marker={marker}><Text color={theme.warning}>{riskLine}</Text></PermissionLine>
       {cwd ? <PermissionLine marker={marker}><Text color={theme.muted}>{truncateDisplay(`cwd ${compactDisplayPath(cwd, Math.max(1, innerWidth - 4))}`, innerWidth)}</Text></PermissionLine> : null}
+      {preview && !compact && rowWidth >= 48 ? (
+        <>
+          {preview.lines.map((line, index) => (
+            <PermissionLine key={`preview-${index}`} marker={marker}>
+              <Text color={line.startsWith('+') ? theme.success : line.startsWith('-') ? theme.error : theme.muted}>
+                {truncateDisplay(line || ' ', innerWidth)}
+              </Text>
+            </PermissionLine>
+          ))}
+          {preview.more > 0 ? (
+            <PermissionLine marker={marker}>
+              <Text color={theme.muted}>{truncateDisplay(`… ${preview.more} more diff line${preview.more === 1 ? '' : 's'}`, innerWidth)}</Text>
+            </PermissionLine>
+          ) : null}
+        </>
+      ) : null}
       {rowWidth >= 64 ? (
         <Box paddingLeft={2}>
           <InlineRow parts={shortcuts} width={innerWidth} separator={`  ${glyphs.separator}  `} separatorColor={theme.border} />

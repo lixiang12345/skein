@@ -64,6 +64,7 @@ import {resolveKittyKeyboardConfig, resolveTerminalAccessibility} from './termin
 import {nextTheme, reloadUserThemes, resolveThemeWithColor, ThemeProvider, themes} from './theme.js';
 import {editComposerDraft} from './external-editor.js';
 import {starterHint} from './starter-hints.js';
+import {buildWritePreview, permissionPreviewRows, type PermissionPreview} from './permission-preview.js';
 import {estimateTimelineItemRows, fitTimelineToRows} from './viewport.js';
 import {
   buildRedactedReviewBundle,
@@ -90,6 +91,7 @@ interface PermissionRequest {
   category: ToolCategory;
   reason?: string;
   humanOnly?: boolean;
+  preview?: PermissionPreview;
   resolve: (grant: PermissionGrant) => void;
 }
 
@@ -333,14 +335,20 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     return () => clearInterval(timer);
   }, [busy, composerEmpty, terminalAccessibility.reducedMotion]);
 
-  const requestPermission = useCallback((call: ToolCall, category: ToolCategory, reason?: string) => {
+  const requestPermission = useCallback(async (call: ToolCall, category: ToolCategory, reason?: string) => {
+    // Live approval UI may show the person exactly what a write would change;
+    // the preview is display-only and never persisted.
+    const preview = category === 'write'
+      ? await buildWritePreview(call, (path) => runner.workspace.resolvePath(path, {allowMissing: true}))
+      : undefined;
     return new Promise<PermissionGrant>((resolve) => setPermission({
       call,
       category,
       ...(reason ? {reason} : {}),
+      ...(preview ? {preview} : {}),
       resolve,
     }));
-  }, []);
+  }, [runner]);
 
   const requestHumanApproval = useCallback((call: ToolCall, category: ToolCategory, reason?: string) => {
     return new Promise<boolean>((resolve) => setPermission({
@@ -1896,6 +1904,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const composerPreview = input || (busy ? `follow-up${ellipsis}` : interactionMode === 'ask' ? `trace or explain${ellipsis}` : interactionMode === 'plan' ? `outline the implementation${ellipsis}` : `inspect, change, or verify${ellipsis}`);
   const composerRows = permission
     ? permissionRows(contentWidth, Boolean(typeof permission.call.arguments.cwd === 'string' || runner.workspace.primaryRoot), constrainedHeight)
+      + permissionPreviewRows(permission.preview, contentWidth, constrainedHeight)
     : 3 + visibleAttachments.length + (visibleQueuePreview ? 1 : 0) + composerValueRows(composerPreview, Math.max(1, contentWidth - 2), compactComposer ? 1 : 4);
   const inspectorRows = renderContextInspector ? contextInspectorRows(session, compactUi, contentWidth, minimalInspector) : 0;
   const footerRows = showFooter ? (contentWidth < 48 ? 2 : 1) : 0;
@@ -2036,7 +2045,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
               placeholder={busy ? `follow-up${ellipsis}` : interactionMode === 'ask' ? `trace or explain${ellipsis}` : interactionMode === 'plan' ? `outline the implementation${ellipsis}` : `inspect, change, or verify${ellipsis}`}
             />
           </PromptBar>
-        </> : <PermissionCard call={permission.call} category={permission.category} humanOnly={permission.humanOnly ?? false} {...(permission.reason ? {reason: permission.reason} : {})} workspace={runner.workspace.primaryRoot} width={contentWidth} glyphMode={glyphMode} compact={constrainedHeight} />}
+        </> : <PermissionCard call={permission.call} category={permission.category} humanOnly={permission.humanOnly ?? false} {...(permission.reason ? {reason: permission.reason} : {})} {...(permission.preview ? {preview: permission.preview} : {})} workspace={runner.workspace.primaryRoot} width={contentWidth} glyphMode={glyphMode} compact={constrainedHeight} />}
         {showFooter ? (
           <Footer
             busy={busy}

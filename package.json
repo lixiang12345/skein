@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.48",
+  "version": "0.3.49",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -24,6 +24,7 @@
   },
   "skein": {
     "releaseNotes": [
+      "Write approvals now show a bounded colored diff preview of exactly what would change: write_file diffs proposed content against the current file, apply_patch shows its hunks, ten lines plus a truncation count, with binary and oversized targets degrading to an explanatory line and compact or narrow layouts hiding the preview entirely; the preview is display-only and never persisted",
       "The composer gains a ! shell escape: !<command> runs one command through the same permission, receipt, checkpoint, and changed-file pipeline as model tool calls with a warning-styled shell mode, never spends a model turn, and stays fail-closed under ask denials and deny policy",
       "Fresh sessions now show the indexed file count in the readiness line on wide terminals plus a one-line pointer to the most recent prior session with its age and the skein --continue command",
       "skein status now reports the default connection's real credential state and shows a missing API key as a warning instead of treating compatible providers as configured",
