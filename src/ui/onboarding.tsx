@@ -416,7 +416,7 @@ export function OnboardingScreen({state, dispatch, width, compact = false}: {
   return (
     <Box width={width} paddingX={horizontalPadding} flexDirection="column">
       <Box width={headerWidth} justifyContent="space-between">
-        <Text bold color={theme.accent}>{truncateDisplay(`${mark}  ${PRODUCT_NAME.toUpperCase()}`, Math.max(1, headerWidth - displayWidth(stage.progress) - 1))}</Text>
+        <Text bold color={theme.accent} aria-label={PRODUCT_NAME}>{truncateDisplay(`${mark}  ${PRODUCT_NAME.toUpperCase()}`, Math.max(1, headerWidth - displayWidth(stage.progress) - 1))}</Text>
         <Text color={theme.dim}>{stage.progress}</Text>
       </Box>
       <Text color={theme.border}>{truncateDisplay(stageDivider(ascii, headerWidth), headerWidth)}</Text>

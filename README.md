@@ -1,5 +1,9 @@
 # Skein
 
+<p align="center">
+  <img src="docs/assets/skein-goose-flight.png" width="180" alt="Skein Goose: a flying goose carrying three woven context threads">
+</p>
+
 **An open, context-first coding agent for the terminal.**
 
 Skein understands the change surface before it edits, exposes every tool call,
@@ -8,7 +12,7 @@ OpenAI, Anthropic, Gemini, and OpenAI-compatible endpoints, with a local,
 inspectable index for code retrieval and no retrieval service dependency.
 
 ```text
-◆ SKEIN  ·  ~/work/api                                      ● BUILD
+⌁ SKEIN  ·  ~/work/api                                      ● BUILD
   anthropic/claude-sonnet-4-5  ·  context local  ·  memory on  ·  agents 3
 
 › Find the webhook retry bug and add a regression test.
@@ -17,7 +21,7 @@ inspectable index for code retrieval and no retrieval service dependency.
 ✓ read_file  src/billing/webhook.ts  31ms
 ✓ apply_patch  src/billing/webhook.ts  18ms
 
-◆ Skein
+⌁ Skein
   The retry timestamp was advanced before the failed attempt was persisted.
   I moved the update after persistence and added the timeout regression test.
 
@@ -387,12 +391,13 @@ Built-in workflows are a read-only trusted catalog; `skein workflow list` and
 `/workflow` disclose whether execution is read-only or uses the single-writer
 lane.
 
-At 96 columns and wider, a fresh session uses a two-column welcome surface. The
-left side keeps Skein's brand, workspace path, and next actions close to the
-composer; the right side reports the actual model, mode, local index file/chunk
-counts, permission posture, built-in tool count, Skills, MCP connections, and
-memory state. Narrow terminals collapse to the same compact single-column flow,
-and active team runs replace the workspace rail with Team Cockpit.
+Fresh sessions open as a compact, composer-first workspace: one Skein signature,
+repository/model/mode context, one truthful readiness line, and the primary
+input. Completed index preparation is cleared before chat on visual terminals;
+screen readers retain its linear announcements. Run `/status` to inspect the
+actual route, mode, permission posture, index counts, tools, Skills, MCP,
+memory, usage, and context. Active team runs add Team Cockpit only while that
+telemetry is relevant.
 
 The default `/theme auto` follows
 `SKEIN_APPEARANCE=light|dark` or a terminal `COLORFGBG` hint and otherwise uses

@@ -216,7 +216,7 @@ export function Header({config, askMode, planMode = false, width = 80, glyphMode
 
   return (
     <Box marginBottom={1} height={1} overflowY="hidden">
-      <Text bold color={theme.accent}>{brand}</Text>
+      <Text bold color={theme.accent} aria-label={PRODUCT_NAME}>{brand}</Text>
       {showRepository ? <>
         <Text color={theme.border}>{separator}</Text>
         <Text color={theme.muted}>{repository}</Text>
@@ -268,7 +268,7 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
         if (item.kind === 'assistant') {
           return (
             <Box key={item.id} flexDirection="column" marginBottom={compact || item.clipped ? 0 : 1}>
-              <Text bold color={theme.accent}>
+              <Text bold color={theme.accent} aria-label={`${PRODUCT_NAME}${item.streaming ? ' streaming' : ''}`}>
                 {glyphs.brand} {PRODUCT_NAME}{item.streaming ? <Text color={theme.muted}> {glyphs.separator} streaming</Text> : null}
               </Text>
               <Box paddingLeft={2} flexDirection="column">

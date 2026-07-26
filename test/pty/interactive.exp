@@ -95,7 +95,7 @@ await_pattern {verified} {workspace index verification}
 # it and leave Return buffered by the terminal line discipline. Ink's screen
 # reader renderer intentionally omits bracketed paste, so its completed
 # accessible startup frame is the input-ready signal instead.
-await_pattern {SKEIN} startup
+await_pattern {SKEIN|Skein} startup
 await_frame {the startup frame}
 if {$mode ne "screen-reader"} {
   expect {

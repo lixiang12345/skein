@@ -20,8 +20,9 @@ one of the milestones below.
   OpenAI-compatible endpoints; built-in tools, permissions, checkpoints,
   workflows, Skills, MCP, expert profiles, sessions, and memory are present.
 - UI: real Ink/React terminal UI, not a browser prototype. Fresh sessions use
-  a compact Skein identity; wide sessions add a grouped factual workspace rail;
-  all sizes support prompt
+  one compact Skein Goose identity, a truthful readiness line, and a
+  composer-first flow; detailed runtime state is available through `/status`,
+  while Team Cockpit appears only for active agent work. All sizes support prompt
   history, `@file` completion, command completion, multiline editing, queued
   follow-ups, live context inspection, permission approval, themes, ASCII mode,
   `NO_COLOR`, `TERM=dumb`, screen-reader output, reduced motion, and

@@ -21,12 +21,13 @@ const cleaned = stripAnsi(physicalLines)
 const lines = cleaned.split('\n');
 const contentLines = lines.filter((line) => line.trim());
 const widest = Math.max(0, ...contentLines.map((line) => stringWidth(line)));
+const productName = mode === 'screen-reader' ? 'Skein' : 'SKEIN';
 const required = scenario === 'short'
   ? ['Inspecting', 'verified', 'Type a request', 'Memory privacy', 'Context', 'Permission', 'Commands']
   : [
       'Inspecting',
       'verified',
-      'SKEIN',
+      productName,
       'Memory privacy',
       'Skills',
       'blocked',
@@ -66,7 +67,7 @@ const finalFrame = await emulateFinalFrame(raw, width, scenario === 'short' ? 10
 const finalText = finalFrame.lines.join('\n');
 const finalRequired = scenario === 'short'
   ? ['SKEIN', 'Type a request', 'ready', 'Git diff was not']
-  : ['SKEIN', 'Type a request', 'ready', 'Git diff was not'];
+  : [productName, 'Type a request', 'ready', 'Git diff was not'];
 for (const value of finalRequired) {
   if (!finalText.includes(value)) throw new Error(`${path} final frame did not render ${value}`);
 }

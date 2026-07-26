@@ -70,7 +70,7 @@ export function WorkspacePreparationView({
   return (
     <Box flexDirection="column" paddingX={horizontalPadding}>
       <Box>
-        <Text bold color={theme.accent}>{brand}  {PRODUCT_NAME.toUpperCase()}</Text>
+        <Text bold color={theme.accent} aria-label={PRODUCT_NAME}>{brand}  {PRODUCT_NAME.toUpperCase()}</Text>
         {!compact && !constrained ? <Text color={theme.dim}>  {separator}  LOCAL CONTEXT</Text> : null}
       </Box>
       {!constrained ? <Text color={theme.muted}>{truncateDisplay('Ground the workspace before the first request.', innerWidth)}</Text> : null}

@@ -74,7 +74,7 @@ Sources:
 | Tools | Read, list, search, write, patch, shell, Git, context search, task updates, session-scoped oversized-result readback |
 | Trust | Workspace path boundary, allow/ask/deny policy, command rules, hooks, checkpoints |
 | Sessions | Local persistence, resume/latest, list/show/delete/export |
-| UX | Ink TUI, responsive branded welcome/workspace rail, action timeline, context telemetry, plan rail, inline permission band, interruption |
+| UX | Ink TUI, composer-first branded entry, on-demand status/context inspectors, action timeline, plan and active-agent rails, inline permission band, interruption |
 | Automation | Prompt/stdin input, queue, quiet mode, JSON and JSONL output with verified/unverified status, exit codes |
 | Operations | Init, doctor, config, index/search/context/status, checkpoint management |
 

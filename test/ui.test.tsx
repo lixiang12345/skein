@@ -129,7 +129,7 @@ describe('terminal presentation', () => {
           expect(displayWidth(line), `${_profile} ${columns}-column final frame overflowed: ${JSON.stringify(line)}`)
             .toBeLessThanOrEqual(columns);
         }
-        if (accessibility.ascii) expect(frame).not.toMatch(/[◆●✓◌◇▎─]/u);
+        if (accessibility.ascii) expect(frame).not.toMatch(/[⌁●✓◌◇▎─]/u);
       }
     }
   });
@@ -326,7 +326,7 @@ describe('terminal presentation', () => {
       </>,
       {columns: 40},
     );
-    expect(output).toContain('◆ SKEIN');
+    expect(output).toContain('⌁ SKEIN');
     expect(output).toContain('● ASK');
     expect(output).toContain('apply_patch');
     expect(output).toContain('2 changed');
@@ -816,7 +816,7 @@ describe('terminal presentation', () => {
     expect(output).toContain('o ASK');
     expect(output).toContain('+ read_file');
     expect(output).toContain('~ working');
-    expect(output).not.toMatch(/[◆●✓◌]/u);
+    expect(output).not.toMatch(/[⌁●✓◌]/u);
   });
 
   it('redacts sensitive permission arguments before rendering them', () => {
