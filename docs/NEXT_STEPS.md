@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.37`.
+- Current repository version: `0.3.38`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -42,8 +42,8 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.37.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.37.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.38.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.38.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
@@ -531,6 +531,17 @@ single-process benchmark enforces 25 ms input and 150 ms streaming-render p95
 budgets while requiring the last chunk in the final frame. Future expansion may
 sample additional widths through 160 and heights through 60 without changing
 the shipped gate's factual scope.
+
+### P2: Session branching and terminal entry points
+
+Version `0.3.38` adds content-free, hash-bound logical session
+forks with fresh usage accounting. An explicitly confirmed branch/worktree
+fork creates a sibling Git worktree from `HEAD`; it never starts a model in the
+background or spends tokens merely because a branch was created. Bash, zsh,
+and fish completion are generated locally, while `Alt+E`/`/editor` round-trip a
+bounded owner-only draft through the user's external editor without invoking a
+shell or exposing provider credentials. Optional LSP and durable background-job
+adapters remain the next dependency-free P2 slice.
 
 ### P3: Distribution
 

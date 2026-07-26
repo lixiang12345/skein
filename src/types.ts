@@ -942,6 +942,18 @@ export interface ToolArtifactReference {
   redacted: boolean;
 }
 
+/** Content-free binding from a logical session fork to the exact source snapshot. */
+export interface SessionForkReceipt {
+  version: 1;
+  sessionId: string;
+  sessionUpdatedAt: string;
+  sessionSha256: string;
+  sourceWorkspaceSha256: string;
+  messageCount: number;
+  toolArtifactsOmitted: number;
+  createdAt: string;
+}
+
 export interface Session {
   id: string;
   title: string;
@@ -950,6 +962,7 @@ export interface Session {
   updatedAt: string;
   model: string;
   provider: ProviderName;
+  forkedFrom?: SessionForkReceipt;
   messages: ChatMessage[];
   tasks: SessionTask[];
   changedFiles: string[];

@@ -34,6 +34,44 @@ describe('sessions and checkpoints', () => {
     expect((await store.list())[0]?.title).toBe('Fix queue');
   });
 
+  it('forks an exact session snapshot without duplicating usage or session-bound artifacts', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-session-fork-'));
+    roots.push(root);
+    const store = new SessionStore(root);
+    const source = await store.create({title: 'Investigate route', model: 'test', provider: 'compatible'});
+    source.messages.push({
+      id: 'message-1', role: 'user', content: 'Inspect the route', createdAt: '2026-07-26T00:00:00.000Z',
+    });
+    source.toolArtifacts = [{
+      toolCallId: 'call-1', sha256: 'a'.repeat(64), bytes: 42,
+      createdAt: '2026-07-26T00:00:00.000Z', expiresAt: '2026-07-27T00:00:00.000Z', redacted: true,
+    }];
+    source.usage = {inputTokens: 120, outputTokens: 30, source: 'actual'};
+    source.tokenLedger = [];
+    source.lastRun = {
+      status: 'no_changes', changedFiles: [], checks: [], detail: 'done',
+      reason: 'completed', finishedAt: '2026-07-26T00:00:00.000Z',
+    };
+    await store.save(source);
+
+    const forked = await store.fork(source.id, {title: 'Alternative route'});
+
+    expect(forked).toMatchObject({
+      title: 'Alternative route',
+      messages: [{content: 'Inspect the route'}],
+      usage: {inputTokens: 0, outputTokens: 0},
+      forkedFrom: {sessionId: source.id, messageCount: 1, toolArtifactsOmitted: 1},
+    });
+    expect(forked.id).not.toBe(source.id);
+    expect(forked.forkedFrom?.sessionSha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(forked.forkedFrom?.sourceWorkspaceSha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(forked.toolArtifacts).toBeUndefined();
+    expect(forked.tokenLedger).toBeUndefined();
+    expect(forked.lastRun).toBeUndefined();
+    expect(forked.contextEpochs?.at(-1)?.usage).toEqual({inputTokens: 0, outputTokens: 0});
+    expect((await store.list()).find((item) => item.id === forked.id)?.forkedFrom).toBe(source.id);
+  });
+
   it('round-trips opaque Responses output items required for stateless continuation', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-session-responses-state-'));
     roots.push(root);

@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.37",
+  "version": "0.3.38",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,6 +16,9 @@
   },
   "skein": {
     "releaseNotes": [
+      "Session fork and branch commands create SHA-256-bound logical continuations with fresh usage accounting, while explicit --branch/--worktree/--yes can place a fork in an isolated sibling Git worktree",
+      "Alt+E and /editor round-trip bounded owner-only drafts through VISUAL or EDITOR without a shell, workspace executable resolution, or provider and relay secrets",
+      "Bash, zsh, and fish completion scripts expose Skein commands, session branching, and common global options without adding a runtime dependency",
       "Explicit OpenAI Responses routes can use relay-hosted web_search without local network or shell authority, while content-safe call receipts and citation identities bind exact source URLs by SHA-256",
       "User-configured relay pricing produces protocol-aware priced or visibly unpriced cost receipts, and explicit strict USD ceilings fail closed before unpriced requests or stop subsequent work after a measured overrun",
       "Team Run v4 provenance bundles bind route identities, reports, usage, cost, hosted search, sources, peer handoffs, reviewer evidence, writer state, and human arbitration without retaining hidden reasoning",

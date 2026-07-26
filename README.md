@@ -318,7 +318,10 @@ follow-ups. `Ctrl+J` or `Shift+Enter` inserts a newline. `Ctrl+R` searches promp
 history, `Ctrl+O` expands or collapses the latest tool result, and Escape first
 dismisses an active completion palette, then interrupts the current run. The composer supports
 multiline cursor movement, word movement/deletion, `Ctrl+U`/`Ctrl+K`, and
-bounded undo/redo. Type `/` for a keyboard-navigable command palette, or run
+bounded undo/redo. `Alt+E` or `/editor [initial draft]` opens the current prompt
+in `VISUAL` or `EDITOR`; the editor is launched without a shell, receives only
+an owner-only bounded temporary file, and must resolve outside the workspace.
+Type `/` for a keyboard-navigable command palette, or run
 `/hotkeys` inside Skein.
 
 Useful interactive commands include `/workflow`, `/context`, `/mode`, `/queue`, `/memory`,
@@ -481,6 +484,10 @@ skein context <task>                 packed model context
 skein status                         model and index status
 skein session list|show|delete       local session management
 skein session export <id>            Markdown audit export
+skein session fork <id>              fork a hash-bound logical session
+skein session fork <id> --branch <name> --worktree <path> --yes
+                                      fork into an isolated sibling worktree
+skein completion bash|zsh|fish       generate shell completion
 skein checkpoint list <session>      inspect snapshots
 skein checkpoint restore <s> <c>     restore a snapshot
 skein /review [scope]                 read-only fixed-scope review in the TUI

@@ -37,6 +37,7 @@ export const commandDefinitions: CommandDefinition[] = [
   command('transcript', 'Expand or collapse complete tool output', '/transcript [on|off]'),
   command('queue', 'Inspect or remove follow-ups waiting behind the active run', '/queue [list|drop|clear] [number]'),
   command('hotkeys', 'Show terminal editing and run controls'),
+  command('editor', 'Edit the next prompt with VISUAL or EDITOR', '/editor [initial draft]'),
   command('mode', 'Switch between read-only Ask, Plan, and action-capable Build modes', '/mode [ask|plan|build]'),
   command('density', 'Switch between compact and comfortable terminal rhythm', '/density [compact|comfortable]'),
   command('theme', 'Preview, select, or cycle terminal themes', '/theme [name|list]'),

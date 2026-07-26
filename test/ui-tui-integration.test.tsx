@@ -148,6 +148,27 @@ describe('SkeinApp completion flows', () => {
     }
   });
 
+  it('keeps external-editor failures local and leaves the composer usable', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-editor-ui-'));
+    const session = testSession(root);
+    const {runner, run} = mockRunner(root, session);
+    vi.stubEnv('VISUAL', '');
+    vi.stubEnv('EDITOR', '');
+    const harness = await mountApp(runner, root);
+
+    try {
+      harness.stdin.write('/editor Draft from editor\r');
+      await vi.waitFor(() => expect(harness.output()).toContain('Set VISUAL or EDITOR'));
+      expect(run).not.toHaveBeenCalled();
+      harness.stdin.write('/hotkeys\r');
+      await vi.waitFor(() => expect(harness.output()).toContain('Alt+E'));
+    } finally {
+      vi.unstubAllEnvs();
+      await harness.cleanup();
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
   it('offers an explicit read-only Plan mode before Build', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-plan-ui-'));
     const session = testSession(root);

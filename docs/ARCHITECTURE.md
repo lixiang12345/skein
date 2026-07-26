@@ -87,6 +87,22 @@ narrative is fallible; deterministic handoff facts and fresh tool evidence keep
 precedence. Epochs, pending clarification, and their public reason codes are
 backward-compatible optional session fields and contain no hidden reasoning.
 
+A logical `session fork` binds the new session to the exact source-session
+snapshot and source-workspace identity by SHA-256. It preserves bounded
+transcript and task facts, starts a fresh usage ledger and epoch, drops stale
+last-run recovery state, and does not duplicate session-bound oversized tool
+artifacts. With explicit `--branch`, `--worktree`, and `--yes`, Skein asks Git
+to create a sibling worktree from `HEAD` using argv execution rather than a
+shell, then persists the fork inside that worktree. Branch creation never runs
+implicitly and a worktree target inside the source repository is rejected.
+
+External composer editing is a user-triggered terminal action, not a model
+tool. `VISUAL`/`EDITOR` is parsed into a bounded argv vector; the executable
+must resolve on a trusted PATH outside the workspace, provider and relay
+secrets are omitted from its environment, and the only supplied file is an
+owner-only temporary draft with a 120 kB limit and post-edit regular-file
+check.
+
 ## Interactive startup gate
 
 New interactive sessions establish local context readiness before creating or

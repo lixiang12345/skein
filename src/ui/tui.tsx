@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import {Box, render, Text, useApp, useInput, useWindowSize} from 'ink';
+import {Box, render, Text, useApp, useInput, useStdin, useWindowSize} from 'ink';
 import {relative} from 'node:path';
 import type {AgentRunner} from '../agent/index.js';
 import {PLAN_MODE_INSTRUCTIONS} from '../agent/prompt.js';
@@ -64,6 +64,7 @@ import {
 import {displayWidth, sanitizeTerminalText, terminalEllipsis, truncateDisplay} from './text.js';
 import {resolveKittyKeyboardConfig, resolveTerminalAccessibility} from './terminal-capabilities.js';
 import {nextTheme, reloadUserThemes, resolveThemeWithColor, ThemeProvider, themes} from './theme.js';
+import {editComposerDraft} from './external-editor.js';
 import {estimateTimelineItemRows, fitTimelineToRows} from './viewport.js';
 import {
   buildRedactedReviewBundle,
@@ -123,6 +124,7 @@ export interface TuiOptions {
 
 export function SkeinApp({runner, config, extensions, initialPrompt, askMode = false, planMode = false, workspaceReadiness}: TuiOptions) {
   const {exit} = useApp();
+  const {setRawMode} = useStdin();
   const {columns, rows} = useWindowSize();
   const terminalWidth = Math.max(1, columns || 80);
   const terminalHeight = Math.max(1, rows || 24);
@@ -146,6 +148,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const [interactionMode, setInteractionMode] = useState<'ask' | 'plan' | 'build'>(planMode ? 'plan' : askMode ? 'ask' : 'build');
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [timeline, setTimeline] = useState<TimelineItem[]>(() => initialTimeline(initialSession, {
     model: `${config.model.provider}/${config.model.model}`,
     engine: 'local',
@@ -574,6 +577,27 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     append({id: nextId(), kind: 'list', title, entries});
   }, [append]);
 
+  const openExternalEditor = useCallback(async (initial: string) => {
+    if (processing.current || permission || editing) {
+      append({id: nextId(), kind: 'notice', tone: 'error', text: 'External editor is unavailable while another interaction is active.'});
+      return;
+    }
+    setEditing(true);
+    append({id: nextId(), kind: 'notice', tone: 'info', text: 'Opening external editor. Save and close it to return to Skein.'});
+    setRawMode(false);
+    try {
+      const draft = await editComposerDraft(initial, {workspace: runner.workspace.primaryRoot});
+      setInput(draft);
+      setCursorRequest({value: draft, offset: draft.length});
+      append({id: nextId(), kind: 'notice', tone: 'success', text: draft.trim() ? 'External editor draft loaded.' : 'External editor returned an empty draft.'});
+    } catch (error) {
+      append({id: nextId(), kind: 'notice', tone: 'error', text: error instanceof Error ? error.message : String(error)});
+    } finally {
+      setRawMode(true);
+      setEditing(false);
+    }
+  }, [append, editing, permission, runner.workspace.primaryRoot, setRawMode]);
+
   const runLocalCommand = useCallback(async (value: string): Promise<LocalCommandResult> => {
     if (!value.startsWith('/')) return false;
     const [rawCommand = '', ...rest] = value.slice(1).trim().split(/\s+/);
@@ -614,9 +638,14 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         {label: 'Ctrl+O', detail: 'toggle the latest tool result'},
         {label: 'Ctrl+T', detail: 'open the Team Workbench'},
         {label: 'Ctrl+L', detail: 'clear the visible transcript'},
+        {label: 'Alt+E', detail: 'edit the current draft with VISUAL or EDITOR'},
         {label: 'Esc', detail: busy ? 'interrupt the active run' : 'clear the composer'},
         {label: 'Ctrl+C', detail: 'interrupt, clear, then exit'},
       ]);
+      return true;
+    }
+    if (command === 'editor') {
+      await openExternalEditor(argument);
       return true;
     }
     if (command === 'queue') {
@@ -1338,7 +1367,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       })));
       return true;
     }
-  }, [append, appendList, compact, config, ellipsis, exit, extensions, interactionMode, refreshSession, requestPermission, runner, separator, showToolOutput, tasks, theme, workflows]);
+  }, [append, appendList, compact, config, ellipsis, exit, extensions, interactionMode, openExternalEditor, refreshSession, requestPermission, runner, separator, showToolOutput, tasks, theme, workflows]);
 
   const submit = useCallback(async (raw: string, mode: 'steer' | 'follow-up' | 'normal' = 'normal') => {
     const trimmed = raw.trim();
@@ -1659,6 +1688,10 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       setTeamWorkbenchNotice(undefined);
       return;
     }
+    if (key.meta && inputKey.toLocaleLowerCase() === 'e') {
+      void openExternalEditor(input);
+      return;
+    }
     if (key.ctrl && inputKey.toLocaleLowerCase() === 'r') {
       if (!history.length) return;
       setHistorySearch((current) => current
@@ -1937,7 +1970,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
             } : {})}
           />
           <PromptBar
-            busy={busy}
+            busy={busy || editing}
             value={input}
             width={contentWidth}
             placeholder={busy ? `Steer ${PRODUCT_NAME}${separator}alt+enter queues` : `Type a request${separator}@file${separator}/command`}
@@ -1954,7 +1987,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
               width={Math.max(1, contentWidth - 2)}
               maxVisibleRows={compactComposer ? 1 : 4}
               {...(cursorRequest?.value === input ? {externalCursorOffset: cursorRequest.offset} : {})}
-              focus
+              focus={!editing}
               captureVerticalArrows={suggestionMode === 'mention' || suggestionMode === 'command' || Boolean(historySearch)}
               placeholder={busy ? `follow-up${ellipsis}` : interactionMode === 'ask' ? `trace or explain${ellipsis}` : interactionMode === 'plan' ? `outline the implementation${ellipsis}` : `inspect, change, or verify${ellipsis}`}
             />

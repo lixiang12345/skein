@@ -1,4 +1,4 @@
-import {randomUUID} from 'node:crypto';
+import {createHash, randomUUID} from 'node:crypto';
 import {constants} from 'node:fs';
 import {
   chmod,
@@ -23,6 +23,7 @@ import {
 } from '../utils/namespace.js';
 import {withNamespaceLease} from '../utils/namespace-lease.js';
 import {deterministicEvidenceReceiptValid} from '../agent/evidence-receipt.js';
+import {canonicalJson} from '../utils/canonical-json.js';
 
 const sessionIdSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/);
 
@@ -352,6 +353,17 @@ const pendingInputSchema = z.object({
   reason: z.enum(['explicit_user_choice_missing', 'public_api_compatibility_missing']),
 }).strict();
 
+const sessionForkReceiptSchema = z.object({
+  version: z.literal(1),
+  sessionId: sessionIdSchema,
+  sessionUpdatedAt: z.string().datetime(),
+  sessionSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  sourceWorkspaceSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  messageCount: z.number().int().nonnegative(),
+  toolArtifactsOmitted: z.number().int().nonnegative(),
+  createdAt: z.string().datetime(),
+}).strict();
+
 const sessionSchema = z.object({
   id: sessionIdSchema,
   title: z.string(),
@@ -360,6 +372,7 @@ const sessionSchema = z.object({
   updatedAt: z.string(),
   model: z.string(),
   provider: z.enum(['openai', 'anthropic', 'gemini', 'compatible']),
+  forkedFrom: sessionForkReceiptSchema.optional(),
   messages: z.array(messageSchema),
   tasks: z.array(taskSchema),
   changedFiles: z.array(z.string()),
@@ -452,6 +465,7 @@ export interface SessionSummary {
   updatedAt: string;
   messageCount: number;
   changedFileCount: number;
+  forkedFrom?: string;
 }
 
 export class SessionStore {
@@ -510,6 +524,59 @@ export class SessionStore {
     if (id) return this.load(id);
     const latest = (await this.list())[0];
     return latest ? this.load(latest.id) : undefined;
+  }
+
+  async fork(id: string, options: {title?: string; targetWorkspace?: string} = {}): Promise<Session> {
+    const source = await this.load(id);
+    const now = new Date().toISOString();
+    const sourceSha256 = createHash('sha256').update(canonicalJson(source)).digest('hex');
+    const targetWorkspace = resolve(options.targetWorkspace ?? this.workspace);
+    const {
+      toolArtifacts: omittedArtifacts,
+      tokenLedger: _sourceLedger,
+      lastRun: _sourceLastRun,
+      ...retained
+    } = structuredClone(source);
+    const epochs = (retained.contextEpochs ?? []).slice(-63).map((epoch) => ({
+      ...epoch,
+      ...(epoch.finishedAt ? {} : {finishedAt: now}),
+    }));
+    const forked: Session = {
+      ...retained,
+      id: randomUUID(),
+      title: cleanTitle(options.title ?? `${source.title} (fork)`),
+      workspace: targetWorkspace,
+      createdAt: now,
+      updatedAt: now,
+      forkedFrom: {
+        version: 1,
+        sessionId: source.id,
+        sessionUpdatedAt: source.updatedAt,
+        sessionSha256: sourceSha256,
+        sourceWorkspaceSha256: createHash('sha256').update(source.workspace).digest('hex'),
+        messageCount: source.messages.length,
+        toolArtifactsOmitted: omittedArtifacts?.length ?? 0,
+        createdAt: now,
+      },
+      contextEpochs: [...epochs, {
+        id: randomUUID(),
+        index: Math.max(0, ...epochs.map((epoch) => epoch.index)) + 1,
+        startedAt: now,
+        usage: {inputTokens: 0, outputTokens: 0},
+      }],
+      ...(source.pendingInput ? {
+        pendingInput: {
+          ...structuredClone(source.pendingInput),
+          id: randomUUID(),
+          runId: randomUUID(),
+          createdAt: now,
+        },
+      } : {}),
+      usage: {inputTokens: 0, outputTokens: 0},
+    };
+    const targetStore = targetWorkspace === this.workspace ? this : new SessionStore(targetWorkspace);
+    await targetStore.save(forked);
+    return forked;
   }
 
   async list(): Promise<SessionSummary[]> {
@@ -725,6 +792,7 @@ function toSummary(session: Session): SessionSummary {
     updatedAt: session.updatedAt,
     messageCount: session.messages.length,
     changedFileCount: session.changedFiles.length,
+    ...(session.forkedFrom ? {forkedFrom: session.forkedFrom.sessionId} : {}),
   };
 }
 

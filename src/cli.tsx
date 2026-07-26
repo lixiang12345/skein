@@ -45,11 +45,12 @@ import {
 } from './agent/connection-catalog.js';
 import {discoverWorkspaceRules} from './agent/rules.js';
 import {createProvider} from './providers/index.js';
-import {SessionStore, ToolArtifactStore, type SessionSummary} from './session/index.js';
+import {createSessionWorktree, SessionStore, ToolArtifactStore, type SessionSummary} from './session/index.js';
 import {CheckpointStore} from './checkpoint/index.js';
 import {createDefaultToolRegistry} from './tools/index.js';
 import {atomicWrite} from './tools/write.js';
 import {runDoctor} from './cli/doctor.js';
+import {generateShellCompletion, type CompletionShell} from './cli/completion.js';
 import {
   askConsolePermission,
   HeadlessReporter,
@@ -508,6 +509,50 @@ sessionCommand
     if (options.output) await writeFile(resolve(options.output), markdown, 'utf8');
     else process.stdout.write(markdown);
   });
+sessionCommand
+  .command('fork <id>')
+  .alias('branch')
+  .description('Fork a saved session into a new logical branch')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--title <title>', 'title for the forked session')
+  .option('--branch <name>', 'create an isolated Git branch for the fork')
+  .option('--worktree <path>', 'create the fork in this isolated Git worktree')
+  .option('--yes', 'confirm creation of the branch and worktree')
+  .option('--json', 'print JSON')
+  .action(async (id: string, options: SessionCommandOptions & {
+    title?: string;
+    branch?: string;
+    worktree?: string;
+    yes?: boolean;
+    json?: boolean;
+  }) => {
+    const workspace = workspaceOption(options.workspace);
+    const store = new SessionStore(workspace);
+    const source = await requireSessionSelector(store, id);
+    if (Boolean(options.branch) !== Boolean(options.worktree)) {
+      throw new Error('Use --branch and --worktree together.');
+    }
+    let targetWorkspace: string | undefined;
+    let worktree: Awaited<ReturnType<typeof createSessionWorktree>> | undefined;
+    if (options.branch && options.worktree) {
+      if (!options.yes) throw new Error('Creating a Git branch and worktree requires explicit --yes confirmation.');
+      worktree = await createSessionWorktree({workspace, path: options.worktree, branch: options.branch});
+      targetWorkspace = worktree.path;
+    }
+    const forked = await store.fork(source.id, {
+      ...(options.title ? {title: options.title} : {}),
+      ...(targetWorkspace ? {targetWorkspace} : {}),
+    });
+    if (options.json) printObject(forked, true);
+    else {
+      process.stdout.write(`Forked ${source.id} -> ${forked.id}\n`);
+      if (worktree) process.stdout.write(`Worktree ${worktree.path}  branch ${worktree.branch}  base ${worktree.baseCommit}\n`);
+      process.stdout.write(`Resume with: ${PRODUCT_COMMAND} --workspace ${forked.workspace} --resume ${forked.id}\n`);
+      if (forked.forkedFrom?.toolArtifactsOmitted) {
+        process.stdout.write(`Retained transcript summaries; omitted ${forked.forkedFrom.toolArtifactsOmitted} session-bound tool artifact${forked.forkedFrom.toolArtifactsOmitted === 1 ? '' : 's'}.\n`);
+      }
+    }
+  });
 
 const checkpointCommand = program.command('checkpoint').description('Inspect and restore pre-mutation snapshots');
 checkpointCommand
@@ -524,6 +569,16 @@ checkpointCommand
         process.stdout.write(`${checkpoint.id}  ${checkpoint.createdAt}  ${checkpoint.reason}  (${checkpoint.entries.length} files)\n`);
       }
     }
+  });
+
+program
+  .command('completion <shell>')
+  .description('Generate completion for bash, zsh, or fish')
+  .action((shell: string) => {
+    if (shell !== 'bash' && shell !== 'zsh' && shell !== 'fish') {
+      throw new Error('Unknown shell; use bash, zsh, or fish.');
+    }
+    process.stdout.write(generateShellCompletion(shell as CompletionShell));
   });
 checkpointCommand
   .command('restore <session> <checkpoint>')
