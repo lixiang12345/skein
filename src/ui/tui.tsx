@@ -92,8 +92,17 @@ interface PermissionRequest {
   reason?: string;
   humanOnly?: boolean;
   preview?: PermissionPreview;
+  /** Epoch ms when the card was armed; approvals ignore earlier keystrokes. */
+  armedAt: number;
   resolve: (grant: PermissionGrant) => void;
 }
+
+/**
+ * Keystrokes buffered before the approval card rendered must not grant
+ * anything: a person typing a steering sentence can hit y/a the instant the
+ * card appears. Denial (n/Esc) stays instant — refusing fast is always safe.
+ */
+const PERMISSION_ARMING_MS = 300;
 
 interface AgentQueueItem {
   kind: 'agent';
@@ -350,6 +359,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       category,
       ...(reason ? {reason} : {}),
       ...(preview ? {preview} : {}),
+      armedAt: Date.now(),
       resolve,
     }));
   }, [runner, contentWidth]);
@@ -367,6 +377,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       humanOnly: true,
       ...(reason ? {reason} : {}),
       ...(preview ? {preview} : {}),
+      armedAt: Date.now(),
       resolve: (grant) => resolve(grant === true),
     }));
   }, [runner, contentWidth]);
@@ -1689,11 +1700,12 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
 
   useInput((inputKey, key) => {
     if (permission) {
+      const armed = Date.now() - permission.armedAt >= PERMISSION_ARMING_MS;
       if (key.ctrl && inputKey.toLocaleLowerCase() === 'c') {
         settlePermission(false, true);
-      } else if (inputKey.toLocaleLowerCase() === 'y') {
+      } else if (inputKey.toLocaleLowerCase() === 'y' && armed) {
         settlePermission(true);
-      } else if (inputKey.toLocaleLowerCase() === 'a' && !permission.humanOnly) {
+      } else if (inputKey.toLocaleLowerCase() === 'a' && !permission.humanOnly && armed) {
         settlePermission('session');
       } else if (inputKey.toLocaleLowerCase() === 'n') {
         settlePermission(false);
