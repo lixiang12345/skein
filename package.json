@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.51",
+  "version": "0.3.52",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -24,6 +24,7 @@
   },
   "skein": {
     "releaseNotes": [
+      "A ground-up bilingual EN/zh-CN website rewrite ships under website-fable-5/ with pre-paint language selection, enforced string parity, truthful-claims guards, and its own verification script",
       "New /model command shows the active route, lists the named connection's catalog, and switches the model id within the connection without touching endpoint, protocol, or credentials",
       "New /resume command lists recent sessions and swaps the terminal to one by id prefix, clearing session approvals and steering on switch",
       "Approval cards arm for 300ms before accepting y or a so keystrokes buffered while typing cannot grant anything; deny keys stay instant",
