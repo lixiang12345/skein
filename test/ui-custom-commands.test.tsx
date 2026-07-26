@@ -32,9 +32,11 @@ describe('workspace slash commands', () => {
       harness.stdin.write('/ship v1.2\r');
       await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
       expect(run.mock.calls[0]?.[0]).toBe('# Ship checklist\n\nRun release checks for v1.2.');
-      const output = stripAnsi(harness.output());
-      expect(output).toContain('/ship v1.2');
-      expect(output).toContain('Expanded .agents/commands/ship.md');
+      await vi.waitFor(() => {
+        const output = stripAnsi(harness.output());
+        expect(output).toContain('/ship v1.2');
+        expect(output).toContain('Expanded .agents/commands/ship.md');
+      });
     } finally {
       await harness.cleanup();
     }
