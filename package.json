@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.41",
+  "version": "0.3.42",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -16,6 +16,7 @@
   },
   "skein": {
     "releaseNotes": [
+      "The macOS PTY release gate now derives its expected startup version from package metadata, preventing valid patch releases from failing against a stale literal",
       "Fresh interactive sessions now open as a composer-first workspace with one brand signature, one truthful readiness line, and on-demand /status detail instead of a permanent operations dashboard",
       "Successful visual workspace preparation clears its temporary loading frame before chat while screen readers retain linear announcements, and compact permission receipts take priority over stale inspectors",
       "The original Skein Goose identity adds a user-approved woven-flight raster, deterministic light/dark/mono SVG and PNG marks, a one-cell Unicode terminal signature, ASCII fallback, accessible naming, and asset regression gates",
