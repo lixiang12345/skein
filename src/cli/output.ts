@@ -75,6 +75,7 @@ export class HeadlessReporter {
         type: 'session',
         ...outcome,
         ...(this.options.connection ? {connection: this.options.connection} : {}),
+        response: this.finalResponse,
         session: sessionSummary(session),
       })}\n`);
       return outcome;

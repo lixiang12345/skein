@@ -287,6 +287,9 @@ describe('HeadlessReporter', () => {
     expect(lines[0]).toMatchObject({type: 'done', completion: {status: 'verified'}});
     expect(lines[1]).toMatchObject({type: 'session', session: {lastRun: {status: 'verified'}}});
     expect(lines[1]).toMatchObject({schemaVersion: 1, status: 'verified', exitCode: 0});
+    // Pipelines consuming stream-json get the final assistant text in the
+    // terminal record, matching the json format's response field.
+    expect(lines[1]).toHaveProperty('response');
   });
 
   it('retains content-free duplication audit receipts in JSON and JSONL tool results', () => {

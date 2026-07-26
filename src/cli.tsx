@@ -137,6 +137,11 @@ program
     `  $ ${PRODUCT_COMMAND} search "token budget"             search the local code index`,
     `  $ ${PRODUCT_COMMAND} --continue                        resume the latest session`,
     '',
+    'Exit codes (print mode):',
+    '  0 verified/completed   1 error          2 needs input   3 unverified',
+    '  4 verification failed  5 blocked        6 cancelled     7 max turns',
+    '  8 token budget         9 needs review   (schema: docs/headless-output.schema.json)',
+    '',
     'Learn more:',
     `  Website  ${PRODUCT_WEBSITE_URL}`,
     `  Docs     ${PRODUCT_REPO_URL}/blob/main/docs/ARCHITECTURE.md`,
@@ -2030,6 +2035,11 @@ async function runChat(prompts: string[], options: RootOptions): Promise<void> {
     : options.continue
       ? await loadSessionSelector(store)
       : undefined;
+  // A script that asked to continue must not silently run against a brand-new
+  // session; interactive runs keep the forgiving fresh-session behavior.
+  if (shouldPrint && (options.continue || options.resume !== undefined) && !selectedSession) {
+    throw new Error(`No saved sessions in ${store.workspace}; --continue/--resume need an existing session in print mode.`);
+  }
   if (selectedSession) {
     selectedSession.provider = config.model.provider;
     selectedSession.model = config.model.model;
