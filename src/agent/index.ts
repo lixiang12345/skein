@@ -4,7 +4,13 @@ export {AgentProfileCatalog, builtInProfiles} from './profiles.js';
 export type {AgentProfile} from './profiles.js';
 export {DelegationManager} from './delegation.js';
 export type {DelegationManagerOptions} from './delegation.js';
-export {runExternalAgent, externalAgentCommand, parseExternalAgentOutput, parseExternalAgentTelemetry} from './external-runtime.js';
+export {
+  resolveExternalProviderEnvironment,
+  runExternalAgent,
+  externalAgentCommand,
+  parseExternalAgentOutput,
+  parseExternalAgentTelemetry,
+} from './external-runtime.js';
 export type {
   ExternalAgentAccess,
   ExternalAgentProgress,

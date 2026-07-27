@@ -6,6 +6,7 @@ import {
   externalRuntimeEnvironment,
   parseExternalAgentOutput,
   parseExternalAgentTelemetry,
+  resolveExternalProviderEnvironment,
 } from '../../src/agent/external-runtime.js';
 
 describe('external agent runtimes', () => {
@@ -163,6 +164,38 @@ describe('external agent runtimes', () => {
     expect(() => externalRuntimeEnvironment('claude', '/trusted/bin', {}, {
       apiKeyEnv: 'SKEIN_CLAUDE_RELAY_KEY',
     })).toThrow('External Claude credential environment SKEIN_CLAUDE_RELAY_KEY is not set');
+  });
+
+  it('resolves direct and named Claude routes through the same credential boundary', async () => {
+    await expect(resolveExternalProviderEnvironment({
+      runtime: 'claude',
+      provider: 'anthropic',
+      model: 'claude-test',
+      baseUrl: 'https://direct-relay.example',
+      apiKeyEnv: 'DIRECT_RELAY_KEY',
+    }, undefined, {DIRECT_RELAY_KEY: 'direct-secret'})).resolves.toEqual({
+      baseUrl: 'https://direct-relay.example',
+      credential: 'direct-secret',
+    });
+
+    await expect(resolveExternalProviderEnvironment({
+      runtime: 'claude',
+      connection: 'claude-relay',
+      model: 'claude-test',
+    }, {
+      'claude-relay': {
+        provider: 'anthropic',
+        protocol: 'anthropic-messages',
+        baseUrl: 'https://named-relay.example',
+        auth: {type: 'env', name: 'NAMED_RELAY_KEY', header: 'x-api-key'},
+        headers: {static: {'X-Tenant': 'tenant-a'}},
+      },
+    }, {NAMED_RELAY_KEY: 'named-secret'})).resolves.toEqual({
+      baseUrl: 'https://named-relay.example',
+      apiKeyHeader: 'x-api-key',
+      credential: 'named-secret',
+      customHeaders: {'X-Tenant': 'tenant-a'},
+    });
   });
 
   it('honors explicit no-auth and custom-header boundaries for Claude gateways', () => {

@@ -1,5 +1,6 @@
-import type {AgentModelRoute, ConnectionApiKeyHeader} from '../types.js';
+import type {AgentModelRoute, AgentTeamConfig, ConnectionApiKeyHeader} from '../types.js';
 import {resolveExecutableRuntime, runProcess, type ProcessResult} from '../utils/process.js';
+import {resolveConnectionHeaders, withoutConnectionCredentialHeader} from './connection-auth.js';
 
 export type ExternalAgentRuntime = Exclude<NonNullable<AgentModelRoute['runtime']>, 'api'>;
 export type ExternalAgentAccess = 'read-only' | 'workspace-write';
@@ -42,6 +43,45 @@ export interface ExternalAgentResult {
   durationMs: number;
   usage?: {inputTokens: number; outputTokens: number};
   toolCalls?: number;
+}
+
+/** Resolve one configured external route without exposing credential values to callers or logs. */
+export async function resolveExternalProviderEnvironment(
+  route: AgentModelRoute | undefined,
+  connections: AgentTeamConfig['connections'],
+  environment: NodeJS.ProcessEnv = process.env,
+): Promise<ExternalProviderEnvironment | undefined> {
+  if (!route) return undefined;
+  const connection = route.connection ? connections?.[route.connection] : undefined;
+  if (route.connection && !connection) {
+    throw new Error(`Unknown agent model connection: ${route.connection}`);
+  }
+  const connectionAuth = connection?.auth;
+  const baseUrl = route.baseUrl ?? connection?.baseUrl;
+  const apiKeyEnv = route.apiKeyEnv ?? connection?.apiKeyEnv;
+  if (connectionAuth?.type !== 'none' && connectionAuth?.placement) {
+    throw new Error('External Claude routes support bearer or x-api-key credential placement, not a custom header.');
+  }
+  const apiKeyHeader = connectionAuth?.type !== 'none' ? connectionAuth?.header : undefined;
+  const credentialAuth = apiKeyEnv
+    ? {type: 'env' as const, name: apiKeyEnv, ...(apiKeyHeader ? {header: apiKeyHeader} : {})}
+    : connectionAuth;
+  const credentialResolution = credentialAuth && credentialAuth.type !== 'none'
+    ? await resolveConnectionHeaders(credentialAuth, connection?.headers, {environment})
+    : connection?.headers ? await resolveConnectionHeaders({type: 'none'}, connection.headers, {environment})
+      : undefined;
+  const customHeaders = credentialResolution && credentialAuth
+    ? withoutConnectionCredentialHeader(credentialAuth, credentialResolution.headers)
+    : credentialResolution?.headers;
+  const authNone = connectionAuth?.type === 'none' && !apiKeyEnv;
+  if (!baseUrl && !apiKeyEnv && !apiKeyHeader && !credentialResolution && !authNone) return undefined;
+  return {
+    ...(baseUrl ? {baseUrl} : {}),
+    ...(apiKeyHeader ? {apiKeyHeader} : {}),
+    ...(credentialResolution?.value ? {credential: credentialResolution.value} : {}),
+    ...(authNone ? {authNone: true} : {}),
+    ...(customHeaders && Object.keys(customHeaders).length ? {customHeaders} : {}),
+  };
 }
 
 export async function runExternalAgent(request: ExternalAgentRequest): Promise<ExternalAgentResult> {

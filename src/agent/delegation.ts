@@ -24,7 +24,12 @@ import type {
 import type {PromptContextProvider} from './prompt-context.js';
 import {AgentRunner} from './runner.js';
 import {AgentProfileCatalog, type AgentProfile} from './profiles.js';
-import {runExternalAgent, type ExternalAgentRequest, type ExternalAgentResult} from './external-runtime.js';
+import {
+  resolveExternalProviderEnvironment,
+  runExternalAgent,
+  type ExternalAgentRequest,
+  type ExternalAgentResult,
+} from './external-runtime.js';
 import {TeamRunStore, type TeamRunWriterV4Record} from './team-store.js';
 import {resolveAgentModelRoute} from './model-route.js';
 import {
@@ -845,7 +850,11 @@ export class DelegationManager {
           detail: `running claude inside the isolated writer worktree (hard timeout ${timeoutMs}ms, cost cap $${costBudgetUsd.toFixed(2)})`,
         });
         let streamedToolCalls = 0;
-        const providerEnvironment = await this.externalProviderEnvironment(profile.name);
+        const providerEnvironment = await resolveExternalProviderEnvironment(
+          configuredRoute,
+          this.team.connections,
+          this.options.environment ?? process.env,
+        );
         const external = await (this.options.externalRunner ?? runExternalAgent)({
           runtime: 'claude',
           access: 'workspace-write',
@@ -1373,7 +1382,11 @@ export class DelegationManager {
           : undefined;
         let external;
         try {
-          const providerEnvironment = await this.externalProviderEnvironment(profile.name);
+          const providerEnvironment = await resolveExternalProviderEnvironment(
+            configuredRoute,
+            this.team.connections,
+            this.options.environment ?? process.env,
+          );
           external = await (this.options.externalRunner ?? runExternalAgent)({
             runtime: externalRuntime,
             model,
@@ -1617,40 +1630,6 @@ export class DelegationManager {
     const {route} = resolveAgentModelRoute(this.team, this.options.config.model, profile);
     if (!route) return this.options.config.model;
     return modelConfigFromRoute(route, this.options.config.model, this.options.environment ?? process.env, this.team.connections);
-  }
-
-  private async externalProviderEnvironment(profile: string) {
-    const resolved = resolveAgentModelRoute(this.team, this.options.config.model, profile);
-    const route = resolved.route;
-    if (!route) return undefined;
-    const connection = route.connection ? this.team.connections?.[route.connection] : undefined;
-    const connectionAuth = connection?.auth;
-    const baseUrl = route.baseUrl ?? connection?.baseUrl;
-    const apiKeyEnv = route.apiKeyEnv ?? connection?.apiKeyEnv;
-    if (connectionAuth?.type !== 'none' && connectionAuth?.placement) {
-      throw new Error('External Claude routes support bearer or x-api-key credential placement, not a custom header.');
-    }
-    const apiKeyHeader = connectionAuth?.type !== 'none' ? connectionAuth?.header : undefined;
-    const credentialAuth = apiKeyEnv
-      ? {type: 'env' as const, name: apiKeyEnv, ...(apiKeyHeader ? {header: apiKeyHeader} : {})}
-      : connectionAuth;
-    const environment = this.options.environment ?? process.env;
-    const credentialResolution = credentialAuth && credentialAuth.type !== 'none'
-      ? await resolveConnectionHeaders(credentialAuth, connection?.headers, {environment})
-      : connection?.headers ? await resolveConnectionHeaders({type: 'none'}, connection.headers, {environment})
-        : undefined;
-    const customHeaders = credentialResolution && credentialAuth
-      ? withoutConnectionCredentialHeader(credentialAuth, credentialResolution.headers)
-      : credentialResolution?.headers;
-    const authNone = connectionAuth?.type === 'none' && !apiKeyEnv;
-    if (!baseUrl && !apiKeyEnv && !apiKeyHeader && !credentialResolution && !authNone) return undefined;
-    return {
-      ...(baseUrl ? {baseUrl} : {}),
-      ...(apiKeyHeader ? {apiKeyHeader} : {}),
-      ...(credentialResolution?.value ? {credential: credentialResolution.value} : {}),
-      ...(authNone ? {authNone: true} : {}),
-      ...(customHeaders && Object.keys(customHeaders).length ? {customHeaders} : {}),
-    };
   }
 
   private routeAccounting(profile: string, effective = this.modelRoute(profile)): {

@@ -25,6 +25,7 @@ import {
   evaluateCapabilityShadow,
   formatReviewVerdict,
   listConnectionModels,
+  resolveExternalProviderEnvironment,
   runExternalAgent,
   TeamRunStore,
   type AgentProfile,
@@ -962,7 +963,10 @@ agentsCommand
   .option('--json', 'print JSON')
   .action(async (options: ConfigOptions) => {
     const workspace = workspaceOption(options.workspace);
-    const config = await runtimeConfig(workspace, runtimeOptions(options));
+    const config = await runtimeConfig(workspace, {
+      ...runtimeOptions(options),
+      connectionSelection: 'inspect',
+    });
     const catalog = new AgentProfileCatalog(workspace);
     const profiles = await catalog.discover();
     const roster = profiles.map((profile) => {
@@ -1045,6 +1049,9 @@ agentsCommand
       throw new Error('--max-cost-usd must be a number greater than 0 and at most 1000.');
     }
     const model = options.model ?? resolved?.model ?? config.model.model;
+    const providerEnvironment = runtime === 'claude' && resolved?.runtime === 'claude'
+      ? await resolveExternalProviderEnvironment(resolved, config.agents?.connections, process.env)
+      : undefined;
     const startedAt = Date.now();
     const heartbeat = setInterval(() => {
       const elapsedSeconds = Math.max(1, Math.floor((Date.now() - startedAt) / 1_000));
@@ -1060,6 +1067,7 @@ agentsCommand
         prompt: `${profile.prompt}\n\nUser task:\n${prompt}`,
         timeoutMs,
         ...(runtime === 'claude' ? {costBudgetUsd} : {}),
+        ...(providerEnvironment ? {providerEnvironment} : {}),
       });
     } finally {
       clearInterval(heartbeat);

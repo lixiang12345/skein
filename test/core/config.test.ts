@@ -267,6 +267,15 @@ describe('configuration defaults', () => {
     const summary = JSON.stringify(configSummary(config));
     expect(summary).toContain('env:RELAY_API_KEY');
     expect(summary).toContain('https://relay.example/v1');
+    expect(configSummary(config)).toMatchObject({
+      agents: {routes: {
+        backend: {
+          connection: 'relay',
+          endpoint: 'https://relay.example/v1',
+          credentials: 'env:RELAY_API_KEY/bearer',
+        },
+      }},
+    });
   });
 
   it('requires explicit Responses capabilities for provider-hosted search and loads user pricing', async () => {

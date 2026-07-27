@@ -1126,23 +1126,29 @@ export function configSummary(config: MosaicConfig): Record<string, unknown> {
       } : undefined,
       connections: Object.fromEntries(Object.entries(config.agents.connections ?? {})
         .map(([name, connection]) => [name, connectionConfigSummary(connection)])),
-      routes: Object.fromEntries(Object.entries(config.agents.routes ?? {}).map(([profile, route]) => [profile, {
-        runtime: route.runtime ?? 'api',
-        connection: route.connection,
-        provider: route.provider ?? (route.connection ? config.agents?.connections?.[route.connection]?.provider : undefined),
-        model: route.model,
-        endpoint: redactEndpoint(route.baseUrl),
-        credentials: route.apiKeyEnv ? `env:${route.apiKeyEnv}` : 'inherited when compatible',
-        tokenBudget: route.tokenBudget,
-        maxToolCalls: route.maxToolCalls,
-        timeoutMs: route.timeoutMs,
-        hostedTools: route.hostedTools,
-        pricing: route.pricing ? 'route' : route.connection && config.agents?.connections?.[route.connection]?.pricing
-          ? 'connection'
-          : 'unpriced',
-        costBudgetUsd: route.costBudgetUsd,
-        budgetMode: route.budgetMode,
-      }])),
+      routes: Object.fromEntries(Object.entries(config.agents.routes ?? {}).map(([profile, route]) => {
+        const connection = route.connection ? config.agents?.connections?.[route.connection] : undefined;
+        const connectionAuth = connection?.auth;
+        return [profile, {
+          runtime: route.runtime ?? 'api',
+          connection: route.connection,
+          provider: route.provider ?? connection?.provider,
+          model: route.model,
+          endpoint: redactEndpoint(route.baseUrl ?? connection?.baseUrl),
+          credentials: route.apiKeyEnv
+            ? `env:${route.apiKeyEnv}`
+            : connectionAuth
+              ? connectionAuthSummary(connectionAuth, configuredAuthPlacement(connectionAuth, connection))
+              : connection?.apiKeyEnv ? `env:${connection.apiKeyEnv}` : 'inherited when compatible',
+          tokenBudget: route.tokenBudget,
+          maxToolCalls: route.maxToolCalls,
+          timeoutMs: route.timeoutMs,
+          hostedTools: route.hostedTools,
+          pricing: route.pricing ? 'route' : connection?.pricing ? 'connection' : 'unpriced',
+          costBudgetUsd: route.costBudgetUsd,
+          budgetMode: route.budgetMode,
+        }];
+      })),
     } : undefined,
     mcp: config.mcp ? {
       enabled: config.mcp.enabled,
