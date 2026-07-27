@@ -165,6 +165,24 @@ describe('external agent runtimes', () => {
     })).toThrow('External Claude credential environment SKEIN_CLAUDE_RELAY_KEY is not set');
   });
 
+  it('honors explicit no-auth and custom-header boundaries for Claude gateways', () => {
+    const selected = externalRuntimeEnvironment('claude', '/trusted/bin', {
+      HOME: '/tmp/home',
+      ANTHROPIC_API_KEY: 'must-not-inherit',
+      ANTHROPIC_AUTH_TOKEN: 'must-not-inherit-either',
+    }, {
+      baseUrl: 'http://127.0.0.1:8080',
+      authNone: true,
+      customHeaders: {'X-Tenant': 'tenant-a', 'X-Route': 'coding'},
+    });
+    expect(selected).toEqual({
+      PATH: '/trusted/bin',
+      HOME: '/tmp/home',
+      ANTHROPIC_BASE_URL: 'http://127.0.0.1:8080',
+      ANTHROPIC_CUSTOM_HEADERS: 'X-Tenant: tenant-a\nX-Route: coding',
+    });
+  });
+
   it('never accepts an exit-zero process that crossed its timeout boundary', () => {
     const failure = externalAgentFailure('codex', {
       command: 'codex exec',

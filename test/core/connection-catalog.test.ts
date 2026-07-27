@@ -1,6 +1,7 @@
 import {describe, expect, it} from 'vitest';
 import {
   connectionEnvironmentTypos,
+  connectionCatalogIssues,
   connectionIssues,
   connectionRuntimeInfo,
   discoverConnectionCatalog,
@@ -12,7 +13,7 @@ import {
 import {defaultConfig} from '../../src/config.js';
 
 describe('model connection discovery and selection', () => {
-  it('automatically selects one complete environment connection', () => {
+  it('automatically selects one complete environment connection', async () => {
     const environment = {
       SKEIN_CONNECTIONS: 'local',
       SKEIN_CONNECTION_LOCAL_PROVIDER: 'compatible',
@@ -25,7 +26,7 @@ describe('model connection discovery and selection', () => {
 
     expect(selection).toMatchObject({kind: 'selected', profile: {id: 'local', source: 'environment'}});
     if (selection.kind !== 'selected') throw new Error('Expected one selected connection.');
-    expect(resolveConnectionModel(defaultConfig('/tmp').model, selection.profile, {}, environment)).toMatchObject({
+    expect(await resolveConnectionModel(defaultConfig('/tmp').model, selection.profile, {}, environment)).toMatchObject({
       model: {
         provider: 'compatible',
         protocol: 'openai-responses',
@@ -36,17 +37,20 @@ describe('model connection discovery and selection', () => {
     });
   });
 
-  it('requires a separate model directory for Anthropic relay environment profiles', () => {
+  it('keeps Anthropic inference usable when the gateway has no model catalog', () => {
     const incompleteEnvironment = {
       SKEIN_CONNECTIONS: 'anthropic-relay',
       SKEIN_CONNECTION_ANTHROPIC_RELAY_PROTOCOL: 'anthropic-messages',
       SKEIN_CONNECTION_ANTHROPIC_RELAY_BASE_URL: 'https://relay.example/anthropic',
       SKEIN_CONNECTION_ANTHROPIC_RELAY_AUTH: 'none',
     };
-    const incomplete = discoverConnectionCatalog(defaultConfig('/tmp'), incompleteEnvironment).profiles[0]!;
-    expect(connectionIssues(incomplete, incompleteEnvironment)).toContain(
-      'anthropic relay transport requires an explicit models base URL',
-    );
+    const inferenceOnly = discoverConnectionCatalog(defaultConfig('/tmp'), incompleteEnvironment).profiles[0]!;
+    expect(connectionIssues(inferenceOnly, incompleteEnvironment)).toEqual([]);
+    expect(connectionCatalogIssues(inferenceOnly, incompleteEnvironment)).toEqual([
+      'model catalog is not configured; declare models or set modelsBaseUrl',
+    ]);
+    expect(planConnectionSelection({profiles: [inferenceOnly]}, incompleteEnvironment))
+      .toMatchObject({kind: 'selected'});
 
     const completeEnvironment = {
       ...incompleteEnvironment,
@@ -58,7 +62,7 @@ describe('model connection discovery and selection', () => {
     )).toMatchObject({kind: 'selected', profile: {protocol: 'anthropic-messages'}});
   });
 
-  it('keeps inference and model-directory credential headers explicit in environment profiles', () => {
+  it('keeps inference and model-directory credential headers explicit in environment profiles', async () => {
     const environment = {
       SKEIN_CONNECTIONS: 'native',
       SKEIN_CONNECTION_NATIVE_PROTOCOL: 'anthropic-messages',
@@ -75,7 +79,7 @@ describe('model connection discovery and selection', () => {
       auth: {type: 'env', name: 'RELAY_KEY', header: 'x-api-key'},
       modelsAuthHeader: 'bearer',
     });
-    expect(resolveConnectionModel(defaultConfig('/tmp').model, profile, {}, environment).model)
+    expect((await resolveConnectionModel(defaultConfig('/tmp').model, profile, {}, environment)).model)
       .toMatchObject({apiKeyHeader: 'x-api-key'});
     expect(connectionRuntimeInfo(profile, environment)).toMatchObject({
       authHeader: 'x-api-key', modelsAuthHeader: 'bearer', complete: true,
@@ -84,6 +88,125 @@ describe('model connection discovery and selection', () => {
       ...environment,
       SKEIN_CONNECTION_NATIVE_AUTH_HEADER: 'cookie',
     })).toThrow('must be bearer or x-api-key');
+  });
+
+  it('keeps environment connections provider-neutral and supports the Gemini wire protocol', () => {
+    const environment = {
+      SKEIN_CONNECTIONS: 'enterprise,google',
+      SKEIN_CONNECTION_ENTERPRISE_PROVIDER: 'company-gateway',
+      SKEIN_CONNECTION_ENTERPRISE_PROTOCOL: 'anthropic-messages',
+      SKEIN_CONNECTION_ENTERPRISE_BASE_URL: 'https://gateway.example/anthropic',
+      SKEIN_CONNECTION_ENTERPRISE_AUTH: 'none',
+      SKEIN_CONNECTION_GOOGLE_PROVIDER: 'gemini',
+      SKEIN_CONNECTION_GOOGLE_PROTOCOL: 'gemini',
+      SKEIN_CONNECTION_GOOGLE_AUTH: 'env',
+      SKEIN_CONNECTION_GOOGLE_API_KEY_ENV: 'GOOGLE_RELAY_KEY',
+      GOOGLE_RELAY_KEY: 'not-persisted',
+    };
+    expect(discoverConnectionCatalog(defaultConfig('/tmp'), environment).profiles).toEqual([
+      expect.objectContaining({
+        id: 'enterprise', provider: 'compatible', providerId: 'company-gateway',
+        protocol: 'anthropic-messages',
+      }),
+      expect.objectContaining({id: 'google', provider: 'gemini', providerId: 'gemini', protocol: 'gemini'}),
+    ]);
+  });
+
+  it('keeps native auth conventions out of duplicate request headers', async () => {
+    const anthropicEnvironment = {ANTHROPIC_API_KEY: 'anthropic-secret'};
+    const anthropic = discoverConnectionCatalog({
+      ...defaultConfig('/tmp'),
+      connections: {profiles: {native: {
+        provider: 'anthropic', protocol: 'anthropic-messages', defaultModel: 'claude',
+        auth: {type: 'env', name: 'ANTHROPIC_API_KEY'},
+      }}},
+    }, anthropicEnvironment).profiles[0]!;
+    expect(anthropic.auth).toEqual({type: 'env', name: 'ANTHROPIC_API_KEY', header: 'x-api-key'});
+    expect((await resolveConnectionModel(
+      defaultConfig('/tmp').model,
+      anthropic,
+      {},
+      anthropicEnvironment,
+    )).model).toMatchObject({provider: 'anthropic', apiKey: 'anthropic-secret', apiKeyHeader: 'x-api-key'});
+    expect((await resolveConnectionModel(
+      defaultConfig('/tmp').model,
+      anthropic,
+      {},
+      anthropicEnvironment,
+    )).model.requestHeaders).toBeUndefined();
+
+    const gatewayEnvironment = {GATEWAY_KEY: 'gateway-secret'};
+    const geminiGateway = discoverConnectionCatalog({
+      ...defaultConfig('/tmp'),
+      connections: {profiles: {gateway: {
+        provider: 'compatible', providerId: 'company-gateway', protocol: 'gemini',
+        baseUrl: 'https://gateway.example/gemini', defaultModel: 'gemini-company',
+        auth: {type: 'env', name: 'GATEWAY_KEY'},
+      }}},
+    }, gatewayEnvironment).profiles[0]!;
+    expect((await resolveConnectionModel(
+      defaultConfig('/tmp').model,
+      geminiGateway,
+      {},
+      gatewayEnvironment,
+    )).model).toMatchObject({
+      provider: 'compatible', requestHeaders: {authorization: 'Bearer gateway-secret'},
+    });
+    expect((await resolveConnectionModel(
+      defaultConfig('/tmp').model,
+      geminiGateway,
+      {},
+      gatewayEnvironment,
+    )).model).not.toHaveProperty('apiKey');
+
+    const nativeGeminiEnvironment = {GEMINI_API_KEY: 'gemini-secret'};
+    const nativeGemini = discoverConnectionCatalog({
+      ...defaultConfig('/tmp'),
+      connections: {profiles: {native: {
+        provider: 'gemini', protocol: 'gemini', baseUrl: 'https://gemini-proxy.example/v1beta',
+        defaultModel: 'gemini-pro', auth: {type: 'env', name: 'GEMINI_API_KEY'},
+      }}},
+    }, nativeGeminiEnvironment).profiles[0]!;
+    expect(connectionRuntimeInfo(nativeGemini, nativeGeminiEnvironment)).not.toHaveProperty('authHeader');
+    expect((await resolveConnectionModel(
+      defaultConfig('/tmp').model,
+      nativeGemini,
+      {},
+      nativeGeminiEnvironment,
+    )).model).toMatchObject({provider: 'gemini', apiKey: 'gemini-secret'});
+  });
+
+  it('requires explicit endpoints for incompatible native protocol and credential combinations', () => {
+    const mismatched = discoverConnectionCatalog({
+      ...defaultConfig('/tmp'),
+      connections: {profiles: {mismatched: {
+        provider: 'anthropic', protocol: 'openai-responses', defaultModel: 'model',
+        auth: {type: 'env', name: 'ANTHROPIC_API_KEY'},
+      }}},
+    }, {ANTHROPIC_API_KEY: 'configured'}).profiles[0]!;
+    expect(connectionIssues(mismatched, {ANTHROPIC_API_KEY: 'configured'})).toContain(
+      'provider and wire protocol require an explicit base URL',
+    );
+
+    const publicOfficial = discoverConnectionCatalog({
+      ...defaultConfig('/tmp'),
+      connections: {profiles: {public: {
+        provider: 'openai', protocol: 'openai-responses', defaultModel: 'model', auth: {type: 'none'},
+      }}},
+    }).profiles[0]!;
+    expect(connectionIssues(publicOfficial)).toContain('official provider endpoint requires authentication');
+
+    const collidedHeaders = discoverConnectionCatalog({
+      ...defaultConfig('/tmp'),
+      connections: {profiles: {collision: {
+        provider: 'compatible', protocol: 'openai-chat', baseUrl: 'https://relay.example/v1',
+        defaultModel: 'model', auth: {type: 'env', name: 'RELAY_KEY'},
+        headers: {env: {Authorization: 'OTHER_KEY'}},
+      }}},
+    }, {RELAY_KEY: 'configured', OTHER_KEY: 'also-configured'}).profiles[0]!;
+    expect(connectionIssues(collidedHeaders, {
+      RELAY_KEY: 'configured', OTHER_KEY: 'also-configured',
+    })).toContain('header Authorization conflicts with credential placement authorization');
   });
 
   it('keeps public model-directory authentication independent from inference credentials', () => {

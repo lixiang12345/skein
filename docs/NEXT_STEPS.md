@@ -371,18 +371,18 @@ Implementation progress:
   stopped attempt in telemetry, and feeds only the fresh result into the
   caller's aggregation. Completed attempts remain immutable until the next
   report-inspection increment.
-- Named `agents.connections` and `SKEIN_CONNECTION_*` profiles now let the
+- Top-level `connections.profiles`, legacy `agents.connections`, and
+  `SKEIN_CONNECTION_*` profiles let the
   primary agent and API routes share one provider, protocol, base URL, default
   model, and typed authentication reference. One complete connection is
   selected automatically; multiple candidates require a TTY choice or
-  `--connection` in headless mode. New connections are relay-only and accept
-  only `env` or `none`; subscription-backed official CLIs remain isolated
-  delegated runtimes rather than primary connections.
-- `skein agents connections` and `/connections` expose redacted connection
-  status and route counts. Repository-owned connections are stripped until
-  project config is trusted, just like direct model routes.
-- `skein agents models <connection>` queries the relay's independent
-  OpenAI-style `/models` endpoint. A 32-entry process-local cache uses a
+  `--connection` in headless mode. Provider labels and wire protocols are
+  independent; auth supports `env`, bounded `command` helpers, and `none`.
+- `skein connections list/show/doctor/test` and `/connections` expose redacted
+  connection status. Repository config can never own endpoint/auth/header/default
+  connection authority, even when executable project config is trusted.
+- `skein connections models <connection>` merges declared models with an
+  optional remote catalog. A 32-entry process-local cache uses a
   15-minute TTL, ETag revalidation, endpoint/credential fingerprint isolation,
   and hard invalidation on `401`/`403`; it never stores credential values or
   treats stale data as an authentication success.
@@ -391,11 +391,10 @@ Implementation progress:
   routes only contain model or provider overrides when needed. CLI and TUI
   surfaces label inherited versus overridden routes, and unknown defaults fail
   validation before any agent starts.
-- `skein agents setup` now provides a guided user-level setup for a shared
-  connection and default model, with explicit Responses, Chat Completions, and
-  Anthropic Messages transports plus separate inference/model-catalog bases.
-  The first-run TUI uses the same relay-only model and stores only credential
-  environment-variable names while preserving other user configuration.
+- `skein connections add` provides guided/noninteractive user-level setup with
+  explicit Responses, Chat Completions, Anthropic Messages, and Gemini
+  transports; independent inference/catalog auth and headers; command helpers;
+  and manual catalog mode. `agents setup/connections/models` remain aliases.
 - The Responses transport uses `POST /responses`, `store: false`, typed SSE,
   normalized text/function/usage events, and exact output-item replay for
   stateless tool and reasoning continuation. It never retries a failed request
@@ -405,9 +404,8 @@ Implementation progress:
   connection readiness without reading or printing their values. Custom native
   endpoints cannot inherit official provider keys, and external CLI runtimes
   receive a minimal environment allowlist instead of the parent secret set.
-- This relay-only connection catalog, Responses transport, independent model
-  directory, redacted status, and delegated-runtime isolation slice is complete
-  and release-verified in `0.3.30`.
+- The earlier relay catalog shipped in `0.3.30`; the provider-neutral,
+  first-class connection/auth architecture supersedes that narrower design.
 - Team budgets default to `observe`: telemetry is retained, but configured
   thresholds do not warn or terminate work. `guard` adds non-blocking threshold
   warnings, while `strict` is an explicit hard-stop policy for controlled jobs.

@@ -2,7 +2,7 @@ import React, {useCallback, useEffect, useMemo, useReducer, useRef} from 'react'
 import {Box, render, Text, useApp, useInput, useWindowSize} from 'ink';
 import TextInput from 'ink-text-input';
 import {redactEndpoint, saveUserConfig} from '../config.js';
-import {createAgentConnectionSetup, mergeAgentSetup} from '../agent/model-setup.js';
+import {createAgentConnectionSetup} from '../agent/model-setup.js';
 import {PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
 import type {
   AgentTeamConfig,
@@ -16,7 +16,7 @@ import {displayWidth, padDisplay, sanitizeTerminalText, truncateDisplay} from '.
 import {resolveKittyKeyboardConfig, resolveTerminalAccessibility} from './terminal-capabilities.js';
 import {resolveThemeWithColor, ThemeProvider, useTheme} from './theme.js';
 
-export type RelayProtocol = Exclude<ConnectionProtocol, 'gemini'>;
+export type RelayProtocol = ConnectionProtocol;
 export type OnboardingStep =
   | 'relay-protocol'
   | 'endpoint'
@@ -49,7 +49,10 @@ export interface OnboardingState {
 }
 
 export interface OnboardingConfigPatch {
-  agents: Partial<AgentTeamConfig>;
+  connections: {
+    defaultConnection: string;
+    profiles: NonNullable<AgentTeamConfig['connections']>;
+  };
 }
 
 export type OnboardingResult =
@@ -70,9 +73,10 @@ const relayProtocols: Array<{value: RelayProtocol; label: string; detail: string
   {value: 'openai-responses', label: 'OpenAI Responses', detail: 'Recommended · /responses · stateless history replay'},
   {value: 'openai-chat', label: 'OpenAI Chat Completions', detail: 'Compatibility · /chat/completions'},
   {value: 'anthropic-messages', label: 'Anthropic Messages', detail: 'Compatibility · Anthropic SDK-style base URL'},
+  {value: 'gemini', label: 'Gemini generateContent', detail: 'Explicit Gemini wire format · official API or compatible gateway'},
 ];
 
-const authMethods: Array<{value: ConnectionAuth['type']; label: string; detail: string}> = [
+const authMethods: Array<{value: 'env' | 'none'; label: string; detail: string}> = [
   {value: 'env', label: 'Environment variable', detail: 'Recommended · only the variable name is saved'},
   {value: 'none', label: 'No authentication', detail: 'For trusted keyless relays or local servers'},
 ];
@@ -88,7 +92,7 @@ const modelAuthMethods: Array<{value: ConnectionModelAuth; label: string; detail
   {value: 'none', label: 'No model authentication', detail: 'Public catalog · never send the inference key to this endpoint'},
 ];
 
-const DEFAULT_CONNECTION_NAME = 'primary-relay';
+const DEFAULT_CONNECTION_NAME = 'primary';
 
 const forbiddenDirectionControls = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
 const directionControls = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu;
@@ -189,7 +193,7 @@ export function buildOnboardingConfig(state: OnboardingState): OnboardingConfigP
   const protocol = state.draft.relayProtocol;
   const model = validateModel(state.draft.model);
   const endpoint = validateRelayBaseUrl(state.draft.baseUrl);
-  const modelsEndpoint = validateModelsBaseUrl(state.draft.modelsBaseUrl, protocol === 'anthropic-messages');
+  const modelsEndpoint = validateModelsBaseUrl(state.draft.modelsBaseUrl, false);
   const auth = state.draft.auth;
   const apiKeyEnv = validateEnvironmentName(state.draft.apiKeyEnv, auth === 'env');
   if (!protocol || !model.ok || !endpoint.ok || !modelsEndpoint.ok || !auth || !apiKeyEnv.ok) {
@@ -209,7 +213,7 @@ export function buildOnboardingConfig(state: OnboardingState): OnboardingConfigP
     ...(apiKeyEnv.value ? {apiKeyEnv: apiKeyEnv.value} : {}),
     defaultModel: model.value,
   });
-  return {agents: mergeAgentSetup(undefined, setup)};
+  return {connections: {defaultConnection: setup.defaultConnection, profiles: setup.connections}};
 }
 
 function selectCurrentOption(state: OnboardingState): OnboardingState {
@@ -259,7 +263,7 @@ function submitInput(state: OnboardingState, field: EditableField, rawValue: str
     return advance({...next, draft: {...next.draft, baseUrl: endpoint.value}}, 'models-endpoint');
   }
   if (field === 'modelsBaseUrl') {
-    const endpoint = validateModelsBaseUrl(value, state.draft.relayProtocol === 'anthropic-messages');
+    const endpoint = validateModelsBaseUrl(value, false);
     if (!endpoint.ok) return {...next, error: endpoint.error};
     return advance({...next, draft: {...next.draft, modelsBaseUrl: endpoint.value}}, 'model');
   }
@@ -299,7 +303,7 @@ function validateModel(value: string): {ok: true; value: string} | {ok: false; e
 
 function validateModelsBaseUrl(value: string, required: boolean): {ok: true; value: string} | {ok: false; error: string} {
   if (!value.trim() && !required) return {ok: true, value: ''};
-  if (!value.trim()) return {ok: false, error: 'Anthropic transport requires an OpenAI-style models base URL.'};
+  if (!value.trim()) return {ok: false, error: 'Enter a model catalog base URL.'};
   return validateRelayBaseUrl(value);
 }
 
@@ -549,8 +553,9 @@ function inputFieldForStep(state: OnboardingState): {field: EditableField; label
   if (state.step === 'models-endpoint') return {
     field: 'modelsBaseUrl',
     label: 'Models base URL',
-    placeholder: state.draft.relayProtocol === 'anthropic-messages' ? 'https://relay.example/v1' : 'blank uses inference base',
-    required: state.draft.relayProtocol === 'anthropic-messages',
+    placeholder: state.draft.relayProtocol === 'anthropic-messages' || state.draft.relayProtocol === 'gemini'
+      ? 'blank uses only the configured model id' : 'blank uses inference base',
+    required: false,
   };
   if (state.step === 'model') return {field: 'model', label: 'Model identifier', placeholder: 'provider-model-id', required: true};
   if (state.step === 'api-key-env') return {
@@ -587,11 +592,11 @@ function connectionSummary(state: OnboardingState): string {
 }
 
 function titleForStep(step: OnboardingStep): string {
-  if (step === 'relay-protocol') return 'Choose the relay protocol';
+  if (step === 'relay-protocol') return 'Choose the wire protocol';
   if (step === 'endpoint') return 'Enter the inference base URL';
   if (step === 'models-endpoint') return 'Enter the model catalog base URL';
   if (step === 'model') return 'Enter the model identifier';
-  if (step === 'auth') return 'Choose relay authentication';
+  if (step === 'auth') return 'Choose connection authentication';
   if (step === 'auth-header') return 'Choose inference authentication';
   if (step === 'models-auth') return 'Choose model catalog authentication';
   if (step === 'api-key-env') return 'Reference the credential environment';
@@ -600,13 +605,13 @@ function titleForStep(step: OnboardingStep): string {
 }
 
 function descriptionForStep(state: OnboardingState): string {
-  if (state.step === 'relay-protocol') return 'Skein connects through third-party relays only. Responses is recommended; Chat Completions and Anthropic Messages remain explicit compatibility transports.';
+  if (state.step === 'relay-protocol') return 'Provider identity and wire format are separate. Choose the documented protocol; Skein never guesses from the model name.';
   if (state.step === 'endpoint') return 'Remote endpoints require HTTPS. Loopback development servers may use HTTP.';
-  if (state.step === 'models-endpoint') return state.draft.relayProtocol === 'anthropic-messages'
-    ? 'Anthropic inference bases often differ from the OpenAI-style /models directory, so this value is required.'
+  if (state.step === 'models-endpoint') return state.draft.relayProtocol === 'anthropic-messages' || state.draft.relayProtocol === 'gemini'
+    ? 'Leave blank when this provider has no compatible catalog; the configured model remains usable.'
     : 'Leave blank when GET /models uses the same base as inference.';
   if (state.step === 'model') return 'Use the exact model identifier returned or documented by the relay.';
-  if (state.step === 'auth') return 'Credentials are referenced from the environment and are never written to Skein configuration.';
+  if (state.step === 'auth') return `This quick setup supports env or none. For command helpers and custom headers, run ${PRODUCT_NAME.toLowerCase()} connections add in a shell.`;
   if (state.step === 'auth-header') return 'Relays disagree here: OpenRouter documents Bearer while Anthropic SDK-compatible gateways commonly use x-api-key. Skein sends only the selected form.';
   if (state.step === 'models-auth') return 'Model catalogs may use a different header or be public. Choose none to guarantee the inference key is not sent to the catalog endpoint.';
   if (state.step === 'api-key-env') return 'Enter the variable name only. It must already exist in this process environment.';
@@ -625,6 +630,7 @@ function footerForStep(state: OnboardingState, width: number): string {
 }
 
 function relayLabel(protocol?: RelayProtocol): string {
+  if (protocol === 'gemini') return 'Gemini generateContent';
   if (protocol === 'anthropic-messages') return 'Anthropic Messages';
   if (protocol === 'openai-chat') return 'OpenAI Chat Completions';
   return 'OpenAI Responses';

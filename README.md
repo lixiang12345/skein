@@ -95,7 +95,7 @@ The product rationale and competitor research are in
 ## Requirements
 
 - Node.js 22.16 or newer
-- A third-party relay credential in an environment variable, or a keyless local relay
+- A model-provider/relay credential reference, or a keyless local connection
 - Optional: Git and ripgrep
 
 ## Install
@@ -148,12 +148,12 @@ cd your-project
 skein                      # first run opens guided relay setup, then the workspace
 ```
 
-Or fully headless (CI and scripts) — export a relay credential, save only its
-environment-variable name, and print one verified result:
+Or fully headless (CI and scripts) — define a provider-neutral connection,
+save only its credential reference, and print one verified result:
 
 ```bash
 export TEAM_RELAY_API_KEY=...
-skein agents setup --yes --name team-relay --provider compatible \
+skein connections add --yes --name team-relay --provider company-gateway \
   --protocol openai-responses --base-url https://relay.example/v1 \
   --api-key-env TEAM_RELAY_API_KEY --model provider/coding-model
 skein -p "summarize the failing tests" --output-format json
@@ -164,14 +164,11 @@ exit-code contract (`0` verified … `9` needs review), so pipelines can gate on
 the result without parsing prose.
 
 On the first interactive `skein` run, an incomplete model configuration opens
-a keyboard-driven relay setup before any session is created. Choose OpenAI
-Responses (recommended), OpenAI Chat Completions, or Anthropic Messages, then
-provide the inference base URL, optional independent model-catalog base URL,
-model ID, inference authentication, and independent model-catalog
-authentication. A catalog can explicitly use `none` so the inference key is
-never sent there. Skein does not implement official account login for primary
-connections and never guesses the protocol or destination. Signed-in coding
-CLIs remain separate delegated runtimes.
+a keyboard-driven connection setup before any session is created. A connection
+has an independent provider label and wire protocol (`openai-responses`,
+`openai-chat`, `anthropic-messages`, or `gemini`), plus an inference endpoint,
+optional model catalog, credential source, request headers, and default model.
+Skein never guesses a protocol from the provider or model name.
 
 Before a new interactive session, Skein prepares the workspace before opening the composer. It
 shows the real local index phases, reloads the persisted artifact, verifies its
@@ -185,21 +182,35 @@ environment-variable name:
 
 ```bash
 export TEAM_RELAY_API_KEY=...
-skein agents setup --yes \
+skein connections add --yes \
   --name team-relay \
-  --provider compatible \
+  --provider company-gateway \
   --protocol openai-responses \
   --base-url https://relay.example/v1 \
   --api-key-env TEAM_RELAY_API_KEY \
   --model provider/coding-model
 ```
 
+The same connection command works in PowerShell; only the shell syntax for
+setting the environment variable changes:
+
+```powershell
+$env:TEAM_RELAY_API_KEY = "..."
+skein connections add --yes `
+  --name team-relay `
+  --provider company-gateway `
+  --protocol openai-responses `
+  --base-url https://relay.example/v1 `
+  --api-key-env TEAM_RELAY_API_KEY `
+  --model provider/coding-model
+```
+
 For a keyless local relay, select `none` explicitly:
 
 ```bash
-skein agents setup --yes \
+skein connections add --yes \
   --name local \
-  --provider compatible \
+  --provider ollama \
   --protocol openai-responses \
   --base-url http://localhost:11434/v1 \
   --auth none \
@@ -220,8 +231,11 @@ export SKEIN_CONNECTION_LOCAL_MODEL=coder
 skein --connection local
 ```
 
-Use `skein agents connections`, `/connections`, or `skein doctor` to inspect
-redacted source, protocol, endpoint, and authentication readiness. The common
+Use `skein connections list`, `skein connections show <name>`,
+`skein connections doctor`, `/connections`, or `skein doctor` to inspect
+redacted source, protocol, endpoint, authentication, and catalog readiness.
+`skein connections test <name>` resolves auth and tests the catalog but never
+calls inference. The common
 misspellings `SEKIN_API` and `SKEIN_BASEURL` are diagnostic-only and never
 treated as supported credential aliases.
 
@@ -234,16 +248,57 @@ model name:
 - `openai-chat` uses `POST /chat/completions` and OpenAI message/tool-call
   shapes for relays that have not implemented Responses.
 - `anthropic-messages` uses the relay's Anthropic SDK-style base and appends
-  `/v1/messages` when needed. Configure `modelsBaseUrl` separately because its
-  model directory is still commonly OpenAI-shaped at `/v1/models`.
+  `/v1/messages` when needed. A model catalog is optional.
+- `gemini` uses the Gemini generate/stream content wire format. It is explicit,
+  just like every other transport.
 
-Inference authentication is explicit `Authorization: Bearer`, `x-api-key`, or
-connection-wide `none`. The independent model catalog can inherit that choice,
-select the other header, or use `modelsAuthHeader: none`; credentials, queries,
-and URL userinfo are never stored in connection metadata. Remote relays must
-use HTTPS in onboarding, while loopback endpoints may use HTTP. The first-run
-flow writes only endpoint/model metadata and the credential
-environment-variable name to owner-only user configuration.
+`baseUrl` is the inference API base, not a model-discovery URL. Prefer the SDK
+root documented by the provider; for legacy compatibility, OpenAI/Anthropic
+bases that already end in the expected final endpoint are preserved. Otherwise
+Skein appends the path required by the selected wire protocol:
+
+| Protocol | Request derived from `baseUrl` |
+| --- | --- |
+| `openai-responses` | `POST <base>/responses` |
+| `openai-chat` | `POST <base>/chat/completions` |
+| `anthropic-messages` | `POST <base>/v1/messages` (or `<base>/messages` when the base already ends in `/v1`) |
+| `gemini` | `POST <base>/models/<model>:generateContent` |
+
+`modelsBaseUrl` and `modelsPath` control only model discovery. They may point
+at another host, use independent auth/headers, or be omitted. `skein
+connections models <name>` merges declared model IDs with the remote catalog;
+`--no-model-discovery --declared-model <id>` is the deterministic choice for a
+gateway without `/models`. A catalog failure never makes a valid inference
+connection unusable, and `connections test` never sends an inference request.
+
+Authentication sources are `env`, `command`, or `none`. `command` runs one
+argv-based credential helper with no shell or stdin, a hard timeout, bounded
+stdout, a minimal environment, explicit `passEnv`, and an in-memory refresh
+cache. This makes macOS Keychain, Windows Credential Manager, Linux Secret
+Service, Vault, cloud CLIs, and enterprise helpers optional integrations rather
+than core dependencies. Bearer, `x-api-key`, and custom credential headers are
+supported. The independent model catalog can inherit inference auth or use its
+own env/command/none source and headers.
+
+Literal credential headers are rejected; use auth or an environment-backed
+header. URLs cannot contain userinfo, query parameters, or fragments. Project
+configuration cannot define or redirect connections, provider endpoints,
+credential sources, headers, or the default connection—even with
+`--trust-project-config`. Those authorities remain user/managed configuration.
+
+Gateways without `/models` can use a manual catalog:
+
+```bash
+skein connections add --yes \
+  --name private-gateway --provider company-gateway \
+  --protocol anthropic-messages --base-url https://gateway.example \
+  --auth command --auth-command /usr/local/bin/fetch-gateway-token \
+  --auth-header bearer --declared-model company/claude \
+  --no-model-discovery --model company/claude
+```
+
+Skein stores the helper command and argv, never its stdout. Do not put a secret
+literal in helper arguments; let the helper obtain it from its own secure store.
 
 A relay may expose one protocol root or separate OpenAI- and Anthropic-style
 roots. Skein does not assume either shape. Model each transport as its own named
@@ -255,10 +310,10 @@ Observed gateway shapes are deliberately examples, not presets:
 
 | Gateway | Responses base | Anthropic base | Models base/auth |
 | --- | --- | --- | --- |
-| OpenRouter | `https://openrouter.ai/api/v1` | SDK base `https://openrouter.ai/api` | `.../api/v1`; Bearer available |
-| Vercel AI Gateway | `https://ai-gateway.vercel.sh/v1` | `https://ai-gateway.vercel.sh` | `.../v1`; public catalog |
-| New API | deployment base ending in `/v1` | commonly the same `/v1` base | commonly `/v1`; deployment-defined auth |
-| LiteLLM | proxy root or `/v1` SDK base | root for unified Messages, `/anthropic` for passthrough | deployment-defined |
+| OpenRouter | deployment-documented Responses root | deployment-documented Messages root | deployment-documented |
+| Vercel AI Gateway | deployment-documented Responses root | deployment-documented Messages root | deployment-documented |
+| New API | deployment base commonly ending in `/v1` | commonly the same root | deployment-defined |
+| LiteLLM | proxy root or `/v1` SDK base | unified/passthrough root | deployment-defined |
 
 Skein never turns this table into URL or authentication detection. Configure
 each transport and catalog exactly as the selected relay documents it.
@@ -281,9 +336,9 @@ The non-interactive setup command can persist the connection side of that
 contract without storing a key or making a model request:
 
 ```bash
-skein agents setup --yes \
+skein connections add --yes \
   --name research-relay \
-  --provider compatible \
+  --provider company-gateway \
   --protocol openai-responses \
   --base-url https://relay.example/v1 \
   --auth env \
@@ -336,13 +391,15 @@ Configure a user relay connection, index, and start the TUI:
 
 ```bash
 cd /path/to/project
-skein agents setup
+skein connections add
 skein index
 skein
 ```
 
-Existing direct `model.provider` configuration remains readable for backward
-compatibility, but new setup and connection discovery are relay-only.
+Existing direct `model.provider`, `agents.connections`, `agents setup`,
+`agents connections`, and `agents models` remain readable compatibility paths.
+New configuration is stored under top-level `connections` and uses the
+first-class `skein connections ...` command family.
 
 Use `@path` to guarantee a file is attached to the current request:
 
@@ -517,6 +574,10 @@ exit-code contract:
 skein [prompt]                       interactive workspace
 skein --print [prompt]               headless agent run
 skein init                           project setup
+skein connections add               add/update a user-owned model connection
+skein connections list|show         inspect redacted connection metadata
+skein connections models|use        inspect models or choose the user default
+skein connections test|doctor       verify auth/catalog or diagnose locally
 skein doctor                         prerequisite and fallback checks
 skein doctor --visual                terminal rendering and input calibration
 skein update                         upgrade to the latest release
@@ -549,10 +610,10 @@ Run `skein <command> --help` for complete flags.
 A cloned repository must not be able to execute commands merely by committing
 `.mosaic/config.*`. Skein therefore ignores project-defined hooks, custom
 verification commands, checkpoint overrides, and
-permission policy by default. It also ignores remote model provider/endpoint
-overrides and their project-stored API keys, plus optional LSP/background
-executables; loopback compatible endpoints and local credentials remain
-available for local models. Review the file first,
+permission policy by default. Provider endpoints, connections, credential
+sources, request headers, and the default connection are never project-owned,
+even after executable project trust. Optional LSP/background executables still
+require trust. Review the file first,
 then opt in explicitly:
 
 ```bash
@@ -563,11 +624,11 @@ skein --trust-project-config index
 User-level configuration and an explicitly supplied `--config` file remain the
 recommended locations for trusted automation policy.
 
-`skein init` records an owner-only fingerprint of the model settings it just
-created under `~/.mosaic` (or `SKEIN_HOME`). This lets Anthropic, Gemini, and
-remote compatible setup work normally without trusting project hooks or
-permissions. If those model settings are later edited, that narrow routing
-trust is invalidated automatically.
+`skein init` writes only data-safe project state and creates the selected model
+connection in owner-only user configuration. It rejects `--api-key`; use an
+`env` or `command` credential reference. Legacy project model-trust
+fingerprints remain readable for state migration but no longer grant endpoint
+or credential authority.
 
 ## Configuration
 

@@ -61,7 +61,7 @@ describe('first-run onboarding state machine', () => {
         apiKeyEnv: 'RELAY_API_KEY',
       }),
     };
-    expect(buildOnboardingConfig(state).agents.connections?.['primary-relay']).toMatchObject({
+    expect(buildOnboardingConfig(state).connections.profiles.primary).toMatchObject({
       auth: {type: 'env', name: 'RELAY_API_KEY', header: 'x-api-key'},
       modelsAuthHeader: 'x-api-key',
     });
@@ -81,7 +81,7 @@ describe('first-run onboarding state machine', () => {
         apiKeyEnv: 'RELAY_API_KEY',
       }),
     };
-    expect(buildOnboardingConfig(state).agents.connections?.['primary-relay']).toMatchObject({
+    expect(buildOnboardingConfig(state).connections.profiles.primary).toMatchObject({
       auth: {type: 'env', name: 'RELAY_API_KEY', header: 'bearer'},
       modelsAuthHeader: 'none',
     });
@@ -100,11 +100,10 @@ describe('first-run onboarding state machine', () => {
 
     expect(state.step).toBe('confirm');
     expect(buildOnboardingConfig(state)).toEqual({
-      agents: {
-        defaultConnection: 'primary-relay',
-        defaultModel: 'claude-relay-model',
-        connections: {
-          'primary-relay': {
+      connections: {
+        defaultConnection: 'primary',
+        profiles: {
+          primary: {
             provider: 'compatible',
             protocol: 'anthropic-messages',
             baseUrl: 'https://relay.example/anthropic',
@@ -128,9 +127,9 @@ describe('first-run onboarding state machine', () => {
 
     expect(state.step).toBe('confirm');
     expect(buildOnboardingConfig(state)).toMatchObject({
-      agents: {
-        defaultConnection: 'primary-relay',
-        connections: {'primary-relay': {
+      connections: {
+        defaultConnection: 'primary',
+        profiles: {primary: {
           provider: 'compatible', protocol: 'openai-responses', auth: {type: 'none'},
         }},
       },
@@ -188,7 +187,7 @@ describe('first-run onboarding state machine', () => {
     }
   });
 
-  it('keeps required model-catalog and missing credential failures in place with actionable errors', () => {
+  it('allows a missing model catalog while keeping missing credential failures actionable', () => {
     const catalogState: OnboardingState = {
       step: 'models-endpoint',
       history: ['relay-protocol', 'endpoint'],
@@ -199,8 +198,8 @@ describe('first-run onboarding state machine', () => {
     const missingCatalog = onboardingReducer(catalogState, {
       type: 'SUBMIT_INPUT', field: 'modelsBaseUrl', value: '',
     });
-    expect(missingCatalog.step).toBe('models-endpoint');
-    expect(missingCatalog.error).toContain('requires an OpenAI-style models base URL');
+    expect(missingCatalog.step).toBe('model');
+    expect(missingCatalog.error).toBeUndefined();
 
     delete process.env.MISSING_RELAY_KEY;
     const credentialState: OnboardingState = {
@@ -263,17 +262,17 @@ describe('relay URL validation', () => {
 });
 
 describe('onboarding presentation', () => {
-  it('offers only explicit third-party relay transports and recommends Responses', () => {
+  it('separates provider identity from explicit wire transports and recommends Responses', () => {
     const output = renderToString(
       <OnboardingScreen state={createOnboardingState(missingConfig())} dispatch={() => undefined} width={80} />,
       {columns: 80},
     );
-    expect(output).toContain('third-party relays only');
+    expect(output).toContain('Provider identity and wire format are separate');
     expect(output).toContain('OpenAI Responses');
     expect(output).toContain('Recommended');
     expect(output).toContain('Anthropic Messages');
+    expect(output).toContain('Gemini generateContent');
     expect(output).not.toContain('Provider API key');
-    expect(output).not.toContain('Official');
   });
 
   it('shows only the credential variable name and stays within a narrow terminal', () => {
@@ -310,7 +309,7 @@ describe('onboarding presentation', () => {
     expect(output).toContain('Anthropic Messages');
   });
 
-  it.each([20, 32, 40, 80])('keeps the transport menu inside %i columns', (width) => {
+  it.each([20, 24, 32, 40, 80, 120])('keeps the transport menu inside %i columns', (width) => {
     const state = createOnboardingState(missingConfig());
     const output = renderToString(
       <OnboardingScreen state={state} dispatch={() => undefined} width={width} />,
@@ -325,7 +324,7 @@ describe('onboarding presentation', () => {
     }
   });
 
-  it.each([20, 32, 40, 80])('keeps credential references and review inside %i columns', (width) => {
+  it.each([20, 24, 32, 40, 80, 120])('keeps credential references and review inside %i columns', (width) => {
     const credential: OnboardingState = {
       step: 'api-key-env',
       history: ['relay-protocol', 'endpoint', 'models-endpoint', 'model', 'auth'],
@@ -354,7 +353,7 @@ describe('onboarding presentation', () => {
     expect(credentialOutput.split('\n').filter((line) => /[╭╰]/u.test(line))).toHaveLength(2);
   });
 
-  it.each([20, 32, 40, 80])('keeps both authentication menus inside %i columns', (width) => {
+  it.each([20, 24, 32, 40, 80, 120])('keeps both authentication menus inside %i columns', (width) => {
     const base: OnboardingState = {
       step: 'auth-header',
       history: ['relay-protocol', 'endpoint', 'models-endpoint', 'model', 'auth'],

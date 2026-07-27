@@ -1,4 +1,4 @@
-.TH SKEIN 1 "2026-07-26" "skein 0.3.54" "Skein Manual"
+.TH SKEIN 1 "2026-07-27" "skein 0.3.54" "Skein Manual"
 .SH NAME
 skein \- context-first, model-agnostic coding agent with an auditable terminal workspace
 .SH SYNOPSIS
@@ -80,6 +80,9 @@ Agents & extensions:
   mcp                        Inspect configured MCP servers
   rules [options]            List user and workspace rules loaded into the agent
 
+Models & connections:
+  connections                Configure, select, and diagnose model connections
+
 Examples:
   $ skein                                   start the interactive workspace
   $ skein "fix the failing webhook test"    run one instruction interactively
@@ -111,8 +114,8 @@ Options:
                           "openai")
   --model <model>         model identifier
   --base-url <url>        provider base URL
-  --api-key <key>         store a provider key in project config (prefer env
-                          vars)
+  --api-key <key>         rejected: configure a credential reference with
+                          connections add
   --index                 build the index after writing config
   --yes                   use defaults without prompting
   -h, --help              display help for command
@@ -340,12 +343,9 @@ Commands:
                                         profiles
   run [options] <profile> <prompt...>   Run one expert through an installed
                                         external CLI in read-only mode
-  setup [options]                       Configure one shared model connection
-                                        and team defaults
-  connections [options]                 List named model endpoints and
-                                        credential references
-  models [options] <connection>         List model IDs exposed by a named
-                                        compatible connection
+  setup [options]                       Deprecated alias for connections add
+  connections [options]                 Deprecated alias for connections list
+  models [options] <connection>         Deprecated alias for connections models
   capability                            Inspect privacy-safe shadow capability
                                         routing
   runs [options]                        List persisted multi-model team runs
@@ -425,6 +425,28 @@ Options:
   -w, --workspace <path>  workspace root
   --json                  print JSON
   -h, --help              display help for command
+.fi
+.SS skein connections
+.nf
+Usage: skein connections [options] [command]
+
+Configure, select, and diagnose model connections
+
+Options:
+  -h, --help                     display help for command
+
+Commands:
+  add [options]                  Add or update a user-owned model connection
+  list [options]                 List named connections and credential
+                                 references
+  show [options] <connection>    Show one connection without credential values
+  models [options] <connection>  List declared and discovered model IDs
+  use [options] <connection>     Set the user default connection
+  test [options] <connection>    Validate config/auth and test the model catalog
+                                 without inference
+  doctor [options] [connection]  Diagnose local connection configuration without
+                                 making network requests
+  help [command]                 display help for command
 .fi
 .SH SEE ALSO
 Website: https://lixiang12345.github.io/skein/

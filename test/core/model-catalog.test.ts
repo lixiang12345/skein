@@ -67,8 +67,56 @@ describe('model connection catalog', () => {
     await expect(result).rejects.not.toThrow(/remote-secret|local-secret/u);
   });
 
-  it('rejects unsupported native provider discovery instead of guessing an API shape', async () => {
-    await expect(listConnectionModels({provider: 'anthropic'})).rejects.toThrow('currently supported');
+  it('requires an explicit catalog or declared models instead of guessing a provider API shape', async () => {
+    await expect(listConnectionModels({provider: 'anthropic'})).rejects.toThrow('No model catalog is configured');
+  });
+
+  it('uses declared models without a catalog and falls back to them when discovery is unavailable', async () => {
+    await expect(listConnectionModels({
+      provider: 'compatible',
+      protocol: 'anthropic-messages',
+      baseUrl: 'https://relay.example',
+      auth: {type: 'none'},
+      models: [{id: 'manual-b', contextLength: 128_000}, {id: 'manual-a'}],
+    })).resolves.toEqual([
+      {id: 'manual-a'},
+      {id: 'manual-b', contextLength: 128_000},
+    ]);
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('unavailable', {status: 503})));
+    const connection = {
+      provider: 'compatible' as const,
+      baseUrl: 'https://relay.example/v1',
+      auth: {type: 'none' as const},
+      models: [{id: 'manual-model'}],
+    };
+    await expect(listConnectionModels(connection)).resolves.toEqual([{id: 'manual-model'}]);
+    await expect(listConnectionModels(connection, process.env, {strictCatalog: true}))
+      .rejects.toThrow('Model discovery failed (503)');
+  });
+
+  it('supports independent command auth and environment-backed catalog headers', async () => {
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.headers).toMatchObject({
+        authorization: 'Bearer catalog-secret',
+        'X-Tenant': 'tenant-a',
+      });
+      expect(init?.headers).not.toHaveProperty('x-api-key');
+      return new Response(JSON.stringify({data: [{id: 'catalog-model'}]}), {status: 200});
+    });
+    vi.stubGlobal('fetch', fetch);
+
+    await expect(listConnectionModels({
+      provider: 'compatible',
+      baseUrl: 'https://inference.example/v1',
+      modelsBaseUrl: 'https://catalog.example/v1',
+      auth: {type: 'env', name: 'INFERENCE_KEY', header: 'x-api-key'},
+      modelsAuth: {
+        type: 'command', command: process.execPath, args: ['-e', "console.log('catalog-secret')"],
+        refreshIntervalMs: 0,
+      },
+      modelsHeaders: {env: {'X-Tenant': 'TENANT_ID'}},
+    }, {INFERENCE_KEY: 'must-not-send', TENANT_ID: 'tenant-a'})).resolves.toEqual([{id: 'catalog-model'}]);
   });
 
   it('caches model metadata for 15 minutes and revalidates expired ETags', async () => {

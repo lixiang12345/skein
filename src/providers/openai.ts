@@ -99,12 +99,13 @@ export class OpenAIProvider implements ModelProvider {
       redirect: 'error',
       headers: {
         ...apiKeyHeaders(apiKey, this.config.apiKeyHeader, 'bearer'),
+        ...this.config.requestHeaders,
         'content-type': 'application/json',
       },
       body: JSON.stringify(body),
       ...(signal ? {signal} : {}),
     });
-    if (!response.ok) return parseErrorResponse(response, [apiKey]);
+    if (!response.ok) return parseErrorResponse(response, requestSecrets(this.config, apiKey));
     const data = await response.json() as OpenAIResponse;
     return normalizeOpenAIResponse(data);
   }
@@ -149,6 +150,7 @@ export class OpenAIProvider implements ModelProvider {
       redirect: 'error',
       headers: {
         ...apiKeyHeaders(apiKey, this.config.apiKeyHeader, 'bearer'),
+        ...this.config.requestHeaders,
         'content-type': 'application/json',
       },
       body: JSON.stringify(body),
@@ -161,7 +163,7 @@ export class OpenAIProvider implements ModelProvider {
         yield {type: 'result', response: fallback};
         return;
       }
-      return parseErrorResponse(response, [apiKey]);
+      return parseErrorResponse(response, requestSecrets(this.config, apiKey));
     }
     if (!response.headers.get('content-type')?.includes('text/event-stream')) {
       const data = await response.json() as OpenAIResponse;
@@ -224,6 +226,10 @@ export class OpenAIProvider implements ModelProvider {
       },
     };
   }
+}
+
+function requestSecrets(config: ModelConfig, apiKey?: string): string[] {
+  return [apiKey, ...Object.values(config.requestHeaders ?? {})].filter((value): value is string => Boolean(value));
 }
 
 function normalizeOpenAIResponse(data: OpenAIResponse): ModelResponse {

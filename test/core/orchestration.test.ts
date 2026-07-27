@@ -330,6 +330,60 @@ describe('bounded orchestration', () => {
     }]);
   });
 
+  it('resolves command auth and custom headers for API agent routes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-command-auth-route-'));
+    roots.push(root);
+    const cfg = config(root);
+    cfg.agents = {
+      ...cfg.agents!,
+      defaultConnection: 'gateway',
+      connections: {gateway: {
+        provider: 'compatible', providerId: 'company-gateway', protocol: 'openai-responses',
+        baseUrl: 'https://gateway.example/v1',
+        auth: {
+          type: 'command', command: process.execPath,
+          args: ['-e', 'console.log(process.env.ROUTE_HELPER_SECRET)'],
+          passEnv: ['ROUTE_HELPER_SECRET'], refreshIntervalMs: 0,
+          placement: {name: 'X-Gateway-Token', prefix: 'Token '},
+        },
+        headers: {env: {'X-Tenant': 'TENANT_ID'}},
+      }},
+      routes: {backend: {model: 'backend-model'}},
+    };
+    const profiles = new AgentProfileCatalog(root);
+    await profiles.discover();
+    const context: ContextProvider = {
+      async pack() { return {text: '', hits: [], estimatedTokens: 0, engine: 'test', truncated: false}; },
+      async search() { return []; },
+    };
+    let routed: MosaicConfig['model'] | undefined;
+    const manager = new DelegationManager({
+      config: cfg,
+      provider: {name: 'parent', async complete() { return {content: 'parent', toolCalls: []}; }},
+      contextEngine: context,
+      parentTools: createDefaultToolRegistry(),
+      profiles,
+      environment: {ROUTE_HELPER_SECRET: 'route-secret', TENANT_ID: 'tenant-a'},
+      providerFactory(model) {
+        routed = model;
+        return {name: 'gateway', async complete() { return {content: 'command auth evidence', toolCalls: []}; }};
+      },
+    });
+
+    const result = await manager.tool().execute({tasks: [{profile: 'backend', task: 'Inspect state.'}]}, {
+      config: cfg,
+      workspace: new WorkspaceAccess([root]),
+      session: createSession({workspace: root, provider: 'compatible', model: 'test'}),
+      contextEngine: context,
+    });
+    expect(result.ok).toBe(true);
+    expect(routed).toMatchObject({
+      provider: 'compatible', protocol: 'openai-responses', model: 'backend-model',
+      requestHeaders: {'X-Tenant': 'tenant-a', 'X-Gateway-Token': 'Token route-secret'},
+    });
+    expect(routed).not.toHaveProperty('apiKey');
+  });
+
   it('does not send a native provider key to a custom agent connection without explicit auth', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-custom-native-connection-'));
     roots.push(root);

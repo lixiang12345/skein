@@ -42,9 +42,9 @@ export class GeminiProvider implements ModelProvider {
     signal?: AbortSignal,
     maxOutputTokens?: number,
   ): Promise<ModelResponse> {
-    const apiKey = requireApiKey(this.config);
+    const apiKey = this.config.provider === 'compatible' ? this.config.apiKey : requireApiKey(this.config);
     const base = this.config.baseUrl ?? 'https://generativelanguage.googleapis.com/v1beta';
-    const endpoint = `${joinUrl(base, `models/${this.config.model}:generateContent`)}?key=${encodeURIComponent(apiKey)}`;
+    const endpoint = `${joinUrl(base, `models/${this.config.model}:generateContent`)}${apiKey ? `?key=${encodeURIComponent(apiKey)}` : ''}`;
     const system = messages
       .filter((message) => message.role === 'system')
       .map((message) => message.content)
@@ -52,7 +52,7 @@ export class GeminiProvider implements ModelProvider {
     const response = await fetch(endpoint, {
       method: 'POST',
       redirect: 'error',
-      headers: {'content-type': 'application/json'},
+      headers: {...this.config.requestHeaders, 'content-type': 'application/json'},
       body: JSON.stringify({
         systemInstruction: system ? {parts: [{text: system}]} : undefined,
         contents: messages
@@ -72,7 +72,7 @@ export class GeminiProvider implements ModelProvider {
       }),
       ...(signal ? {signal} : {}),
     });
-    if (!response.ok) return parseErrorResponse(response, [apiKey]);
+    if (!response.ok) return parseErrorResponse(response, requestSecrets(this.config, apiKey));
     const data = await response.json() as GeminiResponse;
     const candidate = data.candidates?.[0];
     const parts = candidate?.content?.parts ?? [];
@@ -96,9 +96,9 @@ export class GeminiProvider implements ModelProvider {
     signal?: AbortSignal,
     maxOutputTokens?: number,
   ): AsyncIterable<ModelStreamChunk> {
-    const apiKey = requireApiKey(this.config);
+    const apiKey = this.config.provider === 'compatible' ? this.config.apiKey : requireApiKey(this.config);
     const base = this.config.baseUrl ?? 'https://generativelanguage.googleapis.com/v1beta';
-    const endpoint = `${joinUrl(base, `models/${this.config.model}:streamGenerateContent`)}?alt=sse&key=${encodeURIComponent(apiKey)}`;
+    const endpoint = `${joinUrl(base, `models/${this.config.model}:streamGenerateContent`)}?alt=sse${apiKey ? `&key=${encodeURIComponent(apiKey)}` : ''}`;
     const system = messages
       .filter((message) => message.role === 'system')
       .map((message) => message.content)
@@ -106,7 +106,7 @@ export class GeminiProvider implements ModelProvider {
     const response = await fetch(endpoint, {
       method: 'POST',
       redirect: 'error',
-      headers: {'content-type': 'application/json'},
+      headers: {...this.config.requestHeaders, 'content-type': 'application/json'},
       body: JSON.stringify({
         systemInstruction: system ? {parts: [{text: system}]} : undefined,
         contents: messages.filter((message) => message.role !== 'system').map(toGeminiMessage),
@@ -124,7 +124,7 @@ export class GeminiProvider implements ModelProvider {
       }),
       ...(signal ? {signal} : {}),
     });
-    if (!response.ok) return parseErrorResponse(response, [apiKey]);
+    if (!response.ok) return parseErrorResponse(response, requestSecrets(this.config, apiKey));
     if (!response.headers.get('content-type')?.includes('text/event-stream')) {
       const normalized = normalizeGeminiResponse(await response.json() as GeminiResponse);
       if (normalized.content) yield {type: 'text_delta', content: normalized.content};
@@ -185,6 +185,10 @@ export class GeminiProvider implements ModelProvider {
       },
     };
   }
+}
+
+function requestSecrets(config: ModelConfig, apiKey?: string): string[] {
+  return [apiKey, ...Object.values(config.requestHeaders ?? {})].filter((value): value is string => Boolean(value));
 }
 
 function normalizeGeminiResponse(data: GeminiResponse): ModelResponse {

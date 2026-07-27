@@ -7,9 +7,45 @@ export type ConnectionApiKeyHeader = 'bearer' | 'x-api-key';
 /** Model catalogs may reuse the inference credential or be explicitly public. */
 export type ConnectionModelAuth = ConnectionApiKeyHeader | 'none';
 
+export interface ConnectionCredentialPlacement {
+  /** Custom credential header. Omit to use the legacy bearer/x-api-key placement. */
+  name: string;
+  /** Prefix prepended to the credential, for example `Token `. */
+  prefix?: string;
+}
+
 export type ConnectionAuth =
-  | {type: 'env'; name: string; header?: ConnectionApiKeyHeader}
+  | {
+      type: 'env';
+      name: string;
+      header?: ConnectionApiKeyHeader;
+      placement?: ConnectionCredentialPlacement;
+    }
+  | {
+      type: 'command';
+      command: string;
+      args?: string[];
+      timeoutMs?: number;
+      refreshIntervalMs?: number;
+      /** Explicit host environment names made available to the helper. */
+      passEnv?: string[];
+      header?: ConnectionApiKeyHeader;
+      placement?: ConnectionCredentialPlacement;
+    }
   | {type: 'none'};
+
+export interface ConnectionHeaderSources {
+  /** Non-secret literal headers. Credential-shaped header names are rejected. */
+  static?: Record<string, string>;
+  /** Header name -> environment variable name. */
+  env?: Record<string, string>;
+}
+
+export interface ConnectionDeclaredModel {
+  id: string;
+  label?: string;
+  contextLength?: number;
+}
 
 export type ConnectionSource = 'cli' | 'user' | 'environment' | 'legacy';
 
@@ -116,6 +152,8 @@ export interface ModelConfig {
   maxTokens?: number;
   /** Explicit hosted-tool opt-in materialized from a trusted named route. */
   hostedTools?: ProviderHostedTool[];
+  /** Runtime-only headers resolved from one trusted named connection. */
+  requestHeaders?: Record<string, string>;
 }
 
 export interface PermissionConfig {
@@ -206,14 +244,26 @@ export interface AgentCapabilityConfig {
 
 export interface AgentConnectionConfig {
   provider: ProviderName;
+  /** Human/provider identity is independent from the selected wire protocol. */
+  providerId?: string;
   label?: string;
   protocol?: ConnectionProtocol;
   baseUrl?: string;
   modelsBaseUrl?: string;
+  /** False disables remote discovery and uses only declared models. */
+  modelDiscovery?: boolean;
+  /** Optional model-catalog path appended to modelsBaseUrl/baseUrl. */
+  modelsPath?: string;
   /** Optional model-directory credential placement; defaults to the inference auth header. */
   modelsAuthHeader?: ConnectionModelAuth;
   defaultModel?: string;
   auth?: ConnectionAuth;
+  /** Omitted means inherit inference auth. */
+  modelsAuth?: ConnectionAuth;
+  headers?: ConnectionHeaderSources;
+  modelsHeaders?: ConnectionHeaderSources;
+  /** Manual catalog used when a gateway has no discovery endpoint. */
+  models?: ConnectionDeclaredModel[];
   /** Legacy environment reference retained for existing user configuration. */
   apiKeyEnv?: string;
   /** Capabilities documented or verified for this exact relay connection. */
@@ -226,17 +276,25 @@ export interface ConnectionRuntimeInfo {
   id: string;
   label?: string;
   provider: ProviderName;
+  providerId?: string;
   protocol: ConnectionProtocol;
   source: ConnectionSource;
   endpoint: string;
   modelsEndpoint: string;
   defaultModel?: string;
   authType: ConnectionAuth['type'];
+  modelsAuthType?: ConnectionAuth['type'] | 'inherit';
   authHeader?: ConnectionApiKeyHeader;
   modelsAuthHeader?: ConnectionModelAuth;
   authStatus: 'configured' | 'missing' | 'none';
   complete: boolean;
   issues: string[];
+  catalogIssues?: string[];
+}
+
+export interface ConnectionsConfig {
+  defaultConnection?: string;
+  profiles: Record<string, AgentConnectionConfig>;
 }
 
 export interface ConnectionCatalogRuntime {
@@ -358,6 +416,8 @@ export interface MosaicConfig {
   skills?: SkillConfig;
   memory?: MemoryConfig;
   agents?: AgentTeamConfig;
+  /** First-class user/managed model connections. Legacy agents.connections is mirrored at load time. */
+  connections?: ConnectionsConfig;
   mcp?: McpConfig;
   /** Optional user-trusted local language-server adapters. */
   lsp?: LspConfig;

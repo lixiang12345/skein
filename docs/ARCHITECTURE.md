@@ -292,22 +292,29 @@ User-owned and explicitly configured external locations remain trusted by
 source. The workflow catalog is built in, trusted, and read-only; each workflow
 declares whether running it stays read-only or enters the single-writer lane.
 
-## Relay transport and model catalog
+## Connection, authentication, and model catalog
 
-New primary connections target third-party compatible relays only. A named
-connection binds one explicit transport: `openai-responses` (the default),
-`openai-chat`, or `anthropic-messages`. Skein never infers transport from a URL
-or model name and never retries an inference request through another protocol,
-because doing so can duplicate work and billing.
+Connections are user/managed transport records, not agent-profile attachments.
+The top-level `connections.profiles` catalog is mirrored into legacy
+`agents.connections` at load time so existing configurations and team routes
+remain compatible. A provider label is descriptive; the explicit wire protocol
+(`openai-responses`, `openai-chat`, `anthropic-messages`, or `gemini`) selects
+the implementation. Skein never infers transport from a URL/model name or
+retries inference through another protocol, because doing so can duplicate work
+and billing.
 
-The inference `baseUrl` and OpenAI-shaped `modelsBaseUrl` are separate. This
-models gateways where OpenAI and Anthropic SDKs append different paths as well
-as gateways that publish every protocol below one root. Inference authentication
-is `bearer`, `x-api-key`, or connection-wide `none`; catalog authentication is
-independently `bearer`, `x-api-key`, or `none`. Explicit catalog `none` skips
-both credential resolution and credential headers, preventing an inference key
-from crossing into a public or separately hosted catalog. Omission preserves
-the prior behavior of inheriting inference authentication.
+The inference `baseUrl` and catalog `modelsBaseUrl`/`modelsPath` are separate.
+Discovery is optional: `modelDiscovery:false` uses only declared model IDs and
+does not make catalog availability an inference-readiness condition.
+
+Inference and catalog authentication independently use `env`, `command`, or
+`none`. Credential placement supports Bearer, `x-api-key`, or a custom header;
+additional headers are either non-secret literals or environment references.
+Command helpers use direct argv spawning, no shell/stdin, a minimal environment
+plus explicit `passEnv`, hard timeout, bounded output, and process-memory-only
+refresh caching. OS credential stores are optional helper implementations.
+Project configuration—trusted or not—cannot define endpoints, connections,
+credential sources, request headers, or the default connection.
 
 Provider-hosted tools use an intersection of trusted connection capability and
 route opt-in. Today only Responses `web_search` is supported. It does not grant
@@ -388,12 +395,12 @@ never writes the Registry, calls a provider, or enables automatic routing.
 - Repository-local configuration is treated as data-only by default: hooks,
   custom executables, LSP/background adapters, verification commands, checkpoint overrides, and
   permission changes require `--trust-project-config` or an explicit config.
-- Project API keys and remote provider/endpoint overrides also require explicit
-  trust; loopback compatible settings are retained for local-model workflows.
-- `skein init` stores only a path-bound SHA-256 fingerprint in user-owned
-  Skein state. It allows those model routing fields while invalidating the
-  narrow trust after any model-setting edit; hook and permission trust is never
-  persisted.
+- Project config never owns API keys, connections, provider endpoints, request
+  headers, or the default connection—even after executable project trust.
+  Local-model endpoints belong in user/managed connection configuration too.
+- `skein init` writes data-safe project state and a user-owned connection. It
+  rejects inline API keys. Legacy path-bound model fingerprints remain readable
+  for migration/lease compatibility but no longer grant routing authority.
 - Destructive commands are denied before ordinary approval rules are evaluated.
 - Allow-listed commands cannot contain shell control or substitution syntax.
 - Allow rules do not override derived write or network permission categories.

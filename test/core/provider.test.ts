@@ -82,6 +82,35 @@ describe('provider streaming helpers', () => {
     expect(createProvider({
       provider: 'compatible', protocol: 'anthropic-messages', model: 'test', baseUrl: 'https://relay.example',
     })).toBeInstanceOf(AnthropicProvider);
+    expect(createProvider({
+      provider: 'openai', protocol: 'anthropic-messages', model: 'test', baseUrl: 'https://relay.example',
+    })).toBeInstanceOf(AnthropicProvider);
+    expect(createProvider({
+      provider: 'compatible', protocol: 'gemini', model: 'test', baseUrl: 'https://relay.example',
+    })).toBeInstanceOf(GeminiProvider);
+  });
+
+  it('uses runtime-resolved custom headers without requiring a built-in API-key placement', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.headers).toMatchObject({
+        'X-Gateway-Token': 'Token custom-secret',
+        'X-Tenant': 'tenant-a',
+        'content-type': 'application/json',
+      });
+      expect(init?.headers).not.toHaveProperty('authorization');
+      expect(init?.headers).not.toHaveProperty('x-api-key');
+      return new Response(JSON.stringify({status: 'completed', output: [], usage: {}}), {
+        headers: {'content-type': 'application/json'},
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const provider = new ResponsesProvider({
+      provider: 'compatible', protocol: 'openai-responses', model: 'custom',
+      baseUrl: 'https://relay.example/v1',
+      requestHeaders: {'X-Gateway-Token': 'Token custom-secret', 'X-Tenant': 'tenant-a'},
+    });
+
+    await expect(provider.complete([], [])).resolves.toMatchObject({toolCalls: []});
   });
 
   it('uses stateless Responses items, bearer auth, tool definitions, and usage', async () => {

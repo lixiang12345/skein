@@ -12,6 +12,7 @@ import type {
   AgentModelRoute,
   AgentPhase,
   AgentTeamConfig,
+  ConnectionAuth,
   ModelConfig,
   ModelTokenUsage,
   MosaicConfig,
@@ -26,6 +27,11 @@ import {AgentProfileCatalog, type AgentProfile} from './profiles.js';
 import {runExternalAgent, type ExternalAgentRequest, type ExternalAgentResult} from './external-runtime.js';
 import {TeamRunStore, type TeamRunWriterV4Record} from './team-store.js';
 import {resolveAgentModelRoute} from './model-route.js';
+import {
+  resolveConnectionHeaders,
+  withDefaultCredentialPlacement,
+  withoutConnectionCredentialHeader,
+} from './connection-auth.js';
 import {isOfficialProviderEndpoint} from './connection-catalog.js';
 import {
   WriterLane,
@@ -752,7 +758,7 @@ export class DelegationManager {
     emit?: (event: AgentEvent) => void | Promise<void>,
     signal?: AbortSignal,
   ): Promise<DelegatedResult> {
-    const route = this.modelRoute(profile.name);
+    const route = await this.executionModelRoute(profile.name);
     const accounting = this.routeAccounting(profile.name, route);
     const configuredRoute = this.team.routes?.[profile.name];
     const externalRuntime = configuredRoute?.runtime && configuredRoute.runtime !== 'api'
@@ -839,7 +845,7 @@ export class DelegationManager {
           detail: `running claude inside the isolated writer worktree (hard timeout ${timeoutMs}ms, cost cap $${costBudgetUsd.toFixed(2)})`,
         });
         let streamedToolCalls = 0;
-        const providerEnvironment = this.externalProviderEnvironment(profile.name);
+        const providerEnvironment = await this.externalProviderEnvironment(profile.name);
         const external = await (this.options.externalRunner ?? runExternalAgent)({
           runtime: 'claude',
           access: 'workspace-write',
@@ -1306,7 +1312,7 @@ export class DelegationManager {
     const externalRuntime = configuredRoute?.runtime && configuredRoute.runtime !== 'api'
       ? configuredRoute.runtime
       : undefined;
-    const route = this.modelRoute(task.profile);
+    const route = await this.executionModelRoute(task.profile);
     const accounting = this.routeAccounting(task.profile, route);
     const providerName = externalRuntime ?? route.provider;
     const model = route.model;
@@ -1367,7 +1373,7 @@ export class DelegationManager {
           : undefined;
         let external;
         try {
-          const providerEnvironment = this.externalProviderEnvironment(profile.name);
+          const providerEnvironment = await this.externalProviderEnvironment(profile.name);
           external = await (this.options.externalRunner ?? runExternalAgent)({
             runtime: externalRuntime,
             model,
@@ -1604,24 +1610,46 @@ export class DelegationManager {
   private modelRoute(profile: string): ModelConfig {
     const {route} = resolveAgentModelRoute(this.team, this.options.config.model, profile);
     if (!route) return this.options.config.model;
+    return modelConfigMetadataFromRoute(route, this.options.config.model, this.team.connections);
+  }
+
+  private async executionModelRoute(profile: string): Promise<ModelConfig> {
+    const {route} = resolveAgentModelRoute(this.team, this.options.config.model, profile);
+    if (!route) return this.options.config.model;
     return modelConfigFromRoute(route, this.options.config.model, this.options.environment ?? process.env, this.team.connections);
   }
 
-  private externalProviderEnvironment(profile: string) {
+  private async externalProviderEnvironment(profile: string) {
     const resolved = resolveAgentModelRoute(this.team, this.options.config.model, profile);
     const route = resolved.route;
     if (!route) return undefined;
     const connection = route.connection ? this.team.connections?.[route.connection] : undefined;
     const connectionAuth = connection?.auth;
     const baseUrl = route.baseUrl ?? connection?.baseUrl;
-    const apiKeyEnv = route.apiKeyEnv ?? connection?.apiKeyEnv ??
-      (connectionAuth?.type === 'env' ? connectionAuth.name : undefined);
-    const apiKeyHeader = connectionAuth?.type === 'env' ? connectionAuth.header : undefined;
-    if (!baseUrl && !apiKeyEnv && !apiKeyHeader) return undefined;
+    const apiKeyEnv = route.apiKeyEnv ?? connection?.apiKeyEnv;
+    if (connectionAuth?.type !== 'none' && connectionAuth?.placement) {
+      throw new Error('External Claude routes support bearer or x-api-key credential placement, not a custom header.');
+    }
+    const apiKeyHeader = connectionAuth?.type !== 'none' ? connectionAuth?.header : undefined;
+    const credentialAuth = apiKeyEnv
+      ? {type: 'env' as const, name: apiKeyEnv, ...(apiKeyHeader ? {header: apiKeyHeader} : {})}
+      : connectionAuth;
+    const environment = this.options.environment ?? process.env;
+    const credentialResolution = credentialAuth && credentialAuth.type !== 'none'
+      ? await resolveConnectionHeaders(credentialAuth, connection?.headers, {environment})
+      : connection?.headers ? await resolveConnectionHeaders({type: 'none'}, connection.headers, {environment})
+        : undefined;
+    const customHeaders = credentialResolution && credentialAuth
+      ? withoutConnectionCredentialHeader(credentialAuth, credentialResolution.headers)
+      : credentialResolution?.headers;
+    const authNone = connectionAuth?.type === 'none' && !apiKeyEnv;
+    if (!baseUrl && !apiKeyEnv && !apiKeyHeader && !credentialResolution && !authNone) return undefined;
     return {
       ...(baseUrl ? {baseUrl} : {}),
-      ...(apiKeyEnv ? {apiKeyEnv} : {}),
       ...(apiKeyHeader ? {apiKeyHeader} : {}),
+      ...(credentialResolution?.value ? {credential: credentialResolution.value} : {}),
+      ...(authNone ? {authNone: true} : {}),
+      ...(customHeaders && Object.keys(customHeaders).length ? {customHeaders} : {}),
     };
   }
 
@@ -1822,10 +1850,9 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function modelConfigFromRoute(
+function modelConfigMetadataFromRoute(
   route: AgentModelRoute,
   parent: ModelConfig,
-  environment: NodeJS.ProcessEnv,
   connections: AgentTeamConfig['connections'],
 ): ModelConfig {
   const connection = route.connection ? connections?.[route.connection] : undefined;
@@ -1834,40 +1861,93 @@ function modelConfigFromRoute(
   if (!provider) throw new Error('Agent route requires a provider or a valid connection.');
   if (!route.model) throw new Error('Agent route requires a model or a team default model.');
   const baseUrl = route.baseUrl ?? connection?.baseUrl;
-  const connectionAuth = connection?.auth;
-  const apiKeyEnv = route.apiKeyEnv ?? connection?.apiKeyEnv ?? (connectionAuth?.type === 'env' ? connectionAuth.name : undefined);
-  const inheritedKey = provider === parent.provider && baseUrl === parent.baseUrl
-    ? parent.apiKey
-    : undefined;
-  if (!apiKeyEnv && connectionAuth?.type !== 'none' && !inheritedKey && provider !== 'compatible' &&
-      baseUrl && !isOfficialProviderEndpoint(provider, baseUrl)) {
-    throw new Error('Custom provider endpoints require explicit connection auth.');
-  }
-  const apiKey = connectionAuth?.type === 'none'
-    ? undefined
-    : apiKeyEnv
-      ? environment[apiKeyEnv]
-      : inheritedKey ?? defaultProviderApiKey(provider, environment);
-  if (apiKeyEnv && !apiKey) throw new Error(`Agent connection credential environment ${apiKeyEnv} is not set.`);
   return {
     provider,
     ...(connection?.protocol ? {protocol: connection.protocol} : {}),
     model: route.model,
-    ...(connectionAuth?.type === 'env' && connectionAuth.header ? {apiKeyHeader: connectionAuth.header} : {}),
     ...(baseUrl ? {baseUrl} : {}),
-    ...(apiKey ? {apiKey} : {}),
     ...(route.temperature !== undefined ? {temperature: route.temperature} : {}),
     ...(route.maxTokens !== undefined ? {maxTokens: route.maxTokens} : {}),
     ...(route.hostedTools?.length ? {hostedTools: [...route.hostedTools]} : {}),
   };
 }
 
-function defaultProviderApiKey(provider: AgentModelRoute['provider'], environment: NodeJS.ProcessEnv): string | undefined {
-  if (provider === 'openai') return environment.OPENAI_API_KEY;
-  if (provider === 'anthropic') return environment.ANTHROPIC_API_KEY;
-  if (provider === 'gemini') return environment.GEMINI_API_KEY;
-  if (provider === 'compatible') return environment.SKEIN_API_KEY ?? environment.MOSAIC_API_KEY;
-  return undefined;
+async function modelConfigFromRoute(
+  route: AgentModelRoute,
+  parent: ModelConfig,
+  environment: NodeJS.ProcessEnv,
+  connections: AgentTeamConfig['connections'],
+): Promise<ModelConfig> {
+  const connection = route.connection ? connections?.[route.connection] : undefined;
+  if (route.connection && !connection) throw new Error(`Unknown agent model connection: ${route.connection}`);
+  const configuredProvider = route.provider ?? connection?.provider;
+  if (!configuredProvider) throw new Error('Agent route requires a provider or a valid connection.');
+  if (!route.model) throw new Error('Agent route requires a model or a team default model.');
+  const baseUrl = route.baseUrl ?? connection?.baseUrl;
+  const connectionAuth = connection?.auth;
+  const apiKeyEnv = route.apiKeyEnv ?? connection?.apiKeyEnv;
+  const inheritedKey = configuredProvider === parent.provider && baseUrl === parent.baseUrl
+    ? parent.apiKey
+    : undefined;
+  if (!apiKeyEnv && !connectionAuth && !inheritedKey && configuredProvider !== 'compatible' &&
+      baseUrl && !isOfficialProviderEndpoint(configuredProvider, baseUrl)) {
+    throw new Error('Custom provider endpoints require explicit connection auth.');
+  }
+  const rawAuth: ConnectionAuth | undefined = apiKeyEnv
+    ? {type: 'env', name: apiKeyEnv, ...(connectionAuth?.type !== 'none' && connectionAuth?.header
+      ? {header: connectionAuth.header} : {}), ...(connectionAuth?.type !== 'none' && connectionAuth?.placement
+      ? {placement: connectionAuth.placement} : {})}
+    : connectionAuth ?? (connection && !inheritedKey
+      ? defaultProviderAuth(configuredProvider, environment)
+      : undefined);
+  const auth = rawAuth && connection?.protocol
+    ? withDefaultCredentialPlacement(rawAuth, configuredProvider, connection.protocol)
+    : rawAuth;
+  if (connection && !baseUrl && auth?.type !== 'none' && auth?.placement) {
+    throw new Error('Custom credential placement requires an explicit connection base URL.');
+  }
+  if (connection && !baseUrl && configuredProvider === 'gemini' && connection.protocol === 'gemini' &&
+      auth?.type !== 'none' && auth?.header) {
+    throw new Error('Header-based Gemini authentication requires an explicit connection base URL.');
+  }
+  const resolved = inheritedKey && !apiKeyEnv && !connectionAuth
+    ? {value: inheritedKey, headers: {}, reference: 'parent'}
+    : auth ? await resolveConnectionHeaders(auth, connection?.headers, {environment})
+      : {headers: {}, reference: 'none'};
+  const nativeGeminiQueryAuth = connection?.protocol === 'gemini' && configuredProvider === 'gemini' &&
+    auth?.type !== 'none' && !auth?.header && !auth?.placement;
+  const provider = connection
+    ? nativeGeminiQueryAuth ? 'gemini'
+      : configuredProvider === 'compatible' || Boolean(baseUrl) ? 'compatible' : configuredProvider
+    : configuredProvider;
+  const legacyCompatibleApiKey = Boolean(connection?.apiKeyEnv && !connection.auth);
+  const requestHeaders = auth && provider !== 'compatible'
+    ? withoutConnectionCredentialHeader(auth, resolved.headers)
+    : resolved.headers;
+  return {
+    provider,
+    ...(connection?.protocol ? {protocol: connection.protocol} : {}),
+    model: route.model,
+    ...(auth && auth.type !== 'none' && auth.header ? {apiKeyHeader: auth.header} : {}),
+    ...(baseUrl ? {baseUrl} : {}),
+    ...((!connection || provider !== 'compatible' || legacyCompatibleApiKey) && resolved.value
+      ? {apiKey: resolved.value} : {}),
+    ...(!legacyCompatibleApiKey && Object.keys(requestHeaders).length ? {requestHeaders} : {}),
+    ...(route.temperature !== undefined ? {temperature: route.temperature} : {}),
+    ...(route.maxTokens !== undefined ? {maxTokens: route.maxTokens} : {}),
+    ...(route.hostedTools?.length ? {hostedTools: [...route.hostedTools]} : {}),
+  };
+}
+
+function defaultProviderAuth(
+  provider: NonNullable<AgentModelRoute['provider']>,
+  environment: NodeJS.ProcessEnv,
+): ConnectionAuth {
+  if (provider === 'openai') return {type: 'env', name: 'OPENAI_API_KEY'};
+  if (provider === 'anthropic') return {type: 'env', name: 'ANTHROPIC_API_KEY'};
+  if (provider === 'gemini') return {type: 'env', name: 'GEMINI_API_KEY'};
+  return {type: 'env', name: environment.SKEIN_API_KEY ? 'SKEIN_API_KEY' : environment.MOSAIC_API_KEY
+    ? 'MOSAIC_API_KEY' : 'SKEIN_API_KEY'};
 }
 
 function formatResults(results: DelegatedResult[]): string {

@@ -79,6 +79,7 @@ export class AnthropicProvider implements ModelProvider {
       redirect: 'error',
       headers: {
         ...anthropicAuthHeaders(this.config, apiKey),
+        ...this.config.requestHeaders,
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
@@ -98,7 +99,7 @@ export class AnthropicProvider implements ModelProvider {
       }),
       ...(signal ? {signal} : {}),
     });
-    if (!response.ok) return parseErrorResponse(response, [apiKey]);
+    if (!response.ok) return parseErrorResponse(response, requestSecrets(this.config, apiKey));
     const data = await response.json() as AnthropicResponse;
     const blocks = data.content ?? [];
     return {
@@ -135,6 +136,7 @@ export class AnthropicProvider implements ModelProvider {
       redirect: 'error',
       headers: {
         ...anthropicAuthHeaders(this.config, apiKey),
+        ...this.config.requestHeaders,
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
@@ -153,7 +155,7 @@ export class AnthropicProvider implements ModelProvider {
       }),
       ...(signal ? {signal} : {}),
     });
-    if (!response.ok) return parseErrorResponse(response, [apiKey]);
+    if (!response.ok) return parseErrorResponse(response, requestSecrets(this.config, apiKey));
     if (!response.headers.get('content-type')?.includes('text/event-stream')) {
       const normalized = normalizeAnthropicResponse(await response.json() as AnthropicResponse);
       if (normalized.content) yield {type: 'text_delta', content: normalized.content};
@@ -233,6 +235,10 @@ export class AnthropicProvider implements ModelProvider {
       },
     };
   }
+}
+
+function requestSecrets(config: ModelConfig, apiKey?: string): string[] {
+  return [apiKey, ...Object.values(config.requestHeaders ?? {})].filter((value): value is string => Boolean(value));
 }
 
 function anthropicMessagesEndpoint(base: string): string {

@@ -14,6 +14,12 @@ export interface ExternalProviderEnvironment {
   baseUrl?: string;
   apiKeyEnv?: string;
   apiKeyHeader?: ConnectionApiKeyHeader;
+  /** Runtime-only resolved credential; never persisted or logged. */
+  credential?: string;
+  /** Explicit no-auth connection; suppresses ambient Anthropic credentials. */
+  authNone?: boolean;
+  /** Runtime-only non-credential headers resolved from the named connection. */
+  customHeaders?: Record<string, string>;
 }
 
 export interface ExternalAgentRequest {
@@ -105,6 +111,11 @@ function addClaudeProviderEnvironment(
 ): void {
   const baseUrl = provider?.baseUrl ?? environment.ANTHROPIC_BASE_URL;
   if (baseUrl) selected.ANTHROPIC_BASE_URL = baseUrl;
+  if (provider?.customHeaders && Object.keys(provider.customHeaders).length) {
+    selected.ANTHROPIC_CUSTOM_HEADERS = Object.entries(provider.customHeaders)
+      .map(([name, value]) => `${name}: ${value}`)
+      .join('\n');
+  }
 
   if (provider?.apiKeyEnv) {
     const credential = environment[provider.apiKeyEnv];
@@ -113,6 +124,14 @@ function addClaudeProviderEnvironment(
     else selected.ANTHROPIC_API_KEY = credential;
     return;
   }
+
+  if (provider?.credential) {
+    if (provider.apiKeyHeader === 'bearer') selected.ANTHROPIC_AUTH_TOKEN = provider.credential;
+    else selected.ANTHROPIC_API_KEY = provider.credential;
+    return;
+  }
+
+  if (provider?.authNone) return;
 
   if (environment.ANTHROPIC_API_KEY) selected.ANTHROPIC_API_KEY = environment.ANTHROPIC_API_KEY;
   if (environment.ANTHROPIC_AUTH_TOKEN) selected.ANTHROPIC_AUTH_TOKEN = environment.ANTHROPIC_AUTH_TOKEN;

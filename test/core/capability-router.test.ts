@@ -190,6 +190,25 @@ describe('capability shadow router', () => {
       .not.toBe(before.find((candidate) => candidate.ref === 'frontend')?.routeFingerprintSha256);
   });
 
+  it('opens a new auth epoch when command-helper wiring changes', async () => {
+    const root = await workspace();
+    const config = testConfig(root);
+    config.agents!.connections!.slow!.auth = {
+      type: 'command', command: 'credential-helper', args: ['--audience', 'skein-a'],
+      placement: {name: 'X-Relay-Key', prefix: 'Token '},
+    };
+    const before = await buildCapabilityCandidates({config, profile: builtIn('frontend'), environment: {}});
+    config.agents!.connections!.slow!.auth = {
+      type: 'command', command: 'credential-helper', args: ['--audience', 'skein-b'],
+      placement: {name: 'X-Relay-Key', prefix: 'Token '},
+    };
+    const after = await buildCapabilityCandidates({config, profile: builtIn('frontend'), environment: {}});
+    const previous = before.find((candidate) => candidate.ref === 'backend');
+    const changed = after.find((candidate) => candidate.ref === 'backend');
+    expect(changed?.authReferenceSha256).not.toBe(previous?.authReferenceSha256);
+    expect(changed?.routeFingerprintSha256).not.toBe(previous?.routeFingerprintSha256);
+  });
+
   it('records model-only drift as a new component epoch for the same logical route', async () => {
     const root = await workspace();
     const config = testConfig(root);

@@ -1187,7 +1187,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     }
     if (command === 'connections') {
       if (argument === 'setup') {
-        append({id: nextId(), kind: 'notice', tone: 'info', text: `Run ${PRODUCT_COMMAND} agents setup in a shell to configure a shared connection without exposing credentials to the session.`});
+        append({id: nextId(), kind: 'notice', tone: 'info', text: `Run ${PRODUCT_COMMAND} connections add in a shell to configure a user-owned connection without exposing credentials to the session.`});
         return true;
       }
       const routes = Object.values(config.agents?.routes ?? {});
@@ -1204,7 +1204,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
           `${routes.filter((route) => route.connection === connection.id).length} explicit routes`,
         ].join(separator),
         tone: connection.complete ? 'success' as const : 'warning' as const,
-      })) : [{label: 'No named model connections configured.', detail: `Run ${PRODUCT_COMMAND} agents setup before starting another session.`}]);
+      })) : [{label: 'No named model connections configured.', detail: `Run ${PRODUCT_COMMAND} connections add before starting another session.`}]);
       return true;
     }
     if (command === 'team') {

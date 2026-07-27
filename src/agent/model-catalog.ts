@@ -1,5 +1,7 @@
 import {createHash} from 'node:crypto';
-import type {AgentConnectionConfig} from '../types.js';
+import {providerApiKeyEnv} from '../config.js';
+import type {AgentConnectionConfig, ConnectionAuth} from '../types.js';
+import {resolveConnectionHeaders, withDefaultCredentialPlacement} from './connection-auth.js';
 
 export interface ModelCatalogEntry {
   id: string;
@@ -21,22 +23,25 @@ const modelCatalogCache = new Map<string, ModelCatalogCacheEntry>();
 export async function listConnectionModels(
   connection: AgentConnectionConfig,
   environment: NodeJS.ProcessEnv = process.env,
+  options: {strictCatalog?: boolean} = {},
 ): Promise<ModelCatalogEntry[]> {
-  if (connection.provider !== 'compatible' && connection.provider !== 'openai') {
-    throw new Error(`Model discovery is currently supported for compatible and openai connections, not ${connection.provider}.`);
+  const declared = declaredModels(connection);
+  if (connection.modelDiscovery === false) {
+    if (declared.length) return declared;
+    throw new Error('Model discovery is disabled and no models are declared.');
   }
-  if (connection.protocol === 'anthropic-messages' && !connection.modelsBaseUrl) {
-    throw new Error('Anthropic relay model discovery requires an explicit modelsBaseUrl.');
+  const baseUrl = catalogBaseUrl(connection);
+  if (!baseUrl) {
+    if (declared.length) return declared;
+    throw new Error('No model catalog is configured; declare models manually or set modelsBaseUrl.');
   }
-  const baseUrl = connection.modelsBaseUrl ?? connection.baseUrl ?? 'https://api.openai.com/v1';
-  const endpoint = baseUrl.endsWith('/models') ? baseUrl : `${baseUrl.replace(/\/+$/u, '')}/models`;
-  const apiKeyHeader = connection.modelsAuthHeader ??
-    (connection.auth?.type === 'env' ? connection.auth.header : undefined) ?? 'bearer';
-  const apiKey = apiKeyHeader === 'none' ? undefined : connectionApiKey(connection, environment);
+  const endpoint = catalogEndpoint(baseUrl, connection.modelsPath);
+  const auth = catalogAuth(connection, environment);
+  const resolved = await resolveConnectionHeaders(auth, connection.modelsHeaders, {environment});
   const cacheKey = catalogFingerprint(
     endpoint,
-    `${connection.auth?.type ?? (apiKey ? 'legacy-env' : 'none')}:${apiKeyHeader}`,
-    apiKey,
+    `${auth.type}:${JSON.stringify(resolved.headers)}`,
+    resolved.value,
   );
   const cached = modelCatalogCache.get(cacheKey);
   const now = Date.now();
@@ -44,17 +49,21 @@ export async function listConnectionModels(
     touchCacheEntry(cacheKey, cached);
     return copyModels(cached.models);
   }
-  const response = await fetch(endpoint, {
-    redirect: 'error',
-    headers: {
-      accept: 'application/json',
-      ...(apiKey ? apiKeyHeader === 'x-api-key'
-        ? {'x-api-key': apiKey}
-        : {authorization: `Bearer ${apiKey}`} : {}),
-      ...(cached?.etag ? {'if-none-match': cached.etag} : {}),
-    },
-    signal: AbortSignal.timeout(15_000),
-  });
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      redirect: 'error',
+      headers: {
+        accept: 'application/json',
+        ...resolved.headers,
+        ...(cached?.etag ? {'if-none-match': cached.etag} : {}),
+      },
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (error) {
+    if (declared.length && !options.strictCatalog) return declared;
+    throw error;
+  }
   if (response.status === 304 && cached) {
     const refreshed = {...cached, lastSuccessAt: now, expiresAt: now + MODEL_CATALOG_TTL_MS};
     touchCacheEntry(cacheKey, refreshed);
@@ -62,12 +71,19 @@ export async function listConnectionModels(
   }
   if (response.status === 401 || response.status === 403) modelCatalogCache.delete(cacheKey);
   const body = await response.text();
-  if (!response.ok) throw new Error(`Model discovery failed (${response.status}).`);
-  if (body.length > 2_000_000) throw new Error('Model discovery response is too large.');
+  if (!response.ok) {
+    if (declared.length && !options.strictCatalog) return declared;
+    throw new Error(`Model discovery failed (${response.status}).`);
+  }
+  if (body.length > 2_000_000) {
+    if (declared.length && !options.strictCatalog) return declared;
+    throw new Error('Model discovery response is too large.');
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(body) as unknown;
   } catch {
+    if (declared.length && !options.strictCatalog) return declared;
     throw new Error('Model discovery returned invalid JSON.');
   }
   const data = parsed && typeof parsed === 'object' && Array.isArray((parsed as {data?: unknown}).data)
@@ -75,7 +91,7 @@ export async function listConnectionModels(
     : parsed && typeof parsed === 'object' && Array.isArray((parsed as {models?: unknown}).models)
       ? (parsed as {models: unknown[]}).models
     : Array.isArray(parsed) ? parsed : [];
-  const models = data.flatMap((value) => {
+  const discovered = data.flatMap((value) => {
     if (!value || typeof value !== 'object') return [];
     const candidate = value as {id?: unknown; model_id?: unknown};
     const id = typeof candidate.id === 'string' ? candidate.id : typeof candidate.model_id === 'string' ? candidate.model_id : undefined;
@@ -89,7 +105,8 @@ export async function listConnectionModels(
       ...(typeof item.owned_by === 'string' ? {ownedBy: item.owned_by} : typeof item.ownedBy === 'string' ? {ownedBy: item.ownedBy} : {}),
       ...(contextLength !== undefined ? {contextLength} : {}),
     }];
-  }).sort((left, right) => left.id.localeCompare(right.id));
+  });
+  const models = mergeModels(declared, discovered);
   touchCacheEntry(cacheKey, {
     models,
     ...(response.headers.get('etag') ? {etag: response.headers.get('etag') as string} : {}),
@@ -132,27 +149,86 @@ function copyModels(models: ModelCatalogEntry[]): ModelCatalogEntry[] {
   return models.map((model) => ({...model}));
 }
 
-function connectionApiKey(connection: AgentConnectionConfig, environment: NodeJS.ProcessEnv): string | undefined {
-  if (connection.auth?.type === 'env') {
-    const value = environment[connection.auth.name];
-    if (!value) throw new Error(`Connection credential environment ${connection.auth.name} is not set.`);
-    return value;
-  }
-  if (connection.auth?.type === 'none') return undefined;
-  if (connection.apiKeyEnv) {
-    const value = environment[connection.apiKeyEnv];
-    if (!value) throw new Error(`Connection credential environment ${connection.apiKeyEnv} is not set.`);
-    return value;
-  }
-  if (connection.provider === 'openai' && connection.baseUrl &&
-      connection.baseUrl.replace(/\/+$/u, '') !== 'https://api.openai.com/v1') {
-    throw new Error('Custom OpenAI model endpoints require explicit connection auth.');
-  }
-  return defaultConnectionApiKey(connection.provider, environment);
+function declaredModels(connection: AgentConnectionConfig): ModelCatalogEntry[] {
+  return (connection.models ?? []).map((model) => ({
+    id: model.id,
+    ...(model.contextLength ? {contextLength: model.contextLength} : {}),
+  })).sort((left, right) => left.id.localeCompare(right.id));
 }
 
-function defaultConnectionApiKey(provider: AgentConnectionConfig['provider'], environment: NodeJS.ProcessEnv): string | undefined {
-  if (provider === 'openai') return environment.OPENAI_API_KEY;
-  if (provider === 'compatible') return environment.SKEIN_API_KEY ?? environment.MOSAIC_API_KEY;
-  return undefined;
+function catalogBaseUrl(connection: AgentConnectionConfig): string | undefined {
+  if (connection.modelsBaseUrl) return connection.modelsBaseUrl;
+  if (connection.protocol === 'anthropic-messages' || connection.protocol === 'gemini') return undefined;
+  if (connection.baseUrl) return connection.baseUrl;
+  return connection.provider === 'openai' ? 'https://api.openai.com/v1' : undefined;
+}
+
+function catalogEndpoint(baseUrl: string, path = '/models'): string {
+  if (baseUrl.endsWith(path)) return baseUrl;
+  return `${baseUrl.replace(/\/+$/u, '')}/${path.replace(/^\/+/, '')}`;
+}
+
+function catalogAuth(
+  connection: AgentConnectionConfig,
+  environment: NodeJS.ProcessEnv,
+): ConnectionAuth {
+  if (connection.modelsAuth) return connection.modelsAuth;
+  if (connection.modelsAuthHeader === 'none') return {type: 'none'};
+  if (!connection.auth && !connection.apiKeyEnv && connection.provider !== 'compatible' &&
+      connection.baseUrl && !isOfficialProviderEndpoint(connection.provider, connection.baseUrl)) {
+    throw new Error('Custom provider model endpoints require explicit connection auth.');
+  }
+  const inference = withDefaultCredentialPlacement(connection.auth ?? (connection.apiKeyEnv
+    ? {type: 'env', name: connection.apiKeyEnv} as const
+    : defaultConnectionAuth(connection, environment)), connection.provider, connection.protocol ?? defaultProtocol(connection.provider));
+  if (inference.type !== 'env' && inference.type !== 'command') return inference;
+  if (!connection.modelsAuthHeader) return inference;
+  if (inference.type === 'env') {
+    return {type: 'env', name: inference.name, header: connection.modelsAuthHeader};
+  }
+  return {
+    type: 'command',
+    command: inference.command,
+    ...(inference.args ? {args: inference.args} : {}),
+    ...(inference.timeoutMs !== undefined ? {timeoutMs: inference.timeoutMs} : {}),
+    ...(inference.refreshIntervalMs !== undefined ? {refreshIntervalMs: inference.refreshIntervalMs} : {}),
+    ...(inference.passEnv ? {passEnv: inference.passEnv} : {}),
+    header: connection.modelsAuthHeader,
+  };
+}
+
+function isOfficialProviderEndpoint(provider: AgentConnectionConfig['provider'], endpoint: string): boolean {
+  const official: Partial<Record<AgentConnectionConfig['provider'], string>> = {
+    openai: 'https://api.openai.com/v1',
+    anthropic: 'https://api.anthropic.com/v1',
+    gemini: 'https://generativelanguage.googleapis.com/v1beta',
+  };
+  return endpoint.replace(/\/+$/u, '') === official[provider];
+}
+
+function defaultConnectionAuth(
+  connection: AgentConnectionConfig,
+  environment: NodeJS.ProcessEnv,
+): ConnectionAuth {
+  if (connection.provider === 'compatible') {
+    const name = environment.SKEIN_API_KEY ? 'SKEIN_API_KEY' : environment.MOSAIC_API_KEY
+      ? 'MOSAIC_API_KEY' : 'SKEIN_API_KEY';
+    return {type: 'env', name};
+  }
+  return {type: 'env', name: providerApiKeyEnv(connection.provider)};
+}
+
+function defaultProtocol(provider: AgentConnectionConfig['provider']): NonNullable<AgentConnectionConfig['protocol']> {
+  if (provider === 'anthropic') return 'anthropic-messages';
+  if (provider === 'gemini') return 'gemini';
+  return 'openai-chat';
+}
+
+function mergeModels(
+  declared: ModelCatalogEntry[],
+  discovered: ModelCatalogEntry[],
+): ModelCatalogEntry[] {
+  const models = new Map(declared.map((model) => [model.id, model]));
+  for (const model of discovered) models.set(model.id, {...models.get(model.id), ...model});
+  return [...models.values()].sort((left, right) => left.id.localeCompare(right.id));
 }

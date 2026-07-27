@@ -9,6 +9,11 @@ import {configDefaults, defineConfig} from 'vitest/config';
 export default defineConfig({
   test: {
     setupFiles: ['./test/setup/isolate-home.ts'],
+    // Several CLI suites intentionally cold-start tsx child processes while
+    // executable UI benchmarks measure wall-clock budgets. Bounding file-level
+    // workers avoids oversubscribing those child processes on developer and CI
+    // hosts, which otherwise turns healthy behavior into timeout-only flakes.
+    maxWorkers: 2,
     // Editor and agent worktrees hold full checkouts of this repository;
     // without the exclusion every committed test file is discovered twice.
     exclude: [...configDefaults.exclude, '**/.claude/**', '**/.mosaic/**', '**/.skein/**'],

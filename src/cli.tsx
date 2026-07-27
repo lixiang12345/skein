@@ -14,7 +14,6 @@ import {
   resolveRuntimeModel,
   saveProjectConfig,
   saveUserConfig,
-  trustProjectModelConfig,
 } from './config.js';
 import {ContextEngine, formatContextHits} from './context/context-engine.js';
 import {AgentRunner} from './agent/index.js';
@@ -36,8 +35,9 @@ import {
 } from './agent/index.js';
 import {resolveAgentModelRoute} from './agent/model-route.js';
 import {deterministicEvidenceReceiptValid} from './agent/evidence-receipt.js';
-import {createAgentConnectionSetup, mergeAgentSetup} from './agent/model-setup.js';
+import {createAgentConnectionSetup} from './agent/model-setup.js';
 import {
+  connectionAuthPlacement,
   connectionCredentialReference,
   connectionRuntimeCatalog,
   discoverConnectionCatalog,
@@ -46,6 +46,10 @@ import {
   resolveConnectionModel,
   type ConnectionProfile,
 } from './agent/connection-catalog.js';
+import {
+  connectionAuthReference,
+  resolveConnectionHeaders,
+} from './agent/connection-auth.js';
 import {discoverWorkspaceRules} from './agent/rules.js';
 import {createProvider} from './providers/index.js';
 import {BackgroundJobStore, createSessionWorktree, runBackgroundWorker, SessionStore, ToolArtifactStore, type SessionSummary} from './session/index.js';
@@ -79,7 +83,16 @@ import {
 } from './memory/index.js';
 import {McpManager} from './mcp/index.js';
 import {WorkflowCatalog} from './workflows/index.js';
-import type {MosaicConfig, ProviderName, Session} from './types.js';
+import type {
+  AgentConnectionConfig,
+  ConnectionAuth,
+  ConnectionHeaderSources,
+  ConnectionProtocol,
+  MosaicConfig,
+  ProviderName,
+  RouteTokenPricing,
+  Session,
+} from './types.js';
 import type {IndexProgress} from './context/local-index.js';
 import {workspaceAliasPath} from './utils/path.js';
 import {
@@ -186,7 +199,7 @@ program
   .option('--provider <provider>', 'openai, anthropic, gemini, or compatible', 'openai')
   .option('--model <model>', 'model identifier')
   .option('--base-url <url>', 'provider base URL')
-  .option('--api-key <key>', 'store a provider key in project config (prefer env vars)')
+  .option('--api-key <key>', 'rejected: configure a credential reference with connections add')
   .option('--index', 'build the index after writing config')
   .option('--yes', 'use defaults without prompting')
   .action(async (options: InitOptions) => {
@@ -818,6 +831,128 @@ skillsCommand
     process.stdout.write(`Revoked ${revoked.name}; effect=${revoked.effect}.\n`);
   });
 
+const connectionsCommand = program.command('connections')
+  .description('Configure, select, and diagnose model connections');
+connectionsCommand
+  .command('add')
+  .description('Add or update a user-owned model connection')
+  .option('-w, --workspace <path>', 'workspace used to resolve existing defaults')
+  .option('--name <name>', 'connection name')
+  .option('--provider <id>', 'provider label, for example openai, anthropic, ollama, or company-gateway')
+  .option('--protocol <protocol>', 'openai-responses, openai-chat, anthropic-messages, or gemini')
+  .option('--base-url <url>', 'inference API base URL; optional for native official providers')
+  .option('--models-base-url <url>', 'independent model-catalog base URL')
+  .option('--models-path <path>', 'catalog path appended to its base URL (default: /models)')
+  .option('--no-model-discovery', 'disable remote catalog discovery and use declared models only')
+  .option('--model <model>', 'default model identifier')
+  .option('--declared-model <model>', 'manual model identifier; repeatable', collect, [])
+  .option('--auth <type>', 'inference auth: env, command, or none')
+  .option('--api-key-env <name>', 'environment variable containing the inference credential')
+  .option('--auth-command <path>', 'credential helper executable; never run through a shell')
+  .option('--auth-arg <value>', 'credential helper argument; repeatable', collect, [])
+  .option('--auth-pass-env <name>', 'host environment name passed to the helper; repeatable', collect, [])
+  .option('--auth-timeout-ms <ms>', 'credential helper timeout, 100-30000')
+  .option('--auth-refresh-ms <ms>', 'in-memory helper refresh interval, 0-86400000')
+  .option('--auth-header <kind>', 'credential placement: bearer or x-api-key')
+  .option('--auth-header-name <name>', 'custom credential header name')
+  .option('--auth-header-prefix <prefix>', 'custom credential prefix, for example "Token "')
+  .option('--header <name=value>', 'non-secret inference header; repeatable', collect, [])
+  .option('--header-env <name=ENV>', 'environment-backed inference header; repeatable', collect, [])
+  .option('--catalog-auth <type>', 'catalog auth: inherit, env, command, or none')
+  .option('--catalog-api-key-env <name>', 'environment variable containing the catalog credential')
+  .option('--catalog-auth-command <path>', 'catalog credential helper executable')
+  .option('--catalog-auth-arg <value>', 'catalog helper argument; repeatable', collect, [])
+  .option('--catalog-auth-pass-env <name>', 'host environment name passed to the catalog helper; repeatable', collect, [])
+  .option('--catalog-auth-timeout-ms <ms>', 'catalog helper timeout, 100-30000')
+  .option('--catalog-auth-refresh-ms <ms>', 'catalog helper refresh interval, 0-86400000')
+  .option('--catalog-auth-header <kind>', 'catalog credential placement: bearer or x-api-key')
+  .option('--catalog-auth-header-name <name>', 'custom catalog credential header name')
+  .option('--catalog-auth-header-prefix <prefix>', 'custom catalog credential prefix')
+  .option('--models-header <name=value>', 'non-secret catalog header; repeatable', collect, [])
+  .option('--models-header-env <name=ENV>', 'environment-backed catalog header; repeatable', collect, [])
+  .option('--hosted-tool <tool>', 'provider-hosted tool: web_search; repeatable, or none to clear', collect, [])
+  .option('--input-price <usd>', 'input USD per million tokens; use none with --output-price none to clear')
+  .option('--output-price <usd>', 'output USD per million tokens; use none with --input-price none to clear')
+  .option('--cached-input-price <usd>', 'cached-input USD per million tokens, or none')
+  .option('--cache-write-input-price <usd>', 'cache-write input USD per million tokens, or none')
+  .option('--yes', 'use supplied or existing defaults without prompting')
+  .option('--no-default', 'do not make this connection the user default')
+  .option('--json', 'print JSON')
+  .action(async (options: ConnectionAddOptions) => {
+    await runConnectionAdd(options);
+  });
+connectionsCommand
+  .command('list')
+  .description('List named connections and credential references')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--json', 'print JSON')
+  .action(async (options: ConfigOptions) => {
+    await printConnections(options);
+  });
+connectionsCommand
+  .command('show <connection>')
+  .description('Show one connection without credential values')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--json', 'print JSON')
+  .action(async (connectionName: string, options: ConfigOptions) => {
+    const {config, profile} = await configuredConnection(connectionName, options);
+    const stored = connectionConfig(config, profile);
+    const detail = connectionDetail(config, profile, stored);
+    if (options.json) printObject(detail, true);
+    else printConnectionDetail(detail);
+  });
+connectionsCommand
+  .command('models <connection>')
+  .description('List declared and discovered model IDs')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--strict-catalog', 'fail instead of falling back to declared models')
+  .option('--json', 'print JSON')
+  .action(async (connectionName: string, options: ConfigOptions & {strictCatalog?: boolean}) => {
+    const {config, profile} = await configuredConnection(connectionName, options);
+    const models = await listConnectionModels(connectionConfig(config, profile), process.env, {
+      ...(options.strictCatalog !== undefined ? {strictCatalog: options.strictCatalog} : {}),
+    });
+    if (options.json) printObject(models, true);
+    else if (!models.length) process.stdout.write('No declared or discovered models.\n');
+    else for (const model of models) {
+      process.stdout.write(`${model.id}${model.ownedBy ? `  ${model.ownedBy}` : ''}${model.contextLength ? `  context ${model.contextLength}` : ''}\n`);
+    }
+  });
+connectionsCommand
+  .command('use <connection>')
+  .description('Set the user default connection')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--json', 'print JSON')
+  .action(async (connectionName: string, options: ConfigOptions) => {
+    const {profile} = await configuredConnection(connectionName, options);
+    const path = await saveUserConfig({connections: {defaultConnection: profile.id}});
+    const result = {connection: profile.id, path};
+    if (options.json) printObject(result, true);
+    else process.stdout.write(`${chalk.green(cliGlyphs.success)} Default connection is now ${profile.id} (${path})\n`);
+  });
+connectionsCommand
+  .command('test <connection>')
+  .description('Validate config/auth and test the model catalog without inference')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--no-catalog', 'skip the model-catalog HTTP request')
+  .option('--json', 'print JSON')
+  .action(async (connectionName: string, options: ConfigOptions & {catalog: boolean}) => {
+    await testConnection(connectionName, options);
+  });
+connectionsCommand
+  .command('doctor [connection]')
+  .description('Diagnose local connection configuration without making network requests')
+  .option('-w, --workspace <path>', 'workspace root')
+  .option('--config <path>', 'explicit config file')
+  .option('--json', 'print JSON')
+  .action(async (connectionName: string | undefined, options: ConfigOptions) => {
+    await doctorConnections(connectionName, options);
+  });
+
 const agentsCommand = program.command('agents').description('Inspect specialized agent profiles');
 agentsCommand
   .command('list')
@@ -845,7 +980,7 @@ agentsCommand
           endpoint: redactEndpoint(route.baseUrl ?? connection?.baseUrl ?? (route.provider === config.model.provider ? config.model.baseUrl : undefined)),
           credentials: route.apiKeyEnv ?? connection?.apiKeyEnv
             ? `env:${route.apiKeyEnv ?? connection?.apiKeyEnv}`
-            : 'inherited when compatible',
+            : connection?.auth ? connectionAuthReference(connection.auth) : 'inherited when compatible',
           tokenBudget: route.tokenBudget,
           maxToolCalls: route.maxToolCalls,
           timeoutMs: route.timeoutMs,
@@ -946,7 +1081,7 @@ agentsCommand
   });
 agentsCommand
   .command('setup')
-  .description('Configure one shared model connection and team defaults')
+  .description('Deprecated alias for connections add')
   .option('-w, --workspace <path>', 'workspace used to resolve current defaults')
   .option('--name <name>', 'connection name')
   .option('--provider <provider>', 'relay provider; only compatible is supported')
@@ -970,53 +1105,22 @@ agentsCommand
   });
 agentsCommand
   .command('connections')
-  .description('List named model endpoints and credential references')
+  .description('Deprecated alias for connections list')
   .option('-w, --workspace <path>', 'workspace root')
   .option('--config <path>', 'explicit config file')
   .option('--json', 'print JSON')
   .action(async (options: ConfigOptions) => {
-    const workspace = workspaceOption(options.workspace);
-    const config = await runtimeConfig(workspace, runtimeOptions(options));
-    const catalog = discoverConnectionCatalog(config);
-    const connections = catalog.profiles.map((connection) => {
-      const configured = config.agents?.connections?.[connection.id];
-      return {
-        name: connection.id,
-        provider: connection.provider,
-        protocol: connection.protocol,
-        source: connection.source,
-        endpoint: redactEndpoint(connection.baseUrl),
-        modelsEndpoint: redactEndpoint(connection.modelsBaseUrl ?? connection.baseUrl),
-        credentials: connectionCredentialReference(connection),
-        authHeader: connection.auth.type === 'env' ? connection.auth.header ?? 'bearer' : null,
-        modelsAuthHeader: connection.auth.type === 'env'
-          ? connection.modelsAuthHeader ?? connection.auth.header ?? 'bearer'
-          : null,
-        routes: Object.values(config.agents?.routes ?? {}).filter((route) => route.connection === connection.id).length,
-        hostedTools: configured?.hostedTools ?? [],
-        pricing: configured?.pricing ? 'configured' : 'unpriced',
-        default: catalog.defaultConnection === connection.id,
-        complete: connectionRuntimeCatalog({profiles: [connection]}).profiles[0]?.complete ?? false,
-      };
-    });
-    if (options.json) printObject(connections, true);
-    else if (!connections.length) process.stdout.write('No named model connections configured.\n');
-    else for (const connection of connections) {
-      process.stdout.write(`${connection.name.padEnd(16)} ${connection.protocol.padEnd(20)} ${connection.credentials.padEnd(28)} ${connection.source.padEnd(11)} ${connection.complete ? 'ready' : 'incomplete'}${connection.default ? ' + default' : ''}  inference=${connection.endpoint} auth=${connection.authHeader ?? 'none'} models=${connection.modelsEndpoint} models-auth=${connection.modelsAuthHeader ?? 'none'} hosted=${connection.hostedTools.join(',') || 'none'} pricing=${connection.pricing}\n`);
-    }
+    await printConnections(options);
   });
 agentsCommand
   .command('models <connection>')
-  .description('List model IDs exposed by a named compatible connection')
+  .description('Deprecated alias for connections models')
   .option('-w, --workspace <path>', 'workspace root')
   .option('--config <path>', 'explicit config file')
   .option('--json', 'print JSON')
   .action(async (connectionName: string, options: ConfigOptions) => {
-    const workspace = workspaceOption(options.workspace);
-    const config = await runtimeConfig(workspace, runtimeOptions(options));
-    const connection = discoverConnectionCatalog(config).profiles.find(({id}) => id === connectionName);
-    if (!connection) throw new Error(`Unknown model connection: ${connectionName}`);
-    const models = await listConnectionModels(connection);
+    const {config, profile} = await configuredConnection(connectionName, options);
+    const models = await listConnectionModels(connectionConfig(config, profile));
     if (options.json) printObject(models, true);
     else if (!models.length) process.stdout.write('No models returned by the connection.\n');
     else for (const model of models) {
@@ -1758,6 +1862,7 @@ program
 
 const HELP_COMMAND_GROUPS: Record<string, readonly string[]> = {
   'Getting started:': ['init', 'config', 'status', 'doctor', 'update', 'migrate', 'completion', 'feedback'],
+  'Models & connections:': ['connections'],
   'Context & retrieval:': ['index', 'search', 'context'],
   'Sessions & recovery:': ['session', 'jobs', 'checkpoint'],
   'Agents & extensions:': ['tools', 'skills', 'agents', 'workflow', 'memory', 'mcp', 'rules'],
@@ -1864,6 +1969,48 @@ interface AgentSetupOptions {
   model?: string;
   yes?: boolean;
   json?: boolean;
+}
+interface ConnectionAddOptions extends ConfigOptions {
+  name?: string;
+  provider?: string;
+  protocol?: string;
+  baseUrl?: string;
+  modelsBaseUrl?: string;
+  modelsPath?: string;
+  modelDiscovery?: boolean;
+  model?: string;
+  declaredModel?: string[];
+  auth?: string;
+  apiKeyEnv?: string;
+  authCommand?: string;
+  authArg?: string[];
+  authPassEnv?: string[];
+  authTimeoutMs?: string;
+  authRefreshMs?: string;
+  authHeader?: string;
+  authHeaderName?: string;
+  authHeaderPrefix?: string;
+  header?: string[];
+  headerEnv?: string[];
+  catalogAuth?: string;
+  catalogApiKeyEnv?: string;
+  catalogAuthCommand?: string;
+  catalogAuthArg?: string[];
+  catalogAuthPassEnv?: string[];
+  catalogAuthTimeoutMs?: string;
+  catalogAuthRefreshMs?: string;
+  catalogAuthHeader?: string;
+  catalogAuthHeaderName?: string;
+  catalogAuthHeaderPrefix?: string;
+  modelsHeader?: string[];
+  modelsHeaderEnv?: string[];
+  hostedTool?: string[];
+  inputPrice?: string;
+  outputPrice?: string;
+  cachedInputPrice?: string;
+  cacheWriteInputPrice?: string;
+  yes?: boolean;
+  default?: boolean;
 }
 interface IndexOptions extends ConfigOptions {addWorkspace: string[]}
 interface SearchOptions extends ConfigOptions {topK: string}
@@ -2204,27 +2351,34 @@ async function runInit(options: InitOptions): Promise<void> {
   if (provider === 'compatible' && !baseUrl) {
     throw new Error('OpenAI-compatible providers require --base-url (for example http://localhost:11434/v1).');
   }
-  const config: Record<string, unknown> = {
-    model: {
-      provider,
-      model: model || defaultModelForProvider(provider),
-      ...(baseUrl ? {baseUrl} : {}),
-      ...(options.apiKey ? {apiKey: options.apiKey} : {}),
-    },
-    context: {},
-  };
-  const path = await saveProjectConfig(workspace, config);
-  await trustProjectModelConfig(workspace, path);
-  process.stdout.write(`${chalk.green(cliGlyphs.success)} Wrote ${path}\n`);
   if (options.apiKey) {
-    process.stdout.write(`  Next: run ${chalk.cyan(PRODUCT_COMMAND)}\n`);
-  } else if (provider === 'compatible') {
-    process.stdout.write(
-      `  Next: run ${chalk.cyan(PRODUCT_COMMAND)} (set SKEIN_API_KEY only if the endpoint requires it)\n`,
-    );
-  } else {
-    process.stdout.write(`  Next: set ${environmentName(provider)} and run ${chalk.cyan(PRODUCT_COMMAND)}\n`);
+    throw new Error(`--api-key is not accepted because project config cannot own credentials. Use ${PRODUCT_COMMAND} connections add with env or command auth.`);
   }
+  const modelId = model || defaultModelForProvider(provider);
+  const protocol = defaultConnectionProtocol(provider);
+  const name = projectConnectionName(workspace);
+  const auth: ConnectionAuth = provider === 'compatible' && connectionLoopback(baseUrl)
+    ? {type: 'none'}
+    : {type: 'env', name: providerEnvironment(provider)};
+  const connection: AgentConnectionConfig = {
+    provider,
+    providerId: provider,
+    protocol,
+    defaultModel: modelId,
+    ...(baseUrl ? {baseUrl} : {}),
+    auth,
+    ...((protocol === 'anthropic-messages' || protocol === 'gemini')
+      ? {models: [{id: modelId}], modelDiscovery: false} : {}),
+  };
+  const userPath = await saveUserConfig({connections: {
+    defaultConnection: name,
+    profiles: {[name]: connection},
+  }});
+  const path = await saveProjectConfig(workspace, {context: {}});
+  process.stdout.write(`${chalk.green(cliGlyphs.success)} Wrote project state ${path}\n`);
+  process.stdout.write(`${chalk.green(cliGlyphs.success)} Saved user connection ${name} to ${userPath}\n`);
+  process.stdout.write(`  Credential: ${connectionAuthReference(auth)} (value is not stored)\n`);
+  process.stdout.write(`  Next: run ${chalk.cyan(PRODUCT_COMMAND)} or inspect with ${chalk.cyan(`${PRODUCT_COMMAND} connections show ${name}`)}\n`);
   if (options.index) {
     const loaded = await loadConfig(workspace);
     const engine = new ContextEngine(loaded);
@@ -2329,7 +2483,10 @@ async function runAgentSetup(options: AgentSetupOptions): Promise<void> {
     ...(pricing ? {pricing} : {}),
     defaultModel: model,
   });
-  const path = await saveUserConfig({agents: mergeAgentSetup(undefined, setup)});
+  const path = await saveUserConfig({
+    connections: {defaultConnection: setup.defaultConnection, profiles: setup.connections},
+    agents: {defaultModel: setup.defaultModel},
+  });
   const credentialConfigured = apiKeyEnv ? Boolean(process.env[apiKeyEnv]) : false;
   const result = {
     path,
@@ -2353,11 +2510,566 @@ async function runAgentSetup(options: AgentSetupOptions): Promise<void> {
   }
   process.stdout.write(`${chalk.green(cliGlyphs.success)} Saved shared connection ${setup.defaultConnection} to ${path}\n`);
   process.stdout.write(`  Default: ${protocol}/${setup.defaultModel} via ${redactEndpoint(baseUrl)}\n`);
-  process.stdout.write(`  Models: ${PRODUCT_COMMAND} agents models ${setup.defaultConnection} via ${redactEndpoint(modelsBaseUrl || baseUrl)}\n`);
+  process.stdout.write(`  Models: ${PRODUCT_COMMAND} connections models ${setup.defaultConnection} via ${redactEndpoint(modelsBaseUrl || baseUrl)}\n`);
   process.stdout.write(`  Credential: ${auth === 'none' ? 'none' : `env:${apiKeyEnv} via ${authHeader}; models via ${modelsAuthHeader} (${credentialConfigured ? 'configured' : 'not set'})`}\n`);
   process.stdout.write(`  Hosted tools: ${hostedTools.join(', ') || 'none'}\n`);
   process.stdout.write(`  Pricing: ${pricing ? 'configured by user' : 'unpriced'}\n`);
   process.stdout.write(`  Routes: ${PRODUCT_COMMAND} agents list\n`);
+  process.stdout.write(`  Note: ${PRODUCT_COMMAND} agents setup is a compatibility alias; use ${PRODUCT_COMMAND} connections add for command auth, custom headers, manual catalogs, and provider-neutral setup.\n`);
+}
+
+async function runConnectionAdd(options: ConnectionAddOptions): Promise<void> {
+  const workspace = workspaceOption(options.workspace);
+  const current = await loadConfig(workspace);
+  const currentName = current.connections?.defaultConnection ?? current.agents?.defaultConnection ?? 'default';
+  let name = options.name ?? currentName;
+  let existing = current.connections?.profiles?.[name] ?? current.agents?.connections?.[name];
+  let providerId = options.provider ?? existing?.providerId ?? existing?.provider ?? 'openai';
+  let protocol = validateAnyConnectionProtocol(options.protocol ?? existing?.protocol ?? defaultConnectionProtocol(providerId));
+  let baseUrl = options.baseUrl ?? existing?.baseUrl ?? '';
+  let modelsBaseUrl = options.modelsBaseUrl ?? existing?.modelsBaseUrl ?? '';
+  let model = options.model ?? existing?.defaultModel ?? current.model.model;
+  let authType = options.auth ?? existing?.auth?.type ?? (connectionLoopback(baseUrl) ? 'none' : 'env');
+  let apiKeyEnv = options.apiKeyEnv ?? (existing?.auth?.type === 'env' ? existing.auth.name : undefined) ??
+    defaultConnectionEnvironmentName(name, providerId);
+  let authCommand = options.authCommand ?? (existing?.auth?.type === 'command' ? existing.auth.command : '');
+
+  if (!options.yes && process.stdin.isTTY && process.stdout.isTTY) {
+    const readline = createInterface({input, output});
+    try {
+      name = await question(readline, 'Connection name', name);
+      existing = current.connections?.profiles?.[name] ?? current.agents?.connections?.[name];
+      providerId = await question(readline, 'Provider label', providerId);
+      protocol = validateAnyConnectionProtocol(await question(readline, 'Wire protocol', protocol));
+      baseUrl = await question(readline, 'Inference base URL (blank for official provider default)', baseUrl);
+      modelsBaseUrl = await question(readline, 'Model catalog base URL (optional)', modelsBaseUrl);
+      authType = await question(readline, 'Authentication (env, command, or none)', authType);
+      if (authType === 'env') {
+        apiKeyEnv = await question(readline, 'Credential environment variable', apiKeyEnv);
+      } else if (authType === 'command') {
+        authCommand = await question(readline, 'Credential helper executable', authCommand);
+      }
+      model = await question(readline, 'Default model', model);
+    } finally {
+      readline.close();
+    }
+  }
+
+  const provider = connectionProvider(providerId);
+  const auth = buildConnectionAuth({
+    type: authType,
+    ...(authType === 'env' ? {envName: apiKeyEnv} : {}),
+    ...(authType === 'command' ? {command: authCommand} : {}),
+    ...(options.authArg ? {args: options.authArg} : {}),
+    ...(options.authPassEnv ? {passEnv: options.authPassEnv} : {}),
+    ...(options.authTimeoutMs !== undefined ? {timeoutMs: options.authTimeoutMs} : {}),
+    ...(options.authRefreshMs !== undefined ? {refreshIntervalMs: options.authRefreshMs} : {}),
+    ...(options.authHeader ? {header: options.authHeader} : {}),
+    ...(options.authHeaderName ? {headerName: options.authHeaderName} : {}),
+    ...(options.authHeaderPrefix !== undefined ? {headerPrefix: options.authHeaderPrefix} : {}),
+  }, existing?.auth);
+  const catalogAuth = buildCatalogAuth(options, existing?.modelsAuth);
+  const headers = parseConnectionHeaderSources(options.header, options.headerEnv, existing?.headers);
+  const modelsHeaders = parseConnectionHeaderSources(
+    options.modelsHeader,
+    options.modelsHeaderEnv,
+    existing?.modelsHeaders,
+  );
+  const declared = options.declaredModel?.length
+    ? [...new Set(options.declaredModel.map((id) => id.trim()).filter(Boolean))].map((id) => ({id}))
+    : existing?.models;
+  const modelsPath = options.modelsPath ?? existing?.modelsPath;
+  const hostedTools = options.hostedTool?.length
+    ? validateHostedTools(options.hostedTool)
+    : existing?.hostedTools;
+  const pricing = connectionPricing(options, existing?.pricing);
+  const connection: AgentConnectionConfig = {
+    provider,
+    providerId: validateProviderId(providerId),
+    protocol,
+    defaultModel: validateModelId(model),
+    ...(baseUrl.trim() ? {baseUrl: baseUrl.trim()} : {}),
+    ...(modelsBaseUrl.trim() ? {modelsBaseUrl: modelsBaseUrl.trim()} : {}),
+    ...(options.modelDiscovery !== undefined ? {modelDiscovery: options.modelDiscovery} :
+      existing?.modelDiscovery !== undefined ? {modelDiscovery: existing.modelDiscovery} : {}),
+    ...(modelsPath && modelsPath !== '/models' ? {modelsPath} : {}),
+    auth,
+    ...(catalogAuth ? {modelsAuth: catalogAuth} : {}),
+    ...(headers ? {headers} : {}),
+    ...(modelsHeaders ? {modelsHeaders} : {}),
+    ...(declared?.length ? {models: declared} : {}),
+    ...(hostedTools?.length ? {hostedTools} : {}),
+    ...(pricing ? {pricing} : {}),
+  };
+  const path = await saveUserConfig({connections: {
+    ...(options.default === false ? {} : {defaultConnection: name}),
+    profiles: {[name]: connection},
+  }});
+  const loaded = await loadConfig(workspace);
+  const profile = discoverConnectionCatalog(loaded).profiles.find(({id}) => id === name);
+  if (!profile) throw new Error(`Saved connection ${name} could not be reloaded.`);
+  const result = {
+    path,
+    ...connectionDetail(loaded, profile, connection),
+    default: options.default !== false,
+  };
+  if (options.json) printObject(result, true);
+  else {
+    process.stdout.write(`${chalk.green(cliGlyphs.success)} Saved connection ${name} to ${path}\n`);
+    printConnectionDetail(result);
+  }
+}
+
+async function printConnections(options: ConfigOptions): Promise<void> {
+  const workspace = workspaceOption(options.workspace);
+  const config = await loadConfig(workspace, options.config);
+  const catalog = discoverConnectionCatalog(config);
+  const runtime = connectionRuntimeCatalog(catalog);
+  const connections = catalog.profiles.map((profile) => {
+    const stored = connectionConfig(config, profile);
+    const status = runtime.profiles.find(({id}) => id === profile.id);
+    return {
+      name: profile.id,
+      provider: profile.providerId,
+      protocol: profile.protocol,
+      source: profile.source,
+      endpoint: redactEndpoint(profile.baseUrl),
+      modelsEndpoint: redactEndpoint(profile.modelsBaseUrl ?? profile.baseUrl),
+      credentials: connectionCredentialReference(profile),
+      catalogCredentials: profile.modelsAuth ? connectionAuthReference(profile.modelsAuth) : 'inherit',
+      authHeader: status?.authHeader ?? null,
+      modelsAuthHeader: status?.modelsAuthHeader ?? null,
+      declaredModels: stored.models?.length ?? 0,
+      routes: Object.values(config.agents?.routes ?? {}).filter((route) => route.connection === profile.id).length,
+      hostedTools: stored.hostedTools ?? [],
+      pricing: stored.pricing ? 'configured' : 'unpriced',
+      default: catalog.defaultConnection === profile.id,
+      complete: status?.complete ?? false,
+      issues: status?.issues ?? [],
+    };
+  });
+  if (options.json) printObject(connections, true);
+  else if (!connections.length) process.stdout.write(`No model connections configured. Run ${PRODUCT_COMMAND} connections add.\n`);
+  else for (const connection of connections) {
+    process.stdout.write(`${connection.name.padEnd(16)} ${connection.protocol.padEnd(20)} ${connection.credentials.padEnd(28)} ${connection.source.padEnd(11)} ${connection.complete ? 'ready' : 'incomplete'}${connection.default ? ' + default' : ''}  provider=${connection.provider} inference=${connection.endpoint} models=${connection.modelsEndpoint} declared=${connection.declaredModels}\n`);
+  }
+}
+
+async function configuredConnection(
+  connectionName: string,
+  options: ConfigOptions,
+): Promise<{config: MosaicConfig; profile: ConnectionProfile}> {
+  const config = await loadConfig(workspaceOption(options.workspace), options.config);
+  const profile = discoverConnectionCatalog(config).profiles.find(({id}) => id === connectionName);
+  if (!profile) throw new Error(`Unknown model connection: ${connectionName}`);
+  return {config, profile};
+}
+
+function connectionConfig(config: MosaicConfig, profile: ConnectionProfile): AgentConnectionConfig {
+  return config.connections?.profiles?.[profile.id] ?? config.agents?.connections?.[profile.id] ?? {
+    provider: profile.provider,
+    providerId: profile.providerId,
+    protocol: profile.protocol,
+    ...(profile.baseUrl ? {baseUrl: profile.baseUrl} : {}),
+    ...(profile.modelsBaseUrl ? {modelsBaseUrl: profile.modelsBaseUrl} : {}),
+    ...(profile.modelDiscovery !== undefined ? {modelDiscovery: profile.modelDiscovery} : {}),
+    ...(profile.modelsPath ? {modelsPath: profile.modelsPath} : {}),
+    ...(profile.defaultModel ? {defaultModel: profile.defaultModel} : {}),
+    auth: profile.auth,
+    ...(profile.modelsAuth ? {modelsAuth: profile.modelsAuth} : {}),
+    ...(profile.headers ? {headers: profile.headers} : {}),
+    ...(profile.modelsHeaders ? {modelsHeaders: profile.modelsHeaders} : {}),
+    ...(profile.models ? {models: profile.models} : {}),
+  };
+}
+
+function connectionDetail(
+  config: MosaicConfig,
+  profile: ConnectionProfile,
+  stored: AgentConnectionConfig,
+): Record<string, unknown> {
+  const runtime = connectionRuntimeCatalog({profiles: [profile]}).profiles[0];
+  return {
+    name: profile.id,
+    label: profile.label ?? null,
+    provider: profile.providerId,
+    protocol: profile.protocol,
+    source: profile.source,
+    endpoint: redactEndpoint(profile.baseUrl),
+    modelsEndpoint: redactEndpoint(profile.modelsBaseUrl ?? profile.baseUrl),
+    modelsPath: profile.modelsPath ?? '/models',
+    modelDiscovery: stored.modelDiscovery ?? true,
+    defaultModel: profile.defaultModel ?? null,
+    default: (config.connections?.defaultConnection ?? config.agents?.defaultConnection) === profile.id,
+    auth: connectionAuthReference(profile.auth),
+    authPlacement: connectionAuthPlacement(profile),
+    catalogAuth: profile.modelsAuth ? connectionAuthReference(profile.modelsAuth) : 'inherit',
+    inferenceHeaders: headerReferences(stored.headers),
+    catalogHeaders: headerReferences(stored.modelsHeaders),
+    declaredModels: stored.models?.map(({id}) => id) ?? [],
+    hostedTools: stored.hostedTools ?? [],
+    pricing: stored.pricing ? 'configured' : 'unpriced',
+    complete: runtime?.complete ?? false,
+    issues: runtime?.issues ?? [],
+    catalogIssues: runtime?.catalogIssues ?? [],
+  };
+}
+
+function printConnectionDetail(detail: Record<string, unknown>): void {
+  process.stdout.write(`Connection ${detail.name}\n`);
+  process.stdout.write(`  Provider: ${detail.provider}  protocol=${detail.protocol}\n`);
+  process.stdout.write(`  Inference: ${detail.endpoint}\n`);
+  process.stdout.write(`  Catalog: ${detail.modelsEndpoint}${detail.modelsPath ? ` ${detail.modelsPath}` : ''}\n`);
+  process.stdout.write(`  Auth: ${detail.auth} via ${detail.authPlacement}; catalog=${detail.catalogAuth}\n`);
+  process.stdout.write(`  Model: ${detail.defaultModel ?? 'not set'}  declared=${(detail.declaredModels as string[]).join(', ') || 'none'}\n`);
+  process.stdout.write(`  Status: ${detail.complete ? 'ready' : 'incomplete'}${(detail.issues as string[]).length ? ` (${(detail.issues as string[]).join('; ')})` : ''}\n`);
+}
+
+async function testConnection(
+  connectionName: string,
+  options: ConfigOptions & {catalog: boolean},
+): Promise<void> {
+  const {config, profile} = await configuredConnection(connectionName, options);
+  const stored = connectionConfig(config, profile);
+  const checks: Array<{layer: string; status: 'pass' | 'fail' | 'skip'; detail: string}> = [];
+  const issues = connectionRuntimeCatalog({profiles: [profile]}).profiles[0]?.issues ?? [];
+  checks.push({layer: 'config', status: issues.length ? 'fail' : 'pass', detail: issues.join('; ') || 'schema and references are valid'});
+  try {
+    await resolveConnectionHeaders(profile.auth, profile.headers);
+    checks.push({layer: 'auth', status: 'pass', detail: `${connectionAuthReference(profile.auth)} resolved`});
+  } catch (error) {
+    checks.push({layer: 'auth', status: 'fail', detail: (error as Error).message});
+  }
+  if (!options.catalog) {
+    checks.push({layer: 'catalog', status: 'skip', detail: 'skipped by --no-catalog'});
+  } else {
+    try {
+      const models = await listConnectionModels(stored, process.env, {strictCatalog: true});
+      checks.push({layer: 'catalog', status: 'pass', detail: `${models.length} model(s)`});
+    } catch (error) {
+      checks.push({layer: 'catalog', status: 'fail', detail: (error as Error).message});
+    }
+  }
+  const result = {connection: connectionName, inference: 'not called', ok: checks.every(({status}) => status !== 'fail'), checks};
+  if (options.json) printObject(result, true);
+  else for (const check of checks) {
+    process.stdout.write(`${check.status === 'pass' ? cliGlyphs.success : check.status === 'fail' ? cliGlyphs.error : cliGlyphs.meta} ${check.layer.padEnd(8)} ${check.detail}\n`);
+  }
+  if (!result.ok) process.exitCode = 1;
+}
+
+async function doctorConnections(connectionName: string | undefined, options: ConfigOptions): Promise<void> {
+  const config = await loadConfig(workspaceOption(options.workspace), options.config);
+  const catalog = discoverConnectionCatalog(config);
+  const profiles = connectionName
+    ? catalog.profiles.filter(({id}) => id === connectionName)
+    : catalog.profiles;
+  if (connectionName && !profiles.length) throw new Error(`Unknown model connection: ${connectionName}`);
+  const reports = profiles.map((profile) => {
+    const stored = connectionConfig(config, profile);
+    const runtime = connectionRuntimeCatalog({profiles: [profile]}).profiles[0]!;
+    return {
+      connection: profile.id,
+      provider: profile.providerId,
+      protocol: profile.protocol,
+      config: runtime.issues.length ? 'fail' : 'pass',
+      auth: profile.auth.type === 'command' ? 'configured-unverified' : runtime.authStatus,
+      catalog: stored.modelDiscovery === false ? (stored.models?.length ? 'declared-only' : 'disabled')
+        : runtime.catalogIssues?.length ? 'incomplete'
+        : stored.modelsBaseUrl || (stored.protocol !== 'anthropic-messages' && stored.protocol !== 'gemini' && stored.baseUrl)
+        ? 'configured-unverified'
+        : stored.models?.length ? 'declared-only' : 'not-configured',
+      inference: 'not-tested',
+      issues: runtime.issues,
+      catalogIssues: runtime.catalogIssues ?? [],
+      next: runtime.issues.length
+        ? `Fix the reported references, then run ${PRODUCT_COMMAND} connections test ${profile.id}.`
+        : runtime.catalogIssues?.length
+          ? `Inference is ready; fix catalog references or declare models, then run ${PRODUCT_COMMAND} connections test ${profile.id}.`
+        : `Run ${PRODUCT_COMMAND} connections test ${profile.id} for auth/catalog verification; inference is never called by doctor.`,
+    };
+  });
+  if (options.json) printObject(reports, true);
+  else if (!reports.length) process.stdout.write(`No model connections configured. Run ${PRODUCT_COMMAND} connections add.\n`);
+  else for (const report of reports) {
+    process.stdout.write(`${report.connection}: config=${report.config} auth=${report.auth} catalog=${report.catalog} inference=${report.inference}\n`);
+    if (report.issues.length) process.stdout.write(`  ${report.issues.join('; ')}\n`);
+    if (report.catalogIssues.length) process.stdout.write(`  catalog: ${report.catalogIssues.join('; ')}\n`);
+    process.stdout.write(`  ${report.next}\n`);
+  }
+}
+
+function connectionPricing(
+  options: Pick<ConnectionAddOptions,
+    'inputPrice' | 'outputPrice' | 'cachedInputPrice' | 'cacheWriteInputPrice'>,
+  current?: RouteTokenPricing,
+): RouteTokenPricing | undefined {
+  const changed = options.inputPrice !== undefined || options.outputPrice !== undefined ||
+    options.cachedInputPrice !== undefined || options.cacheWriteInputPrice !== undefined;
+  if (!changed) return current;
+  if (options.inputPrice?.trim().toLowerCase() === 'none' &&
+      options.outputPrice?.trim().toLowerCase() === 'none') {
+    const optionalValues = [options.cachedInputPrice, options.cacheWriteInputPrice]
+      .filter((value): value is string => value !== undefined);
+    if (optionalValues.some((value) => value.trim().toLowerCase() !== 'none')) {
+      throw new Error('Clearing relay pricing cannot retain cached-input or cache-write prices.');
+    }
+    return undefined;
+  }
+  const input = optionalPrice(options.inputPrice ?? priceInput(current?.inputPerMillionUsd), 'Input price');
+  const output = optionalPrice(options.outputPrice ?? priceInput(current?.outputPerMillionUsd), 'Output price');
+  const cachedInput = optionalPrice(
+    options.cachedInputPrice ?? priceInput(current?.cachedInputPerMillionUsd),
+    'Cached-input price',
+  );
+  const cacheWriteInput = optionalPrice(
+    options.cacheWriteInputPrice ?? priceInput(current?.cacheWriteInputPerMillionUsd),
+    'Cache-write input price',
+  );
+  if (input === undefined || output === undefined) {
+    throw new Error('Relay pricing requires both input and output USD-per-million values.');
+  }
+  return {
+    inputPerMillionUsd: input,
+    outputPerMillionUsd: output,
+    ...(cachedInput !== undefined ? {cachedInputPerMillionUsd: cachedInput} : {}),
+    ...(cacheWriteInput !== undefined ? {cacheWriteInputPerMillionUsd: cacheWriteInput} : {}),
+  };
+}
+
+interface ConnectionAuthInput {
+  type?: string;
+  envName?: string;
+  command?: string;
+  args?: string[];
+  passEnv?: string[];
+  timeoutMs?: string;
+  refreshIntervalMs?: string;
+  header?: string;
+  headerName?: string;
+  headerPrefix?: string;
+}
+
+function buildConnectionAuth(input: ConnectionAuthInput, current?: ConnectionAuth): ConnectionAuth {
+  const type = input.type ?? current?.type ?? 'none';
+  if (type !== 'env' && type !== 'command' && type !== 'none') {
+    throw new Error(`Unknown connection authentication ${type}; use env, command, or none.`);
+  }
+  const helperOptions = Boolean(
+    input.args?.length || input.passEnv?.length || input.timeoutMs !== undefined ||
+    input.refreshIntervalMs !== undefined,
+  );
+  const placement = credentialPlacement(input, current);
+  const header = input.header !== undefined
+    ? validateConnectionApiKeyHeader(input.header)
+    : input.headerName !== undefined || input.headerPrefix !== undefined
+      ? undefined
+      : current && current.type !== 'none' && !current.placement ? current.header : undefined;
+  if (input.header !== undefined && (input.headerName !== undefined || input.headerPrefix !== undefined)) {
+    throw new Error('Use either --auth-header or --auth-header-name, not both.');
+  }
+  if (type === 'none') {
+    if (input.envName || input.command || helperOptions || input.header !== undefined ||
+        input.headerName !== undefined || input.headerPrefix !== undefined) {
+      throw new Error('Authentication none cannot include credential source, helper, or placement options.');
+    }
+    return {type: 'none'};
+  }
+  if (type === 'env') {
+    if (input.command || helperOptions) {
+      throw new Error('Environment authentication cannot include credential helper options.');
+    }
+    const name = input.envName ?? (current?.type === 'env' ? current.name : undefined);
+    if (!name) throw new Error('Environment authentication requires --api-key-env.');
+    return {type: 'env', name, ...(placement ? {placement} : header ? {header} : {})};
+  }
+  if (input.envName) throw new Error('Command authentication cannot include --api-key-env.');
+  const command = input.command ?? (current?.type === 'command' ? current.command : undefined);
+  if (!command) throw new Error('Command authentication requires --auth-command.');
+  const timeoutMs = parseOptionalInteger(input.timeoutMs, 'Credential helper timeout', 100, 30_000) ??
+    (current?.type === 'command' ? current.timeoutMs : undefined);
+  const refreshIntervalMs = parseOptionalInteger(
+    input.refreshIntervalMs,
+    'Credential helper refresh interval',
+    0,
+    86_400_000,
+  ) ??
+    (current?.type === 'command' ? current.refreshIntervalMs : undefined);
+  return {
+    type: 'command',
+    command,
+    ...(input.args?.length ? {args: input.args} : current?.type === 'command' && current.args ? {args: current.args} : {}),
+    ...(input.passEnv?.length ? {passEnv: input.passEnv} : current?.type === 'command' && current.passEnv ? {passEnv: current.passEnv} : {}),
+    ...(timeoutMs !== undefined ? {timeoutMs} : {}),
+    ...(refreshIntervalMs !== undefined ? {refreshIntervalMs} : {}),
+    ...(placement ? {placement} : header ? {header} : {}),
+  };
+}
+
+function buildCatalogAuth(options: ConnectionAddOptions, current?: ConnectionAuth): ConnectionAuth | undefined {
+  const hasOptions = Boolean(
+    options.catalogApiKeyEnv || options.catalogAuthCommand || options.catalogAuthArg?.length ||
+    options.catalogAuthPassEnv?.length || options.catalogAuthTimeoutMs !== undefined ||
+    options.catalogAuthRefreshMs !== undefined || options.catalogAuthHeader !== undefined ||
+    options.catalogAuthHeaderName !== undefined || options.catalogAuthHeaderPrefix !== undefined,
+  );
+  const type = options.catalogAuth ?? (hasOptions ? current?.type : undefined);
+  if (!type) {
+    if (hasOptions) throw new Error('Catalog credential options require --catalog-auth env, command, or none.');
+    return current;
+  }
+  if (type === 'inherit') {
+    if (hasOptions) throw new Error('Catalog authentication inherit cannot include independent credential options.');
+    return undefined;
+  }
+  return buildConnectionAuth({
+    type,
+    ...(options.catalogApiKeyEnv ? {envName: options.catalogApiKeyEnv} : {}),
+    ...(options.catalogAuthCommand ? {command: options.catalogAuthCommand} : {}),
+    ...(options.catalogAuthArg ? {args: options.catalogAuthArg} : {}),
+    ...(options.catalogAuthPassEnv ? {passEnv: options.catalogAuthPassEnv} : {}),
+    ...(options.catalogAuthTimeoutMs !== undefined ? {timeoutMs: options.catalogAuthTimeoutMs} : {}),
+    ...(options.catalogAuthRefreshMs !== undefined ? {refreshIntervalMs: options.catalogAuthRefreshMs} : {}),
+    ...(options.catalogAuthHeader ? {header: options.catalogAuthHeader} : {}),
+    ...(options.catalogAuthHeaderName ? {headerName: options.catalogAuthHeaderName} : {}),
+    ...(options.catalogAuthHeaderPrefix !== undefined ? {headerPrefix: options.catalogAuthHeaderPrefix} : {}),
+  }, current);
+}
+
+function credentialPlacement(
+  input: ConnectionAuthInput,
+  current?: ConnectionAuth,
+): {name: string; prefix?: string} | undefined {
+  if (input.header !== undefined) return undefined;
+  if (input.headerName !== undefined) {
+    return {name: input.headerName, ...(input.headerPrefix !== undefined ? {prefix: input.headerPrefix} : {})};
+  }
+  if (input.headerPrefix !== undefined) {
+    if (!current || current.type === 'none' || !current.placement) {
+      throw new Error('A credential header prefix requires --auth-header-name or an existing custom placement.');
+    }
+    return {name: current.placement.name, prefix: input.headerPrefix};
+  }
+  return current && current.type !== 'none' ? current.placement : undefined;
+}
+
+function parseConnectionHeaderSources(
+  literalValues: string[] | undefined,
+  environmentValues: string[] | undefined,
+  current?: ConnectionHeaderSources,
+): ConnectionHeaderSources | undefined {
+  if (!literalValues?.length && !environmentValues?.length) return current;
+  const staticHeaders = parseAssignments(literalValues ?? [], 'header');
+  const envHeaders = parseAssignments(environmentValues ?? [], 'header environment');
+  assertUniqueHeaderNames([...Object.keys(staticHeaders), ...Object.keys(envHeaders)]);
+  return {
+    ...(Object.keys(staticHeaders).length ? {static: staticHeaders} : {}),
+    ...(Object.keys(envHeaders).length ? {env: envHeaders} : {}),
+  };
+}
+
+function parseAssignments(values: string[], label: string): Record<string, string> {
+  const assignments: Array<[string, string]> = values.map((value) => {
+    const separator = value.indexOf('=');
+    if (separator <= 0 || separator === value.length - 1) {
+      throw new Error(`${label} must use name=value.`);
+    }
+    const name = value.slice(0, separator).trim();
+    const assigned = value.slice(separator + 1);
+    if (!name || !assigned) throw new Error(`${label} must use name=value.`);
+    return [name, assigned];
+  });
+  assertUniqueHeaderNames(assignments.map(([name]) => name));
+  return Object.fromEntries(assignments);
+}
+
+function assertUniqueHeaderNames(names: string[]): void {
+  const seen = new Map<string, string>();
+  for (const name of names) {
+    const normalized = name.toLowerCase();
+    const existing = seen.get(normalized);
+    if (existing) throw new Error(`Header names ${existing} and ${name} collide case-insensitively.`);
+    seen.set(normalized, name);
+  }
+}
+
+function headerReferences(headers: ConnectionHeaderSources | undefined): string[] {
+  return [
+    ...Object.keys(headers?.static ?? {}).map((name) => `${name}=static`),
+    ...Object.entries(headers?.env ?? {}).map(([name, env]) => `${name}=env:${env}`),
+  ];
+}
+
+function validateProviderId(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!/^[a-z][a-z0-9._-]{0,63}$/u.test(normalized)) {
+    throw new Error('Provider label must start with a letter and use lowercase letters, numbers, ., _, or -.');
+  }
+  return normalized;
+}
+
+function connectionProvider(providerId: string): ProviderName {
+  const normalized = validateProviderId(providerId);
+  return normalized === 'openai' || normalized === 'anthropic' || normalized === 'gemini'
+    ? normalized
+    : 'compatible';
+}
+
+function defaultConnectionProtocol(providerId: string): ConnectionProtocol {
+  const provider = connectionProvider(providerId);
+  if (provider === 'anthropic') return 'anthropic-messages';
+  if (provider === 'gemini') return 'gemini';
+  return 'openai-responses';
+}
+
+function validateAnyConnectionProtocol(value: string): ConnectionProtocol {
+  if (value === 'openai-responses' || value === 'openai-chat' ||
+      value === 'anthropic-messages' || value === 'gemini') return value;
+  throw new Error(`Unknown connection protocol ${value}; use openai-responses, openai-chat, anthropic-messages, or gemini.`);
+}
+
+function defaultConnectionEnvironmentName(name: string, providerId: string): string {
+  const provider = connectionProvider(providerId);
+  if (provider === 'openai') return 'OPENAI_API_KEY';
+  if (provider === 'anthropic') return 'ANTHROPIC_API_KEY';
+  if (provider === 'gemini') return 'GEMINI_API_KEY';
+  return `SKEIN_CONNECTION_${name.toUpperCase().replace(/-/gu, '_')}_API_KEY`;
+}
+
+function projectConnectionName(workspace: string): string {
+  const suffix = basename(resolve(workspace)).toLowerCase().replace(/[^a-z0-9_-]+/gu, '-').replace(/^-+|-+$/gu, '');
+  const normalized = suffix && /^[a-z]/u.test(suffix) ? suffix : `workspace-${suffix || 'default'}`;
+  return `project-${normalized}`.slice(0, 64).replace(/-+$/u, '');
+}
+
+function validateModelId(value: string): string {
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 256) throw new Error('Default model must contain between 1 and 256 characters.');
+  return normalized;
+}
+
+function parseOptionalInteger(
+  value: string | undefined,
+  label: string,
+  minimum = 100,
+  maximum = 86_400_000,
+): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`${label} must be an integer between ${minimum} and ${maximum}.`);
+  }
+  return parsed;
+}
+
+function connectionLoopback(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname.replace(/^\[|\]$/gu, '').toLowerCase();
+    return hostname === 'localhost' || hostname.endsWith('.localhost') || hostname === '::1' ||
+      /^127(?:\.\d{1,3}){3}$/u.test(hostname);
+  } catch {
+    return false;
+  }
 }
 
 async function runtimeConfig(
@@ -2407,7 +3119,7 @@ async function runtimeConfig(
     }
     if (selection.kind === 'selected') {
       try {
-        const resolved = resolveConnectionModel(legacyModel, selection.profile, {
+        const resolved = await resolveConnectionModel(legacyModel, selection.profile, {
           ...(options.model ? {model: options.model} : {}),
         });
         model = resolved.model;

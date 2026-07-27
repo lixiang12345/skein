@@ -116,7 +116,7 @@ describe('isolated writer lane', () => {
       costBudgetUsd: 0.5,
       providerEnvironment: {
         baseUrl: 'https://relay.example',
-        apiKeyEnv: 'SKEIN_CLAUDE_RELAY_KEY',
+        credential: 'relay-secret',
       },
     });
     expect(request?.prompt).toContain('Adopt the engineering specialty best supported by the assignment');
@@ -138,6 +138,49 @@ describe('isolated writer lane', () => {
       worktreeCleaned: true,
       files: ['source.txt'],
     });
+  });
+
+  it('resolves command-backed credentials before launching an external Claude writer', async () => {
+    const root = await repository('before\n');
+    const cfg = writerConfig(root);
+    cfg.agents = {
+      ...cfg.agents!,
+      connections: {relay: {
+        provider: 'compatible', protocol: 'anthropic-messages', baseUrl: 'https://relay.example',
+        auth: {
+          type: 'command', command: process.execPath,
+          args: ['-e', "console.log('command-secret')"], refreshIntervalMs: 0, header: 'bearer',
+        },
+        headers: {static: {'X-Tenant': 'tenant-a'}},
+      }},
+      routes: {
+        ...cfg.agents?.routes,
+        implementer: {
+          runtime: 'claude', connection: 'relay', model: 'claude-opus-4-8',
+          timeoutMs: 120_000, costBudgetUsd: 0.5,
+        },
+      },
+    };
+    const context = contextProvider();
+    const store = new TeamRunStore(root);
+    let providerEnvironment: unknown;
+    const manager = await externalWriterManager(root, cfg, context, store, async (request) => {
+      providerEnvironment = request.providerEnvironment;
+      await writeFile(join(request.workspace, 'source.txt'), 'command writer\n');
+      return {
+        content: 'Updated through command auth.', runtime: 'claude', model: request.model,
+        durationMs: 1, usage: {inputTokens: 1, outputTokens: 1}, toolCalls: 1,
+      };
+    });
+
+    const result = await manager.writerTool().execute({task: 'Update source through Claude.'},
+      executionContext(root, cfg, context));
+    expect(result.ok, result.content).toBe(true);
+    expect(providerEnvironment).toEqual({
+      baseUrl: 'https://relay.example', apiKeyHeader: 'bearer', credential: 'command-secret',
+      customHeaders: {'X-Tenant': 'tenant-a'},
+    });
+    expect(await readFile(join(root, 'source.txt'), 'utf8')).toBe('before\n');
   });
 
   it('does not start an external Claude writer without a pre-request cost cap', async () => {

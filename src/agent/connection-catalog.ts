@@ -1,9 +1,20 @@
 import {defaultModelForProvider, providerApiKeyEnv} from '../config.js';
+import {
+  connectionAuthConfigured,
+  connectionAuthReference,
+  connectionHeaderConfigurationIssues,
+  resolveConnectionHeaders,
+  withDefaultCredentialPlacement,
+  withoutConnectionCredentialHeader,
+  type ResolveConnectionAuthOptions,
+} from './connection-auth.js';
 import type {
   AgentConnectionConfig,
   ConnectionAuth,
   ConnectionCatalogRuntime,
   ConnectionApiKeyHeader,
+  ConnectionDeclaredModel,
+  ConnectionHeaderSources,
   ConnectionModelAuth,
   ConnectionProtocol,
   ConnectionRuntimeInfo,
@@ -17,10 +28,17 @@ export interface ConnectionProfile {
   id: string;
   label?: string;
   provider: ProviderName;
+  providerId: string;
   protocol: ConnectionProtocol;
   baseUrl?: string;
   modelsBaseUrl?: string;
+  modelDiscovery?: boolean;
+  modelsPath?: string;
   modelsAuthHeader?: ConnectionModelAuth;
+  modelsAuth?: ConnectionAuth;
+  headers?: ConnectionHeaderSources;
+  modelsHeaders?: ConnectionHeaderSources;
+  models?: ConnectionDeclaredModel[];
   defaultModel?: string;
   auth: ConnectionAuth;
   source: ConnectionSource;
@@ -45,7 +63,10 @@ export function discoverConnectionCatalog(
   environment: NodeJS.ProcessEnv = process.env,
 ): ConnectionCatalog {
   const byId = new Map<string, ConnectionProfile>();
-  for (const [id, connection] of Object.entries(config.agents?.connections ?? {})) {
+  const configuredConnections = Object.keys(config.connections?.profiles ?? {}).length
+    ? config.connections?.profiles
+    : config.agents?.connections;
+  for (const [id, connection] of Object.entries(configuredConnections ?? {})) {
     byId.set(id, normalizeProfile(id, connection, 'user', environment));
   }
   const environmentCatalog = parseEnvironmentConnections(environment);
@@ -55,7 +76,8 @@ export function discoverConnectionCatalog(
     }
     byId.set(profile.id, profile);
   }
-  const defaultConnection = config.agents?.defaultConnection ?? environmentCatalog.defaultConnection;
+  const defaultConnection = config.connections?.defaultConnection ?? config.agents?.defaultConnection ??
+    environmentCatalog.defaultConnection;
   if (defaultConnection && !byId.has(defaultConnection)) {
     throw new Error(`Default connection ${defaultConnection} is not present in the discovered connection catalog.`);
   }
@@ -88,7 +110,8 @@ export function parseEnvironmentConnections(
   const profiles: ConnectionProfile[] = rawIds.map((id) => {
     const suffix = id.toUpperCase().replace(/-/gu, '_');
     const prefix = `SKEIN_CONNECTION_${suffix}_`;
-    const provider = parseProviderField(environment[`${prefix}PROVIDER`], `${prefix}PROVIDER`);
+    const providerId = parseProviderIdField(environment[`${prefix}PROVIDER`], `${prefix}PROVIDER`);
+    const provider = providerForId(providerId);
     const protocol = parseProtocolField(environment[`${prefix}PROTOCOL`], provider, `${prefix}PROTOCOL`);
     const baseUrl = optionalUrl(environment[`${prefix}BASE_URL`], `${prefix}BASE_URL`);
     const modelsBaseUrl = optionalUrl(environment[`${prefix}MODELS_BASE_URL`], `${prefix}MODELS_BASE_URL`);
@@ -118,6 +141,7 @@ export function parseEnvironmentConnections(
     const defaultModel = environment[`${prefix}MODEL`]?.trim();
     const config: AgentConnectionConfig = {
       provider,
+      providerId,
       protocol,
       ...(label ? {label} : {}),
       ...(baseUrl ? {baseUrl} : {}),
@@ -158,24 +182,37 @@ export function planConnectionSelection(
   return {kind: 'legacy'};
 }
 
-export function resolveConnectionModel(
+export async function resolveConnectionModel(
   current: ModelConfig,
   profile: ConnectionProfile,
   overrides: {model?: string} = {},
   environment: NodeJS.ProcessEnv = process.env,
-): {model: ModelConfig; activeConnection: ConnectionRuntimeInfo} {
+  authOptions: Omit<ResolveConnectionAuthOptions, 'environment'> = {},
+): Promise<{model: ModelConfig; activeConnection: ConnectionRuntimeInfo}> {
   const issues = connectionIssues(profile, environment);
   if (issues.length) throw new Error(`Connection ${profile.id} is incomplete: ${issues.join('; ')}`);
-  const apiKey = profile.auth.type === 'env' ? environment[profile.auth.name] : undefined;
+  const credential = await resolveConnectionHeaders(profile.auth, profile.headers, {
+    ...authOptions,
+    environment,
+  });
+  const nativeGeminiQueryAuth = profile.provider === 'gemini' && profile.protocol === 'gemini' &&
+    profile.auth.type !== 'none' && !profile.auth.header && !profile.auth.placement;
+  const runtimeProvider = nativeGeminiQueryAuth
+    ? 'gemini'
+    : profile.provider !== 'compatible' && !profile.baseUrl ? profile.provider : 'compatible';
+  const requestHeaders = runtimeProvider === 'compatible'
+    ? credential.headers
+    : withoutConnectionCredentialHeader(profile.auth, credential.headers);
   const model: ModelConfig = {
-    provider: profile.provider,
+    provider: runtimeProvider,
     protocol: profile.protocol,
-    model: overrides.model ?? profile.defaultModel ?? defaultModelForProvider(profile.provider),
+    model: overrides.model ?? profile.defaultModel ?? defaultModelForProvider('compatible'),
     ...(current.temperature !== undefined ? {temperature: current.temperature} : {}),
     ...(current.maxTokens !== undefined ? {maxTokens: current.maxTokens} : {}),
     ...(profile.baseUrl ? {baseUrl: profile.baseUrl} : {}),
-    ...(profile.auth.type === 'env' && profile.auth.header ? {apiKeyHeader: profile.auth.header} : {}),
-    ...(apiKey ? {apiKey} : {}),
+    ...(profile.auth.type !== 'none' && profile.auth.header ? {apiKeyHeader: profile.auth.header} : {}),
+    ...(runtimeProvider !== 'compatible' && credential.value ? {apiKey: credential.value} : {}),
+    ...(Object.keys(requestHeaders).length ? {requestHeaders} : {}),
   };
   return {model, activeConnection: connectionRuntimeInfo(profile, environment)};
 }
@@ -195,26 +232,31 @@ export function connectionRuntimeInfo(
   environment: NodeJS.ProcessEnv = process.env,
 ): ConnectionRuntimeInfo {
   const issues = connectionIssues(profile, environment);
+  const catalogIssues = connectionCatalogIssues(profile, environment);
   const authStatus = profile.auth.type === 'none'
     ? 'none' as const
-    : environment[profile.auth.name] ? 'configured' as const : 'missing' as const;
+    : connectionAuthConfigured(profile.auth, environment) ? 'configured' as const : 'missing' as const;
+  const modelsAuth = profile.modelsAuth;
   return {
     id: profile.id,
     ...(profile.label ? {label: profile.label} : {}),
     provider: profile.provider,
+    providerId: profile.providerId,
     protocol: profile.protocol,
     source: profile.source,
     endpoint: redactConnectionEndpoint(profile.baseUrl),
     modelsEndpoint: redactConnectionEndpoint(profile.modelsBaseUrl ?? profile.baseUrl),
     ...(profile.defaultModel ? {defaultModel: profile.defaultModel} : {}),
     authType: profile.auth.type,
-    ...(profile.auth.type === 'env' ? {authHeader: profile.auth.header ?? 'bearer'} : {}),
-    ...(profile.modelsAuthHeader || profile.auth.type === 'env' ? {
-      modelsAuthHeader: profile.modelsAuthHeader ?? (profile.auth.type === 'env' ? profile.auth.header : undefined) ?? 'bearer',
-    } : {}),
+    modelsAuthType: modelsAuth?.type ?? (profile.modelsAuthHeader === 'none' ? 'none' : 'inherit'),
+    ...(profile.auth.type !== 'none' && !profile.auth.placement &&
+      !(profile.provider === 'gemini' && profile.protocol === 'gemini' && !profile.auth.header)
+      ? {authHeader: profile.auth.header ?? 'bearer'} : {}),
+    ...catalogAuthHeader(profile, modelsAuth),
     authStatus,
     complete: issues.length === 0,
     issues,
+    ...(catalogIssues.length ? {catalogIssues} : {}),
   };
 }
 
@@ -230,12 +272,14 @@ export function legacyConnectionRuntimeInfo(model: ModelConfig): ConnectionRunti
   return {
     id: 'legacy',
     provider: model.provider,
+    providerId: model.provider,
     protocol: model.protocol ?? defaultProtocol(model.provider),
     source: 'legacy',
     endpoint: redactConnectionEndpoint(model.baseUrl),
     modelsEndpoint: redactConnectionEndpoint(model.baseUrl),
     defaultModel: model.model,
     authType: authExpected ? 'env' : 'none',
+    modelsAuthType: 'inherit',
     ...(authExpected ? {
       authHeader: model.apiKeyHeader ?? (model.provider === 'anthropic' ? 'x-api-key' : 'bearer'),
       modelsAuthHeader: model.apiKeyHeader ?? (model.provider === 'anthropic' ? 'x-api-key' : 'bearer'),
@@ -247,8 +291,16 @@ export function legacyConnectionRuntimeInfo(model: ModelConfig): ConnectionRunti
 }
 
 export function connectionCredentialReference(profile: ConnectionProfile): string {
-  if (profile.auth.type === 'env') return `env:${profile.auth.name}/${profile.auth.header ?? 'bearer'}`;
-  return 'none';
+  const placement = profile.auth.type !== 'none' ? connectionAuthPlacement(profile) : undefined;
+  return `${connectionAuthReference(profile.auth)}${placement ? `/${placement}` : ''}`;
+}
+
+export function connectionAuthPlacement(profile: ConnectionProfile): string {
+  if (profile.auth.type === 'none') return 'none';
+  if (profile.auth.placement) return profile.auth.placement.name;
+  if (profile.auth.header) return profile.auth.header;
+  if (profile.provider === 'gemini' && profile.protocol === 'gemini') return 'query:key';
+  return 'bearer';
 }
 
 export function connectionEnvironmentTypos(
@@ -265,26 +317,77 @@ export function connectionIssues(
   environment: NodeJS.ProcessEnv = process.env,
 ): string[] {
   const issues: string[] = [];
-  if (profile.provider !== 'compatible') {
-    issues.push('named primary connections support compatible relay providers only');
-  }
   if (profile.provider === 'compatible' && !profile.baseUrl) issues.push('compatible provider requires base URL');
-  if (profile.provider === 'compatible' && !relayProtocols.includes(profile.protocol)) {
-    issues.push('relay transport must use openai-responses, openai-chat, or anthropic-messages');
+  if (profile.provider !== 'compatible' && !profile.baseUrl && profile.auth.type === 'none') {
+    issues.push('official provider endpoint requires authentication');
   }
-  if (profile.protocol === 'anthropic-messages' && !profile.modelsBaseUrl) {
-    issues.push('anthropic relay transport requires an explicit models base URL');
+  if (!profile.baseUrl && !providerSupportsDefaultEndpoint(profile.provider, profile.protocol)) {
+    issues.push('provider and wire protocol require an explicit base URL');
   }
-  if (profile.auth.type === 'env' && !environment[profile.auth.name]) {
+  if (!profile.baseUrl && profile.auth.type !== 'none' && profile.auth.placement) {
+    issues.push('custom credential placement requires an explicit base URL');
+  }
+  if (!profile.baseUrl && profile.provider === 'gemini' && profile.protocol === 'gemini' &&
+      profile.auth.type !== 'none' && profile.auth.header) {
+    issues.push('header-based Gemini authentication requires an explicit base URL');
+  }
+  if (![...relayProtocols, 'gemini'].includes(profile.protocol)) {
+    issues.push('connection transport is unsupported');
+  }
+  if (profile.auth.type === 'env' && !connectionAuthConfigured(profile.auth, environment)) {
     issues.push(`credential environment ${profile.auth.name} is not set`);
   }
-  if (profile.modelsAuthHeader && profile.modelsAuthHeader !== 'none' && profile.auth.type !== 'env') {
-    issues.push('models authentication header requires environment authentication');
+  for (const envName of Object.values(profile.headers?.env ?? {})) {
+    if (!environment[envName]) issues.push(`connection header environment ${envName} is not set`);
   }
+  issues.push(...connectionHeaderConfigurationIssues(profile.auth, profile.headers));
   if (!profile.explicitAuth && profile.provider !== 'compatible' && profile.baseUrl && !isOfficialProviderEndpoint(profile.provider, profile.baseUrl)) {
     issues.push('custom provider endpoint requires explicit connection auth');
   }
   return issues;
+}
+
+/** Catalog readiness is diagnostic only and never blocks inference selection. */
+export function connectionCatalogIssues(
+  profile: ConnectionProfile,
+  environment: NodeJS.ProcessEnv = process.env,
+): string[] {
+  if (profile.modelDiscovery === false) return [];
+  const issues: string[] = [];
+  if (!profile.modelsBaseUrl && (profile.protocol === 'anthropic-messages' || profile.protocol === 'gemini') &&
+      !profile.models?.length) {
+    issues.push('model catalog is not configured; declare models or set modelsBaseUrl');
+  }
+  if (profile.modelsAuth?.type === 'env' && !connectionAuthConfigured(profile.modelsAuth, environment)) {
+    issues.push(`model catalog credential environment ${profile.modelsAuth.name} is not set`);
+  }
+  for (const envName of Object.values(profile.modelsHeaders?.env ?? {})) {
+    if (!environment[envName]) issues.push(`model catalog header environment ${envName} is not set`);
+  }
+  issues.push(...connectionHeaderConfigurationIssues(catalogDiagnosticAuth(profile), profile.modelsHeaders)
+    .map((issue) => `model catalog ${issue}`));
+  if (profile.modelsAuthHeader && profile.modelsAuthHeader !== 'none' && profile.auth.type === 'none' && !profile.modelsAuth) {
+    issues.push('legacy models authentication header requires reusable authentication');
+  }
+  return issues;
+}
+
+function catalogDiagnosticAuth(profile: ConnectionProfile): ConnectionAuth {
+  if (profile.modelsAuth) return profile.modelsAuth;
+  if (profile.modelsAuthHeader === 'none') return {type: 'none'};
+  if (!profile.modelsAuthHeader || profile.auth.type === 'none') return profile.auth;
+  if (profile.auth.type === 'env') {
+    return {type: 'env', name: profile.auth.name, header: profile.modelsAuthHeader};
+  }
+  return {
+    type: 'command',
+    command: profile.auth.command,
+    ...(profile.auth.args ? {args: profile.auth.args} : {}),
+    ...(profile.auth.timeoutMs !== undefined ? {timeoutMs: profile.auth.timeoutMs} : {}),
+    ...(profile.auth.refreshIntervalMs !== undefined ? {refreshIntervalMs: profile.auth.refreshIntervalMs} : {}),
+    ...(profile.auth.passEnv ? {passEnv: profile.auth.passEnv} : {}),
+    header: profile.modelsAuthHeader,
+  };
 }
 
 function normalizeProfile(
@@ -294,22 +397,38 @@ function normalizeProfile(
   environment: NodeJS.ProcessEnv,
 ): ConnectionProfile {
   const explicitAuth = Boolean(connection.auth || connection.apiKeyEnv);
-  const auth = connection.auth ?? (connection.apiKeyEnv
+  const protocol = connection.protocol ?? defaultProtocol(connection.provider);
+  const configuredAuth = connection.auth ?? (connection.apiKeyEnv
     ? {type: 'env', name: connection.apiKeyEnv} as const
     : defaultAuth(connection.provider, connection.baseUrl, environment));
+  const auth = withDefaultCredentialPlacement(configuredAuth, connection.provider, protocol);
   return {
     id,
     ...(connection.label ? {label: connection.label} : {}),
     provider: connection.provider,
-    protocol: connection.protocol ?? defaultProtocol(connection.provider),
+    providerId: connection.providerId ?? connection.provider,
+    protocol,
     ...(connection.baseUrl ? {baseUrl: connection.baseUrl} : {}),
     ...(connection.modelsBaseUrl ? {modelsBaseUrl: connection.modelsBaseUrl} : {}),
+    ...(connection.modelDiscovery !== undefined ? {modelDiscovery: connection.modelDiscovery} : {}),
+    ...(connection.modelsPath ? {modelsPath: connection.modelsPath} : {}),
     ...(connection.modelsAuthHeader ? {modelsAuthHeader: connection.modelsAuthHeader} : {}),
+    ...(connection.modelsAuth ? {modelsAuth: connection.modelsAuth} : {}),
+    ...(connection.headers ? {headers: connection.headers} : {}),
+    ...(connection.modelsHeaders ? {modelsHeaders: connection.modelsHeaders} : {}),
+    ...(connection.models ? {models: connection.models} : {}),
     ...(connection.defaultModel ? {defaultModel: connection.defaultModel} : {}),
     auth,
     source,
     explicitAuth,
   };
+}
+
+function providerSupportsDefaultEndpoint(provider: ProviderName, protocol: ConnectionProtocol): boolean {
+  if (provider === 'openai') return protocol === 'openai-responses' || protocol === 'openai-chat';
+  if (provider === 'anthropic') return protocol === 'anthropic-messages';
+  if (provider === 'gemini') return protocol === 'gemini';
+  return false;
 }
 
 function defaultAuth(
@@ -330,17 +449,37 @@ function defaultProtocol(provider: ProviderName): ConnectionProtocol {
   return 'openai-chat';
 }
 
-function parseProviderField(value: string | undefined, name: string): ProviderName {
-  const provider = value?.trim().toLowerCase() || 'compatible';
-  if (provider !== 'compatible') throw new Error(`${name} must be compatible for named relay connections.`);
-  return 'compatible';
+function parseProviderIdField(value: string | undefined, name: string): string {
+  const providerId = value?.trim().toLowerCase() || 'compatible';
+  if (!/^[a-z][a-z0-9._-]{0,63}$/u.test(providerId)) {
+    throw new Error(`${name} must be a lowercase provider label using letters, numbers, ., _, or -.`);
+  }
+  return providerId;
+}
+
+function providerForId(providerId: string): ProviderName {
+  return providerId === 'openai' || providerId === 'anthropic' || providerId === 'gemini'
+    ? providerId
+    : 'compatible';
 }
 
 function parseProtocolField(value: string | undefined, provider: ProviderName, name: string): ConnectionProtocol {
   if (!value?.trim()) return provider === 'compatible' ? 'openai-responses' : defaultProtocol(provider);
   const protocol = value.trim().toLowerCase() as ConnectionProtocol;
-  if (!relayProtocols.includes(protocol)) throw new Error(`${name} must be openai-responses, openai-chat, or anthropic-messages.`);
+  if (![...relayProtocols, 'gemini'].includes(protocol)) {
+    throw new Error(`${name} must be openai-responses, openai-chat, anthropic-messages, or gemini.`);
+  }
   return protocol;
+}
+
+function catalogAuthHeader(
+  profile: ConnectionProfile,
+  modelsAuth: ConnectionAuth | undefined,
+): Pick<ConnectionRuntimeInfo, 'modelsAuthHeader'> | Record<string, never> {
+  if (profile.modelsAuthHeader) return {modelsAuthHeader: profile.modelsAuthHeader};
+  const auth = modelsAuth ?? profile.auth;
+  if (auth.type === 'none' || auth.placement) return {};
+  return {modelsAuthHeader: auth.header ?? 'bearer'};
 }
 
 function optionalUrl(value: string | undefined, name: string): string | undefined {

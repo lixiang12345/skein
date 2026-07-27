@@ -40,11 +40,8 @@ export function createAgentConnectionSetup(input: AgentConnectionSetupInput): Ag
   if (!defaultModel || defaultModel.length > 256) {
     throw new Error('Default model must contain between 1 and 256 characters.');
   }
-  if (input.provider !== 'compatible') {
-    throw new Error('Named primary connections support third-party compatible relays only.');
-  }
-  const protocol = input.protocol ?? 'openai-responses';
-  if (protocol === 'gemini') throw new Error('Relay protocol must use openai-responses, openai-chat, or anthropic-messages.');
+  const protocol = input.protocol ?? (input.provider === 'anthropic'
+    ? 'anthropic-messages' : input.provider === 'gemini' ? 'gemini' : 'openai-responses');
   const hostedTools = [...new Set(input.hostedTools ?? [])];
   if (hostedTools.some((tool) => tool !== 'web_search')) {
     throw new Error('Only the web_search provider-hosted tool is supported.');
@@ -57,11 +54,10 @@ export function createAgentConnectionSetup(input: AgentConnectionSetupInput): Ag
     throw new Error('Relay token prices must be finite, non-negative USD amounts per million tokens.');
   }
   const baseUrl = input.baseUrl?.trim() || undefined;
-  if (!baseUrl) throw new Error('Compatible relay connections require an inference base URL.');
-  const modelsBaseUrl = input.modelsBaseUrl?.trim() || undefined;
-  if (protocol === 'anthropic-messages' && !modelsBaseUrl) {
-    throw new Error('Anthropic relay connections require a separate models base URL.');
+  if (!baseUrl && input.provider === 'compatible') {
+    throw new Error('Compatible relay connections require an inference base URL.');
   }
+  const modelsBaseUrl = input.modelsBaseUrl?.trim() || undefined;
   for (const [label, value] of [['Connection base URL', baseUrl], ['Models base URL', modelsBaseUrl]] as const) {
     if (!value) continue;
     let url: URL;
@@ -82,6 +78,7 @@ export function createAgentConnectionSetup(input: AgentConnectionSetupInput): Ag
     throw new Error('Credential environment variable must use uppercase letters, numbers, and underscores.');
   }
   const auth = input.auth ?? (apiKeyEnv ? 'env' : 'none');
+  if (auth === 'command') throw new Error('Command authentication requires the first-class connections add command.');
   if (auth === 'env' && !apiKeyEnv) {
     throw new Error('Environment authentication requires a credential environment variable.');
   }
@@ -99,7 +96,7 @@ export function createAgentConnectionSetup(input: AgentConnectionSetupInput): Ag
         provider: input.provider,
         protocol,
         defaultModel,
-        baseUrl,
+        ...(baseUrl ? {baseUrl} : {}),
         ...(modelsBaseUrl ? {modelsBaseUrl} : {}),
         ...(input.modelsAuthHeader ? {modelsAuthHeader: input.modelsAuthHeader} : {}),
         ...(hostedTools.length ? {hostedTools} : {}),

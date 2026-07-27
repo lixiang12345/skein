@@ -87,7 +87,7 @@ export class ResponsesProvider implements ModelProvider {
     maxOutputTokens?: number,
   ): Promise<ModelResponse> {
     const response = await this.request(messages, tools, false, signal, maxOutputTokens);
-    if (!response.ok) return parseErrorResponse(response, [this.config.apiKey]);
+    if (!response.ok) return parseErrorResponse(response, requestSecrets(this.config));
     return normalizeResponsesResponse(await response.json() as ResponsesResponse);
   }
 
@@ -98,7 +98,7 @@ export class ResponsesProvider implements ModelProvider {
     maxOutputTokens?: number,
   ): AsyncIterable<ModelStreamChunk> {
     const response = await this.request(messages, tools, true, signal, maxOutputTokens);
-    if (!response.ok) return parseErrorResponse(response, [this.config.apiKey]);
+    if (!response.ok) return parseErrorResponse(response, requestSecrets(this.config));
     if (!response.headers.get('content-type')?.includes('text/event-stream')) {
       const normalized = normalizeResponsesResponse(await response.json() as ResponsesResponse);
       if (normalized.content) yield {type: 'text_delta', content: normalized.content};
@@ -187,6 +187,7 @@ export class ResponsesProvider implements ModelProvider {
       redirect: 'error',
       headers: {
         ...apiKeyHeaders(apiKey, this.config.apiKeyHeader, 'bearer'),
+        ...this.config.requestHeaders,
         'content-type': 'application/json',
       },
       body: JSON.stringify({
@@ -213,6 +214,10 @@ export class ResponsesProvider implements ModelProvider {
       ...(signal ? {signal} : {}),
     });
   }
+}
+
+function requestSecrets(config: ModelConfig): string[] {
+  return [config.apiKey, ...Object.values(config.requestHeaders ?? {})].filter((value): value is string => Boolean(value));
 }
 
 function toResponsesInput(message: ChatMessage): Record<string, unknown>[] {

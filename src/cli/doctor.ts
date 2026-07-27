@@ -159,7 +159,7 @@ export async function runDoctor(config: MosaicConfig, options: DoctorOptions = {
     checks.push({
       name: `Connection: ${connection.id}`,
       ok: connection.complete,
-      detail: `${connection.source} ${connection.provider}/${connection.protocol}; ${connection.authType}/${connection.authStatus}; inference ${connection.endpoint}; models ${connection.modelsEndpoint}${connection.issues.length ? `; ${connection.issues.join('; ')}` : ''}`,
+      detail: `${connection.source} ${(connection.providerId ?? connection.provider)}/${connection.protocol}; ${connection.authType}/${connection.authStatus}; inference ${connection.endpoint}; models ${connection.modelsEndpoint}${connection.issues.length ? `; ${connection.issues.join('; ')}` : ''}${connection.catalogIssues?.length ? `; catalog: ${connection.catalogIssues.join('; ')}` : ''}`,
       required: false,
     });
   }

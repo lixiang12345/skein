@@ -10,6 +10,7 @@ import type {
   AgentCapabilityConfig,
   AgentTeamConfig,
   BackgroundJobsConfig,
+  ConnectionsConfig,
   McpConfig,
   LspConfig,
   MemoryConfig,
@@ -62,14 +63,46 @@ const capabilityRouteReferenceSchema = z.union([
   agentProfileNameSchema,
   z.enum(['@parent', '@default']),
 ]);
+const environmentNameSchema = z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/);
+const httpHeaderNameSchema = z.string().min(1).max(128)
+  .regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/);
+const credentialPlacementSchema = z.object({
+  name: httpHeaderNameSchema,
+  prefix: z.string().max(128).refine((value) => !/[\r\n]/u.test(value), {
+    message: 'credential header prefix cannot contain newlines',
+  }).optional(),
+}).strict();
+const commandAuthFields = {
+  command: z.string().min(1).max(1_024).refine((value) => !/[\r\n\0]/u.test(value), {
+    message: 'credential helper command cannot contain control characters',
+  }),
+  args: z.array(z.string().max(4_000).refine((value) => !/[\0]/u.test(value))).max(64).optional(),
+  timeoutMs: z.number().int().min(100).max(30_000).optional(),
+  refreshIntervalMs: z.number().int().min(0).max(86_400_000).optional(),
+  passEnv: z.array(environmentNameSchema).max(64)
+    .refine((names) => new Set(names).size === names.length, {message: 'credential helper passEnv names must be unique'})
+    .optional(),
+  header: z.enum(['bearer', 'x-api-key']).optional(),
+  placement: credentialPlacementSchema.optional(),
+};
 const connectionAuthSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('env'),
-    name: z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/),
+    name: environmentNameSchema,
     header: z.enum(['bearer', 'x-api-key']).optional(),
+    placement: credentialPlacementSchema.optional(),
   }).strict(),
+  z.object({type: z.literal('command'), ...commandAuthFields}).strict(),
   z.object({type: z.literal('none')}).strict(),
-]);
+]).superRefine((value, context) => {
+  if (value.type !== 'none' && value.header && value.placement) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['placement'],
+      message: 'credential auth header and custom placement are mutually exclusive',
+    });
+  }
+});
 const connectionUrlSchema = z.string().url().refine((value) => {
   const url = new URL(value);
   return /^https?:$/i.test(url.protocol) && !url.username && !url.password && !url.search && !url.hash;
@@ -86,21 +119,83 @@ const routeTokenPricingSchema = z.object({
   cachedInputPerMillionUsd: z.number().finite().nonnegative().max(1_000_000).optional(),
   cacheWriteInputPerMillionUsd: z.number().finite().nonnegative().max(1_000_000).optional(),
 }).strict();
+const blockedStaticCredentialHeaders = new Set([
+  'authorization', 'proxy-authorization', 'cookie', 'set-cookie', 'x-api-key', 'x-goog-api-key', 'api-key',
+]);
+const blockedManagedHeaders = new Set(['host', 'content-length', 'transfer-encoding', 'connection']);
+const connectionHeaderSourcesSchema = z.object({
+  static: z.record(httpHeaderNameSchema, z.string().max(4_000).refine((value) => !/[\r\n]/u.test(value), {
+    message: 'static connection header values cannot contain newlines',
+  })).refine((headers) => Object.keys(headers).length <= 64, {message: 'at most 64 static headers are allowed'}).optional(),
+  env: z.record(httpHeaderNameSchema, environmentNameSchema)
+    .refine((headers) => Object.keys(headers).length <= 64, {message: 'at most 64 environment headers are allowed'})
+    .optional(),
+}).strict().superRefine((headers, context) => {
+  const seen = new Map<string, string>();
+  for (const name of [...Object.keys(headers.static ?? {}), ...Object.keys(headers.env ?? {})]) {
+    const normalized = name.toLowerCase();
+    const existing = seen.get(normalized);
+    if (existing) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['env', name],
+        message: `connection header names ${existing} and ${name} collide case-insensitively`,
+      });
+    } else {
+      seen.set(normalized, name);
+    }
+  }
+  for (const name of Object.keys(headers.static ?? {})) {
+    const normalized = name.toLowerCase();
+    if (blockedStaticCredentialHeaders.has(normalized)) {
+      context.addIssue({code: z.ZodIssueCode.custom, path: ['static', name], message: 'credential headers must use auth or an environment-backed header'});
+    }
+    if (blockedManagedHeaders.has(normalized)) {
+      context.addIssue({code: z.ZodIssueCode.custom, path: ['static', name], message: 'transport-managed header cannot be configured'});
+    }
+  }
+  for (const name of Object.keys(headers.env ?? {})) {
+    if (blockedManagedHeaders.has(name.toLowerCase())) {
+      context.addIssue({code: z.ZodIssueCode.custom, path: ['env', name], message: 'transport-managed header cannot be configured'});
+    }
+  }
+});
+const declaredModelsSchema = z.array(z.object({
+  id: z.string().min(1).max(256),
+  label: z.string().min(1).max(256).optional(),
+  contextLength: z.number().int().positive().max(100_000_000).optional(),
+}).strict()).max(1_000).refine((models) => new Set(models.map(({id}) => id)).size === models.length, {
+  message: 'declared model ids must be unique',
+});
 const agentConnectionSchema = z.object({
   provider: z.enum(['openai', 'anthropic', 'gemini', 'compatible']),
+  providerId: z.string().regex(/^[a-z][a-z0-9._-]{0,63}$/).optional(),
   label: z.string().min(1).max(128).optional(),
   protocol: z.enum(['openai-responses', 'openai-chat', 'anthropic-messages', 'gemini']).optional(),
   baseUrl: connectionUrlSchema.optional(),
   modelsBaseUrl: connectionUrlSchema.optional(),
+  modelDiscovery: z.boolean().optional(),
+  modelsPath: z.string().min(1).max(512).regex(/^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$/).optional(),
   modelsAuthHeader: z.enum(['bearer', 'x-api-key', 'none']).optional(),
   defaultModel: z.string().min(1).max(256).optional(),
   auth: connectionAuthSchema.optional(),
-  apiKeyEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/).optional(),
+  modelsAuth: connectionAuthSchema.optional(),
+  headers: connectionHeaderSourcesSchema.optional(),
+  modelsHeaders: connectionHeaderSourcesSchema.optional(),
+  models: declaredModelsSchema.optional(),
+  apiKeyEnv: environmentNameSchema.optional(),
   hostedTools: hostedToolsSchema.optional(),
   pricing: routeTokenPricingSchema.optional(),
 }).strict().refine((value) => !(value.auth && value.apiKeyEnv), {
   message: 'agent connection auth and apiKeyEnv are mutually exclusive',
+}).refine((value) => !(value.modelsAuth && value.modelsAuthHeader), {
+  message: 'agent connection modelsAuth and modelsAuthHeader are mutually exclusive',
 });
+
+const connectionsConfigSchema = z.object({
+  defaultConnection: agentConnectionNameSchema.optional(),
+  profiles: z.record(agentConnectionNameSchema, agentConnectionSchema).optional(),
+}).strict();
 
 const agentTeamConfigSchema = z.object({
   enabled: z.boolean().optional(),
@@ -288,6 +383,7 @@ const partialConfigSchema = z.object({
   skills: skillConfigSchema.optional(),
   memory: memoryConfigSchema.optional(),
   agents: agentTeamConfigSchema.optional(),
+  connections: connectionsConfigSchema.optional(),
   mcp: mcpConfigSchema.optional(),
   lsp: lspConfigSchema.optional(),
   backgroundJobs: backgroundJobsConfigSchema.optional(),
@@ -428,6 +524,7 @@ export function defaultConfig(workspace = process.cwd()): MosaicConfig {
         priors: {},
       },
     },
+    connections: {profiles: {}},
     mcp: {
       enabled: false,
       connectTimeoutMs: 12_000,
@@ -492,6 +589,10 @@ function mergeConfig(base: MosaicConfig, update: PartialConfig): MosaicConfig {
     update.model.baseUrl !== base.model.baseUrl;
   const {apiKey: _apiKey, baseUrl: _baseUrl, ...portableModel} = base.model;
   const inheritedModel = providerChanged || baseUrlChanged ? portableModel : base.model;
+  const connections = mergeConnectionsConfig(base.connections, update.connections);
+  const agents = mergeAgentConfig(base.agents, update.agents);
+  const runtimeProfiles = {...agents.connections, ...connections.profiles};
+  const runtimeDefault = connections.defaultConnection ?? agents.defaultConnection;
   return {
     ...base,
     ...update,
@@ -503,7 +604,15 @@ function mergeConfig(base: MosaicConfig, update: PartialConfig): MosaicConfig {
     ui: {...base.ui, ...update.ui},
     skills: {...base.skills, ...update.skills} as SkillConfig,
     memory: {...base.memory, ...update.memory} as MemoryConfig,
-    agents: mergeAgentConfig(base.agents, update.agents),
+    agents: {
+      ...agents,
+      connections: runtimeProfiles,
+      ...(runtimeDefault ? {defaultConnection: runtimeDefault} : {}),
+    },
+    connections: {
+      profiles: runtimeProfiles,
+      ...(runtimeDefault ? {defaultConnection: runtimeDefault} : {}),
+    },
     mcp: {
       ...base.mcp,
       ...update.mcp,
@@ -520,6 +629,15 @@ function mergeConfig(base: MosaicConfig, update: PartialConfig): MosaicConfig {
     } as BackgroundJobsConfig,
     workspaceRoots: update.workspaceRoots ?? base.workspaceRoots,
   } as MosaicConfig;
+}
+
+function mergeConnectionsConfig(
+  base: ConnectionsConfig | undefined,
+  update: PartialConfig['connections'],
+): ConnectionsConfig {
+  const profiles = {...base?.profiles, ...update?.profiles} as ConnectionsConfig['profiles'];
+  const defaultConnection = update?.defaultConnection ?? base?.defaultConnection;
+  return defaultConnection ? {profiles, defaultConnection} : {profiles};
 }
 
 function mergeAgentConfig(
@@ -666,9 +784,12 @@ export async function loadConfig(
     const modelTransportTrusted = projectConfig && !options.trustProjectConfig
       ? await isProjectModelConfigTrusted(workspace, rawUpdate)
       : false;
-    const update = projectConfig && !options.trustProjectConfig
-      ? sanitizeProjectConfig(rawUpdate, config.model.provider, modelTransportTrusted)
+    const authoritySafeUpdate = projectConfig
+      ? sanitizeProjectConnectionAuthority(rawUpdate, config.model.provider)
       : rawUpdate;
+    const update = projectConfig && !options.trustProjectConfig
+      ? sanitizeProjectConfig(authoritySafeUpdate, config.model.provider, modelTransportTrusted)
+      : authoritySafeUpdate;
     config = mergeConfig(
       config,
       projectConfig ? await constrainProjectRoots(update, resolve(workspace)) : update,
@@ -693,18 +814,9 @@ function validateAgentConnections(agents: AgentTeamConfig | undefined): void {
     throw new Error(`Agent defaults reference unknown connection ${agents.defaultConnection}.`);
   }
   for (const [name, connection] of Object.entries(agents?.connections ?? {})) {
-    if (connection.protocol && connection.provider !== 'compatible') {
-      throw new Error(`Agent connection ${name} must use provider compatible when protocol is explicit.`);
-    }
-    if (connection.provider === 'compatible' && connection.protocol === 'gemini') {
-      throw new Error(`Agent connection ${name} cannot use the Gemini transport.`);
-    }
-    if (connection.protocol === 'anthropic-messages' && !connection.modelsBaseUrl) {
-      throw new Error(`Agent connection ${name} requires modelsBaseUrl for Anthropic transport.`);
-    }
     if (connection.modelsAuthHeader && connection.modelsAuthHeader !== 'none' &&
-        connection.auth?.type !== 'env' && !connection.apiKeyEnv) {
-      throw new Error(`Agent connection ${name} cannot set modelsAuthHeader without environment authentication.`);
+        connection.auth?.type !== 'env' && connection.auth?.type !== 'command' && !connection.apiKeyEnv) {
+      throw new Error(`Agent connection ${name} cannot set legacy modelsAuthHeader without reusable authentication.`);
     }
     if (connection.hostedTools?.length && connection.protocol !== 'openai-responses') {
       throw new Error(`Agent connection ${name} can declare hosted tools only with explicit openai-responses protocol.`);
@@ -856,6 +968,49 @@ function sanitizeProjectConfig(
   };
 }
 
+/**
+ * Repository configuration never owns provider destinations or credentials.
+ * Trust may enable hooks and other executable project features, but it cannot
+ * make a cloned repository an authentication or request-routing authority.
+ */
+function sanitizeProjectConnectionAuthority(
+  update: PartialConfig,
+  currentProvider: ProviderName,
+): PartialConfig {
+  const {connections: _connections, ...safeUpdate} = update;
+  const model = update.model ? {...update.model} : undefined;
+  if (model) {
+    const providerChanged = model.provider !== undefined && model.provider !== currentProvider;
+    delete model.apiKey;
+    delete model.baseUrl;
+    if (providerChanged) {
+      delete model.provider;
+      delete model.model;
+    }
+  }
+  const agents = update.agents ? {...update.agents} : undefined;
+  if (agents) {
+    delete agents.connections;
+    delete agents.defaultConnection;
+    if (agents.routes) {
+      agents.routes = Object.fromEntries(Object.entries(agents.routes).map(([name, route]) => {
+        const safeRoute = {...route};
+        delete safeRoute.connection;
+        delete safeRoute.provider;
+        delete safeRoute.baseUrl;
+        delete safeRoute.apiKeyEnv;
+        delete safeRoute.hostedTools;
+        return [name, safeRoute];
+      }));
+    }
+  }
+  return {
+    ...safeUpdate,
+    ...(model ? {model} : {}),
+    ...(agents ? {agents} : {}),
+  };
+}
+
 function isLoopbackEndpoint(endpoint?: string): boolean {
   if (!endpoint) return false;
   try {
@@ -894,10 +1049,16 @@ export async function saveUserConfig(config: PartialConfig): Promise<string> {
       connections: {...existing.agents?.connections, ...config.agents?.connections},
       routes: {...existing.agents?.routes, ...config.agents?.routes},
     } : undefined;
+    const connections = existing.connections || config.connections ? {
+      ...existing.connections,
+      ...config.connections,
+      profiles: {...existing.connections?.profiles, ...config.connections?.profiles},
+    } : undefined;
     const merged = partialConfigSchema.parse({
       ...existing,
       ...config,
       ...(agents ? {agents} : {}),
+      ...(connections ? {connections} : {}),
     });
     await mkdir(home, {recursive: true, mode: 0o700});
     await atomicWrite(path, `${JSON.stringify(merged, null, 2)}\n`, 0o600);
@@ -932,6 +1093,11 @@ export function configSummary(config: MosaicConfig): Record<string, unknown> {
       retrievalLimit: config.memory.retrievalLimit,
       databasePath: config.memory.databasePath ?? defaultMemoryPath(),
     } : undefined,
+    connections: config.connections ? {
+      defaultConnection: config.connections.defaultConnection,
+      profiles: Object.fromEntries(Object.entries(config.connections.profiles ?? {})
+        .map(([name, connection]) => [name, connectionConfigSummary(connection)])),
+    } : undefined,
     agents: config.agents ? {
       enabled: config.agents.enabled,
       maxConcurrent: config.agents.maxConcurrent,
@@ -958,22 +1124,8 @@ export function configSummary(config: MosaicConfig): Record<string, unknown> {
         minimumSamples: config.agents.capability.minimumSamples ?? 5,
         configuredPriorTasks: Object.keys(config.agents.capability.priors ?? {}).length,
       } : undefined,
-      connections: Object.fromEntries(Object.entries(config.agents.connections ?? {}).map(([name, connection]) => [name, {
-        provider: connection.provider,
-        protocol: connection.protocol,
-        defaultModel: connection.defaultModel,
-        endpoint: redactEndpoint(connection.baseUrl),
-        modelsEndpoint: redactEndpoint(connection.modelsBaseUrl ?? connection.baseUrl),
-        authHeader: connection.auth?.type === 'env' ? connection.auth.header ?? 'bearer' : undefined,
-        modelsAuthHeader: connection.modelsAuthHeader ?? (connection.auth?.type === 'env' || connection.apiKeyEnv
-          ? (connection.auth?.type === 'env' ? connection.auth.header : undefined) ?? 'bearer'
-          : undefined),
-        credentials: connection.auth?.type === 'env'
-          ? `env:${connection.auth.name}/${connection.auth.header ?? 'bearer'}`
-          : connection.auth?.type ?? (connection.apiKeyEnv ? `env:${connection.apiKeyEnv}` : 'provider default environment'),
-        hostedTools: connection.hostedTools,
-        pricing: connection.pricing ? 'configured' : 'unpriced',
-      }])),
+      connections: Object.fromEntries(Object.entries(config.agents.connections ?? {})
+        .map(([name, connection]) => [name, connectionConfigSummary(connection)])),
       routes: Object.fromEntries(Object.entries(config.agents.routes ?? {}).map(([profile, route]) => [profile, {
         runtime: route.runtime ?? 'api',
         connection: route.connection,
@@ -1015,6 +1167,44 @@ export function configSummary(config: MosaicConfig): Record<string, unknown> {
   };
 }
 
+function connectionConfigSummary(connection: import('./types.js').AgentConnectionConfig): Record<string, unknown> {
+  const auth = connection.auth;
+  const authPlacement = auth ? configuredAuthPlacement(auth, connection) : undefined;
+  const standardAuthHeader = auth && auth.type !== 'none' && !auth.placement && authPlacement !== 'query:key'
+    ? authPlacement
+    : undefined;
+  return {
+    provider: connection.provider,
+    providerId: connection.providerId ?? connection.provider,
+    protocol: connection.protocol,
+    defaultModel: connection.defaultModel,
+    endpoint: redactEndpoint(connection.baseUrl),
+    modelsEndpoint: redactEndpoint(connection.modelsBaseUrl ?? connection.baseUrl),
+    authPlacement,
+    authHeader: standardAuthHeader,
+    modelsAuthHeader: connection.modelsAuthHeader ?? (connection.modelsAuth && connection.modelsAuth.type !== 'none' &&
+      !connection.modelsAuth.placement ? connection.modelsAuth.header ?? 'bearer' : undefined),
+    credentials: auth
+      ? connectionAuthSummary(auth, authPlacement)
+      : connection.apiKeyEnv ? `env:${connection.apiKeyEnv}` : 'provider default environment',
+    catalogCredentials: connection.modelsAuth
+      ? connectionAuthSummary(connection.modelsAuth)
+      : connection.modelsAuthHeader === 'none' ? 'none' : 'inherit',
+    modelDiscovery: connection.modelDiscovery ?? true,
+    declaredModels: connection.models?.map(({id}) => id),
+    headers: {
+      static: Object.keys(connection.headers?.static ?? {}),
+      env: connection.headers?.env,
+    },
+    modelsHeaders: {
+      static: Object.keys(connection.modelsHeaders?.static ?? {}),
+      env: connection.modelsHeaders?.env,
+    },
+    hostedTools: connection.hostedTools,
+    pricing: connection.pricing ? 'configured' : 'unpriced',
+  };
+}
+
 export function redactEndpoint(endpoint?: string): string {
   if (!endpoint) return 'provider default';
   try {
@@ -1026,6 +1216,26 @@ export function redactEndpoint(endpoint?: string): string {
   } catch {
     return 'configured endpoint';
   }
+}
+
+function connectionAuthSummary(auth: import('./types.js').ConnectionAuth, placement?: string): string {
+  if (auth.type === 'none') return 'none';
+  const source = auth.type === 'env'
+    ? `env:${auth.name}`
+    : `command:${auth.command.split(/[\\/]/u).filter(Boolean).at(-1) ?? 'helper'}`;
+  return `${source}/${placement ?? auth.placement?.name ?? auth.header ?? 'bearer'}`;
+}
+
+function configuredAuthPlacement(
+  auth: import('./types.js').ConnectionAuth,
+  connection: import('./types.js').AgentConnectionConfig,
+): string {
+  if (auth.type === 'none') return 'none';
+  if (auth.placement) return auth.placement.name;
+  if (auth.header) return auth.header;
+  if (connection.provider === 'anthropic' && connection.protocol === 'anthropic-messages') return 'x-api-key';
+  if (connection.provider === 'gemini' && connection.protocol === 'gemini') return 'query:key';
+  return 'bearer';
 }
 
 function providerApiKey(

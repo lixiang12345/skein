@@ -9,6 +9,7 @@ import {createDefaultToolRegistry} from '../tools/index.js';
 import {canonicalJson} from '../utils/canonical-json.js';
 import {resolveExecutableRuntime} from '../utils/process.js';
 import {isOfficialProviderEndpoint} from './connection-catalog.js';
+import {connectionAuthFingerprint} from './connection-auth.js';
 import type {AgentProfile} from './profiles.js';
 import {
   capabilitySha256,
@@ -285,13 +286,13 @@ function materializeRoute(config: MosaicConfig, ref: string): {
   const baseUrl = route.baseUrl ?? connection?.baseUrl;
   const authReference = route.apiKeyEnv
     ? `env:${route.apiKeyEnv}:bearer`
-    : connection?.auth?.type === 'env'
-      ? `env:${connection.auth.name}:${connection.auth.header ?? 'bearer'}`
+    : connection?.auth?.type === 'none'
+      ? 'none'
+      : connection?.auth
+      ? `connection-auth:${connectionAuthFingerprint(connection.auth)}`
       : connection?.apiKeyEnv
         ? `env:${connection.apiKeyEnv}:bearer`
-        : connection?.auth?.type === 'none'
-          ? 'none'
-          : `provider-default:${provider}`;
+        : `provider-default:${provider}`;
   return {
     route,
     runtime: route.runtime ?? 'api',
@@ -327,6 +328,9 @@ function routeIneligibleReasons(input: {
   if (route.runtime === 'claude') {
     if (route.connection && !connection) reasons.push('named connection is unavailable');
     if (explicitEnv && !environment[explicitEnv]) reasons.push(`credential environment ${explicitEnv} is not set`);
+    if (connection?.auth?.type !== 'none' && connection?.auth?.placement) {
+      reasons.push('external Claude routes cannot use a custom credential header');
+    }
     return reasons;
   }
   if (route.runtime !== 'api') return reasons;
@@ -335,6 +339,7 @@ function routeIneligibleReasons(input: {
   if (route.provider === 'compatible' && !baseUrl) reasons.push('compatible API route has no base URL');
   if (explicitEnv && !environment[explicitEnv]) reasons.push(`credential environment ${explicitEnv} is not set`);
   if (connection?.auth?.type === 'none') return reasons;
+  if (connection?.auth?.type === 'command') return reasons;
   if (explicitEnv) return reasons;
   const inheritsParent = route.provider === config.model.provider && baseUrl === config.model.baseUrl && Boolean(config.model.apiKey);
   if (inheritsParent || (route.provider === 'compatible' && baseUrl && isLoopback(baseUrl))) return reasons;

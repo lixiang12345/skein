@@ -155,9 +155,10 @@ arbitration or approval.
 
 ### Cross-platform Claude relay credentials
 
-External Claude routes use the same environment-reference model on macOS,
-Linux, and Windows. A route may declare a custom relay and credential name
-without storing the credential in Skein configuration:
+External Claude routes use the same connection auth model on macOS, Linux, and
+Windows. `env` remains supported, while a named connection may instead use a
+bounded command helper that obtains a token from any platform or enterprise
+secret store.
 
 ```json
 {
@@ -186,10 +187,11 @@ explicit route credential name is configured. Other provider keys,
 `NODE_OPTIONS`, and the rest of the parent environment remain unavailable to
 the child.
 
-Shell environment variables, CI secret stores, Windows process environment,
-macOS Keychain helpers, and Linux secret-service wrappers are all deployment
-choices. Skein requires only the environment reference; it does not require an
-OS-specific credential manager.
+Shell environment variables, CI secret stores, Windows Credential Manager,
+macOS Keychain, Linux Secret Service, Vault, and cloud CLIs are deployment
+choices. Skein core depends on none of them: use `auth.type=env` or
+`auth.type=command`. Helpers run without a shell/stdin, receive only declared
+environment names, and have timeout/output/cache bounds.
 
 `writer_integrate` is a separate main-agent action. It requires the accepted
 Team Run ID and patch SHA, reparses and bounds every path, requires the same
@@ -245,20 +247,21 @@ inside the project config.
 The shortest setup path is the interactive user-level wizard:
 
 ```bash
-skein agents setup
+skein connections add
 ```
 
-It asks for a connection name, explicit relay transport, inference endpoint,
-optional model-catalog endpoint, `env` or `none` connection authentication,
-separate inference/catalog credential placement, and default model. The wizard
-writes only the environment-variable name and saves shared
+It asks for a connection name, provider label, explicit wire transport,
+inference endpoint, optional model-catalog endpoint, `env`, `command`, or
+`none` authentication, and default model. Advanced flags configure independent
+catalog auth, custom/env headers, manual models, and discovery policy. The wizard
+saves references rather than credential values and writes shared
 settings under the user Skein namespace, so the same connection is available
 in every workspace. The non-interactive equivalent is useful for provisioning:
 
 ```bash
-skein agents setup --yes \
+skein connections add --yes \
   --name team-relay \
-  --provider compatible \
+  --provider company-gateway \
   --protocol openai-responses \
   --base-url https://relay.example/v1 \
   --api-key-env TEAM_RELAY_API_KEY \
@@ -270,29 +273,62 @@ the same next action without placing a secret in the session transcript.
 
 ### Primary authentication scope
 
-Primary Skein model connections support third-party relays only. Official
-account login is not a primary-connection scenario and is not represented in
-the connection schema:
+Connection identity, wire protocol, and credential source are separate:
 
-- Existing direct API routes remain readable for backward compatibility; they
-  are not the evolution path for new primary connections.
-- Relay/gateway users define one named `connection` and reuse it across model
-  routes. This matches gateways such as OpenRouter, LiteLLM, and Vercel AI
-  Gateway that expose Responses, Chat Completions, and/or Anthropic Messages
-  behind one relay credential.
-- Existing external delegated CLI runtimes remain an optional, separate
-  subsystem. Their locally installed client owns any login state; Skein does
-  not expose that state as a primary connection or copy its tokens.
+- `providerId` is a display/organization label and can name an official API,
+  local runtime, gateway, or enterprise service.
+- `protocol` selects the actual wire format. Skein never derives it from the
+  label or model ID and never retries inference through another protocol.
+- `auth.type=env|command|none` selects how a credential is obtained. OS stores
+  are optional helper implementations, not core schema dependencies.
+- Interactive account sessions/OAuth are a future auth adapter. External coding
+  CLIs continue to own their signed-in sessions; Skein does not copy them.
+
+Command auth is deliberately a small cross-platform contract:
+
+```json
+{
+  "connections": {
+    "defaultConnection": "company",
+    "profiles": {
+      "company": {
+        "provider": "compatible",
+        "providerId": "company-gateway",
+        "protocol": "openai-responses",
+        "baseUrl": "https://gateway.example/v1",
+        "defaultModel": "company/coder",
+        "auth": {
+          "type": "command",
+          "command": "/usr/local/bin/fetch-company-token",
+          "args": ["--audience", "skein"],
+          "timeoutMs": 5000,
+          "refreshIntervalMs": 300000,
+          "placement": {"name": "X-Gateway-Token", "prefix": "Token "}
+        },
+        "headers": {"env": {"X-Tenant": "COMPANY_TENANT"}},
+        "models": [{"id": "company/coder", "contextLength": 200000}],
+        "modelDiscovery": false
+      }
+    }
+  }
+}
+```
+
+The helper receives no stdin and is never run through a shell. Its stdout must
+contain exactly the token; empty, oversized, timed-out, cancelled, missing, or
+non-zero helpers fail closed. Only safe process facts and names in `passEnv`
+reach the helper. Tokens live only in process memory. Helper argv are persisted,
+so they must describe how to fetch a secret, never contain the secret itself.
 
 ### Primary model connection selection
 
 The primary agent and team routes share the same connection catalog. User
-configuration under `agents.connections` is merged with strict named
-environment profiles:
+configuration under top-level `connections.profiles` is merged with legacy
+`agents.connections` and strict named environment profiles:
 
 ```bash
 export SKEIN_CONNECTIONS=work,local
-export SKEIN_CONNECTION_WORK_PROVIDER=compatible
+export SKEIN_CONNECTION_WORK_PROVIDER=company-gateway
 export SKEIN_CONNECTION_WORK_PROTOCOL=openai-responses
 export SKEIN_CONNECTION_WORK_BASE_URL=https://relay.example/v1
 export SKEIN_CONNECTION_WORK_API_KEY_ENV=WORK_RELAY_KEY
@@ -310,11 +346,16 @@ explicit `--connection`, the configured default, then automatic selection only
 when exactly one complete profile exists. Multiple complete profiles open a
 TTY selector; headless runs fail with `Pass --connection <name>`.
 
-New named connections are relay-only: `provider` is `compatible`, authentication
-is exactly `env` or `none`, and the transport is `openai-responses`,
-`openai-chat`, or `anthropic-messages`. OAuth, keychain, command helpers, and
-official account login are not connection schema variants. Custom legacy native
-provider endpoints do not inherit the provider's official API key.
+New named connections are provider-neutral. Supported transports are
+`openai-responses`, `openai-chat`, `anthropic-messages`, and `gemini`.
+Authentication is `env`, `command`, or `none`; inference and catalog auth may
+be independent. Custom native-provider endpoints never inherit an official API
+key without explicit user-owned auth.
+
+The environment `PROVIDER` field is also a label: `openai`, `anthropic`, and
+`gemini` select their native defaults, while any other lowercase label maps to
+the compatible runtime and remains visible in diagnostics. The wire protocol
+still comes only from `PROTOCOL`; a label never triggers protocol probing.
 
 Responses is the default because OpenAI recommends it for new projects. Skein
 sets `store: false` and replays the complete returned output items plus tool
@@ -331,8 +372,9 @@ connections may share the same credential reference:
 
 ```json
 {
-  "agents": {
-    "connections": {
+  "connections": {
+    "defaultConnection": "relay-openai",
+    "profiles": {
       "relay-openai": {
         "provider": "compatible",
         "protocol": "openai-responses",
@@ -359,15 +401,13 @@ connections may share the same credential reference:
 }
 ```
 
-`modelsBaseUrl` is independent from the inference `baseUrl`. Anthropic
-transport requires it explicitly because discovery is commonly OpenAI-shaped.
-Inference auth accepts `bearer` or `x-api-key`; the catalog independently
-accepts `bearer`, `x-api-key`, or `none`. Explicit `none` guarantees model
-discovery does not read or send the inference secret, which is useful for
-public catalogs such as Vercel's `/v1/models`. Omitted catalog auth retains the
-backward-compatible behavior of inheriting inference auth. Skein never probes
-one protocol and silently retries another: that could run the same inference
-twice and double bill the user.
+`modelsBaseUrl` is independent from inference `baseUrl`, but it is optional.
+Gateways without discovery declare `models` and set `modelDiscovery: false`.
+Inference and catalog each accept env/command/none auth, standard or custom
+credential placement, non-secret static headers, and env-backed headers.
+Omitted catalog auth inherits inference auth; explicit `none` guarantees the
+inference credential is not read or sent to the catalog. Skein never probes one
+inference protocol and retries another: that could duplicate work and billing.
 
 Hosted tools are capability intersections, not implied relay features. The
 connection declares what its exact Responses endpoint is documented or tested
@@ -412,7 +452,7 @@ For a relay whose catalog is documented as public, make the no-secret boundary
 explicit:
 
 ```bash
-skein agents setup --yes \
+skein connections add --yes \
   --name public-catalog-relay \
   --provider compatible \
   --protocol openai-responses \
@@ -420,7 +460,7 @@ skein agents setup --yes \
   --models-base-url https://ai-gateway.example/v1 \
   --auth env \
   --auth-header bearer \
-  --models-auth-header none \
+  --catalog-auth none \
   --api-key-env AI_GATEWAY_API_KEY \
   --model provider/coding-model
 ```
@@ -538,19 +578,20 @@ need different connections:
 }
 ```
 
-Run `skein agents connections` or `/connections` to inspect the resolved
+Run `skein connections list`, `skein connections show <name>`, or
+`/connections` to inspect the resolved
 inference endpoint, model-catalog endpoint, environment-variable reference,
-and route count without revealing the key. Run `skein agents models
-team-relay` to inspect the relay's OpenAI-style `/models` catalog before
+and route count without revealing the key. Run `skein connections models
+team-relay` to inspect declared/discovered models before
 choosing route IDs. Discovery is read-only and does not rewrite config. Its
 process-local cache is bounded to 32 endpoint/auth fingerprints with a 15-minute
 TTL and ETag revalidation; secret values are hashed into the in-memory
 fingerprint and never cached. `401`/`403` invalidates the entry and never returns
-stale models as an authentication success. Named connections are best kept in
-user-level configuration. A
-repository-owned connection or route remains disabled until the project config
-is explicitly trusted, preventing a cloned repository from redirecting a
-developer's key and source context to an attacker-controlled endpoint.
+stale models as an authentication success. Named connections are user/managed
+configuration. Repository configuration can never define or redirect a
+connection, provider endpoint, auth source, request header, or default
+connection—even when executable project configuration is trusted. This keeps a
+cloned repository from redirecting a developer's key and source context.
 
 External CLI runtimes remain separate from native connections. Skein launches
 them with a minimal environment containing only the safe executable path,
