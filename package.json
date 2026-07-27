@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.57",
+  "version": "0.3.58",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -24,6 +24,7 @@
   },
   "skein": {
     "releaseNotes": [
+      "Fresh-session local-context metadata now preserves visible spacing around its separator, with an exact banner regression guarding the published terminal frame",
       "Interactive sessions now keep a composer-first single-column workspace: permanent Goose art, marketing copy, labelled composer rules, multi-line telemetry, and the wide Team Cockpit are replaced by a quiet one-row identity, one-row footer, and a collapsible active-agent summary with accessible responsive fallbacks",
       "Team Cockpit now promotes queued agents in place when they start, preventing duplicated teammates and React duplicate-key warnings throughout queued, running, retry, and completed lifecycle transitions",
       "Version 0.3.55 introduced a responsive Skein Goose lockup, prior-session cleanup, and bounded reading width; its permanent workspace branding is superseded by the current composer-first identity while the responsive and accessibility guards remain",
