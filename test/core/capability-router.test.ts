@@ -251,6 +251,40 @@ describe('capability shadow router', () => {
     });
   });
 
+  it('fails closed when an external Claude route names a missing credential environment', async () => {
+    const root = await workspace();
+    const config = testConfig(root);
+    config.agents!.routes!.implementer = {
+      runtime: 'claude',
+      provider: 'anthropic',
+      model: 'claude-opus-4-8',
+      baseUrl: 'https://relay.example',
+      apiKeyEnv: 'SKEIN_CLAUDE_RELAY_KEY',
+      timeoutMs: 120_000,
+      costBudgetUsd: 0.5,
+    };
+    const profile = builtIn('implementer');
+    const unavailable = await buildCapabilityCandidates({
+      config,
+      profile,
+      environment: {},
+      externalRuntimeAvailable: () => true,
+    });
+    expect(unavailable.find((candidate) => candidate.ref === 'implementer')?.ineligibleReasons)
+      .toContain('credential environment SKEIN_CLAUDE_RELAY_KEY is not set');
+
+    const available = await buildCapabilityCandidates({
+      config,
+      profile,
+      environment: {SKEIN_CLAUDE_RELAY_KEY: 'relay-secret'},
+      externalRuntimeAvailable: () => true,
+    });
+    expect(available.find((candidate) => candidate.ref === 'implementer')).toMatchObject({
+      eligible: true,
+      ineligibleReasons: [],
+    });
+  });
+
   it('excludes quarantined routes from shadow recommendations and restores them after canaries', async () => {
     const root = await workspace();
     const config = testConfig(root);

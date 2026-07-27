@@ -839,6 +839,7 @@ export class DelegationManager {
           detail: `running claude inside the isolated writer worktree (hard timeout ${timeoutMs}ms, cost cap $${costBudgetUsd.toFixed(2)})`,
         });
         let streamedToolCalls = 0;
+        const providerEnvironment = this.externalProviderEnvironment(profile.name);
         const external = await (this.options.externalRunner ?? runExternalAgent)({
           runtime: 'claude',
           access: 'workspace-write',
@@ -847,6 +848,7 @@ export class DelegationManager {
           prompt: `${formatProfilePrompt(profile)}\n\nYou are the only writer inside a Skein-managed disposable Git worktree. Adopt the engineering specialty best supported by the assignment and the files you inspect; this changes your implementation focus, never your authority. Make only the bounded requested change using file read and edit tools. Bash, Git, network, hooks, MCP, plugins, project instructions, nested agents, and direct integration are unavailable. Finish with a concise summary for the API reviewer.\n\n${assignment}`,
           timeoutMs,
           costBudgetUsd,
+          ...(providerEnvironment ? {providerEnvironment} : {}),
           signal: controller.signal,
           onProgress(progress) {
             streamedToolCalls = progress.toolCalls;
@@ -1365,6 +1367,7 @@ export class DelegationManager {
           : undefined;
         let external;
         try {
+          const providerEnvironment = this.externalProviderEnvironment(profile.name);
           external = await (this.options.externalRunner ?? runExternalAgent)({
             runtime: externalRuntime,
             model,
@@ -1372,6 +1375,7 @@ export class DelegationManager {
             prompt: `${formatProfilePrompt(profile)}\n\nYou are a read-only teammate in a Skein team run. Do not modify files or delegate. Return a concise evidence-backed report for peer review.\n\nAssignment:\n${task.task}`,
             signal: agentController.signal,
             timeoutMs: budgetMode === 'strict' && externalTimeoutMs !== undefined ? externalTimeoutMs : 0,
+            ...(providerEnvironment ? {providerEnvironment} : {}),
           });
         } finally {
           if (guardTimer) clearTimeout(guardTimer);
@@ -1601,6 +1605,24 @@ export class DelegationManager {
     const {route} = resolveAgentModelRoute(this.team, this.options.config.model, profile);
     if (!route) return this.options.config.model;
     return modelConfigFromRoute(route, this.options.config.model, this.options.environment ?? process.env, this.team.connections);
+  }
+
+  private externalProviderEnvironment(profile: string) {
+    const resolved = resolveAgentModelRoute(this.team, this.options.config.model, profile);
+    const route = resolved.route;
+    if (!route) return undefined;
+    const connection = route.connection ? this.team.connections?.[route.connection] : undefined;
+    const connectionAuth = connection?.auth;
+    const baseUrl = route.baseUrl ?? connection?.baseUrl;
+    const apiKeyEnv = route.apiKeyEnv ?? connection?.apiKeyEnv ??
+      (connectionAuth?.type === 'env' ? connectionAuth.name : undefined);
+    const apiKeyHeader = connectionAuth?.type === 'env' ? connectionAuth.header : undefined;
+    if (!baseUrl && !apiKeyEnv && !apiKeyHeader) return undefined;
+    return {
+      ...(baseUrl ? {baseUrl} : {}),
+      ...(apiKeyEnv ? {apiKeyEnv} : {}),
+      ...(apiKeyHeader ? {apiKeyHeader} : {}),
+    };
   }
 
   private routeAccounting(profile: string, effective = this.modelRoute(profile)): {

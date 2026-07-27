@@ -1,4 +1,4 @@
-import type {AgentModelRoute} from '../types.js';
+import type {AgentModelRoute, ConnectionApiKeyHeader} from '../types.js';
 import {resolveExecutableRuntime, runProcess, type ProcessResult} from '../utils/process.js';
 
 export type ExternalAgentRuntime = Exclude<NonNullable<AgentModelRoute['runtime']>, 'api'>;
@@ -10,6 +10,12 @@ export interface ExternalAgentProgress {
   toolCalls: number;
 }
 
+export interface ExternalProviderEnvironment {
+  baseUrl?: string;
+  apiKeyEnv?: string;
+  apiKeyHeader?: ConnectionApiKeyHeader;
+}
+
 export interface ExternalAgentRequest {
   runtime: ExternalAgentRuntime;
   model: string;
@@ -18,6 +24,7 @@ export interface ExternalAgentRequest {
   access?: ExternalAgentAccess;
   timeoutMs?: number;
   costBudgetUsd?: number;
+  providerEnvironment?: ExternalProviderEnvironment;
   signal?: AbortSignal;
   onProgress?: (progress: ExternalAgentProgress) => void;
 }
@@ -39,7 +46,7 @@ export async function runExternalAgent(request: ExternalAgentRequest): Promise<E
   const result = await runProcess(executable.executable, command.args, {
     cwd: request.workspace,
     inheritEnv: false,
-    env: externalRuntimeEnvironment(request.runtime, executable.path),
+    env: externalRuntimeEnvironment(request.runtime, executable.path, process.env, request.providerEnvironment),
     timeoutMs: request.timeoutMs ?? 180_000,
     maxOutputBytes: 2_000_000,
     ...(request.signal ? {signal: request.signal} : {}),
@@ -69,11 +76,12 @@ export function externalAgentFailure(runtime: ExternalAgentRuntime, result: Proc
   return undefined;
 }
 
-/** Pass only terminal, locale, OS-home, and runtime-owned configuration facts. */
+/** Pass only runtime facts plus the exact provider environment selected for this child. */
 export function externalRuntimeEnvironment(
   runtime: ExternalAgentRuntime,
   safePath: string,
   environment: NodeJS.ProcessEnv = process.env,
+  provider?: ExternalProviderEnvironment,
 ): NodeJS.ProcessEnv {
   const allowed = [
     'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME',
@@ -86,7 +94,28 @@ export function externalRuntimeEnvironment(
   for (const name of allowed) {
     if (environment[name] !== undefined) selected[name] = environment[name];
   }
+  if (runtime === 'claude') addClaudeProviderEnvironment(selected, environment, provider);
   return selected;
+}
+
+function addClaudeProviderEnvironment(
+  selected: NodeJS.ProcessEnv,
+  environment: NodeJS.ProcessEnv,
+  provider?: ExternalProviderEnvironment,
+): void {
+  const baseUrl = provider?.baseUrl ?? environment.ANTHROPIC_BASE_URL;
+  if (baseUrl) selected.ANTHROPIC_BASE_URL = baseUrl;
+
+  if (provider?.apiKeyEnv) {
+    const credential = environment[provider.apiKeyEnv];
+    if (!credential) throw new Error(`External Claude credential environment ${provider.apiKeyEnv} is not set.`);
+    if (provider.apiKeyHeader === 'bearer') selected.ANTHROPIC_AUTH_TOKEN = credential;
+    else selected.ANTHROPIC_API_KEY = credential;
+    return;
+  }
+
+  if (environment.ANTHROPIC_API_KEY) selected.ANTHROPIC_API_KEY = environment.ANTHROPIC_API_KEY;
+  if (environment.ANTHROPIC_AUTH_TOKEN) selected.ANTHROPIC_AUTH_TOKEN = environment.ANTHROPIC_AUTH_TOKEN;
 }
 
 export function externalAgentCommand(request: ExternalAgentRequest): {binary: string; args: string[]} {

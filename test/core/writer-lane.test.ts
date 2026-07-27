@@ -114,6 +114,10 @@ describe('isolated writer lane', () => {
       model: 'claude-opus-4-8',
       timeoutMs: 120_000,
       costBudgetUsd: 0.5,
+      providerEnvironment: {
+        baseUrl: 'https://relay.example',
+        apiKeyEnv: 'SKEIN_CLAUDE_RELAY_KEY',
+      },
     });
     expect(request?.prompt).toContain('Adopt the engineering specialty best supported by the assignment');
     expect(request?.prompt).toContain('Dynamic engineering brief');
@@ -646,6 +650,7 @@ async function externalWriterManager(
     profiles,
     teamStore: store,
     externalRunner,
+    environment: {SKEIN_CLAUDE_RELAY_KEY: 'relay-secret'},
   });
 }
 
@@ -756,6 +761,8 @@ function externalClaudeWriterConfig(root: string): MosaicConfig {
         runtime: 'claude',
         provider: 'anthropic',
         model: 'claude-opus-4-8',
+        baseUrl: 'https://relay.example',
+        apiKeyEnv: 'SKEIN_CLAUDE_RELAY_KEY',
         timeoutMs: 120_000,
         costBudgetUsd: 0.5,
       },

@@ -321,13 +321,18 @@ function routeIneligibleReasons(input: {
     reasons.push('external Claude writers require an explicit USD cost budget');
   }
   if (!profile.readOnly && profile.source === 'workspace') reasons.push('workspace-authored profiles cannot receive writer authority');
-  if (route.runtime !== 'api') return reasons;
   const connection = route.connection ? config.agents?.connections?.[route.connection] : undefined;
+  const explicitEnv = route.route.apiKeyEnv ?? connection?.apiKeyEnv ??
+    (connection?.auth?.type === 'env' ? connection.auth.name : undefined);
+  if (route.runtime === 'claude') {
+    if (route.connection && !connection) reasons.push('named connection is unavailable');
+    if (explicitEnv && !environment[explicitEnv]) reasons.push(`credential environment ${explicitEnv} is not set`);
+    return reasons;
+  }
+  if (route.runtime !== 'api') return reasons;
   if (route.connection && !connection) reasons.push('named connection is unavailable');
   const baseUrl = route.route.baseUrl ?? connection?.baseUrl;
   if (route.provider === 'compatible' && !baseUrl) reasons.push('compatible API route has no base URL');
-  const explicitEnv = route.route.apiKeyEnv ?? connection?.apiKeyEnv ??
-    (connection?.auth?.type === 'env' ? connection.auth.name : undefined);
   if (explicitEnv && !environment[explicitEnv]) reasons.push(`credential environment ${explicitEnv} is not set`);
   if (connection?.auth?.type === 'none') return reasons;
   if (explicitEnv) return reasons;

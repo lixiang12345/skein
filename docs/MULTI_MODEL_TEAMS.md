@@ -153,6 +153,44 @@ review artifacts for machine audit. Team Run v1/v2/v3 remains readable, but
 legacy text review and pre-v4 review state cannot substitute for current human
 arbitration or approval.
 
+### Cross-platform Claude relay credentials
+
+External Claude routes use the same environment-reference model on macOS,
+Linux, and Windows. A route may declare a custom relay and credential name
+without storing the credential in Skein configuration:
+
+```json
+{
+  "agents": {
+    "routes": {
+      "implementer": {
+        "runtime": "claude",
+        "provider": "anthropic",
+        "model": "your-claude-model",
+        "baseUrl": "https://relay.example",
+        "apiKeyEnv": "SKEIN_CLAUDE_RELAY_KEY",
+        "costBudgetUsd": 0.5
+      }
+    }
+  }
+}
+```
+
+Set `SKEIN_CLAUDE_RELAY_KEY` in the environment that starts Skein. Skein maps
+that one named credential to `ANTHROPIC_API_KEY` only inside the Claude child
+process and passes the configured URL as `ANTHROPIC_BASE_URL`. A named
+connection whose auth header is `bearer` maps the same reference to
+`ANTHROPIC_AUTH_TOKEN` instead. Standard `ANTHROPIC_BASE_URL`,
+`ANTHROPIC_API_KEY`, and `ANTHROPIC_AUTH_TOKEN` are also accepted when no
+explicit route credential name is configured. Other provider keys,
+`NODE_OPTIONS`, and the rest of the parent environment remain unavailable to
+the child.
+
+Shell environment variables, CI secret stores, Windows process environment,
+macOS Keychain helpers, and Linux secret-service wrappers are all deployment
+choices. Skein requires only the environment reference; it does not require an
+OS-specific credential manager.
+
 `writer_integrate` is a separate main-agent action. It requires the accepted
 Team Run ID and patch SHA, reparses and bounds every path, requires the same
 `HEAD`, refuses dirty target files, runs `git apply --check`, and captures every

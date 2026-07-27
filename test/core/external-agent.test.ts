@@ -119,6 +119,52 @@ describe('external agent runtimes', () => {
     expect(JSON.stringify(selected)).not.toMatch(/openai-secret|anthropic-secret|gemini-secret|skein-secret|relay-secret/u);
   });
 
+  it('passes only portable Anthropic variables to the Claude runtime', () => {
+    const selected = externalRuntimeEnvironment('claude', '/trusted/bin', {
+      HOME: '/tmp/home',
+      CLAUDE_CONFIG_DIR: '/tmp/claude',
+      ANTHROPIC_BASE_URL: 'https://relay.example',
+      ANTHROPIC_API_KEY: 'anthropic-key',
+      ANTHROPIC_AUTH_TOKEN: 'anthropic-token',
+      OPENAI_API_KEY: 'openai-secret',
+      GEMINI_API_KEY: 'gemini-secret',
+      NODE_OPTIONS: '--inspect',
+    });
+
+    expect(selected).toEqual({
+      PATH: '/trusted/bin',
+      HOME: '/tmp/home',
+      CLAUDE_CONFIG_DIR: '/tmp/claude',
+      ANTHROPIC_BASE_URL: 'https://relay.example',
+      ANTHROPIC_API_KEY: 'anthropic-key',
+      ANTHROPIC_AUTH_TOKEN: 'anthropic-token',
+    });
+    expect(JSON.stringify(selected)).not.toMatch(/openai-secret|gemini-secret|--inspect/u);
+  });
+
+  it('maps an explicitly named relay credential without passing unrelated provider secrets', () => {
+    const selected = externalRuntimeEnvironment('claude', '/trusted/bin', {
+      HOME: '/tmp/home',
+      SKEIN_CLAUDE_RELAY_KEY: 'relay-secret',
+      ANTHROPIC_API_KEY: 'unrelated-anthropic-key',
+      OPENAI_API_KEY: 'unrelated-openai-key',
+    }, {
+      baseUrl: 'https://relay.example',
+      apiKeyEnv: 'SKEIN_CLAUDE_RELAY_KEY',
+      apiKeyHeader: 'bearer',
+    });
+
+    expect(selected).toEqual({
+      PATH: '/trusted/bin',
+      HOME: '/tmp/home',
+      ANTHROPIC_BASE_URL: 'https://relay.example',
+      ANTHROPIC_AUTH_TOKEN: 'relay-secret',
+    });
+    expect(() => externalRuntimeEnvironment('claude', '/trusted/bin', {}, {
+      apiKeyEnv: 'SKEIN_CLAUDE_RELAY_KEY',
+    })).toThrow('External Claude credential environment SKEIN_CLAUDE_RELAY_KEY is not set');
+  });
+
   it('never accepts an exit-zero process that crossed its timeout boundary', () => {
     const failure = externalAgentFailure('codex', {
       command: 'codex exec',
