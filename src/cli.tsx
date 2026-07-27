@@ -701,7 +701,7 @@ program
     if (shell !== 'bash' && shell !== 'zsh' && shell !== 'fish') {
       throw new Error('Unknown shell; use bash, zsh, or fish.');
     }
-    process.stdout.write(generateShellCompletion(shell as CompletionShell));
+    process.stdout.write(generateShellCompletion(shell as CompletionShell, program));
   });
 checkpointCommand
   .command('restore <session> <checkpoint>')
