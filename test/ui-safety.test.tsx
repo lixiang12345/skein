@@ -11,7 +11,7 @@ import {
   PermissionCard,
   PromptBar,
   TaskRail,
-  TeamCockpit,
+  TeamSummary,
   TeamWorkbench,
   Timeline,
 } from '../src/ui/components.js';
@@ -80,7 +80,7 @@ describe('terminal display safety', () => {
           entries={[{label: untrusted('list-label-clean'), detail: untrusted('list-detail-clean')}]}
         />
         <ActivityLine activity={{label: untrusted('activity-label-clean'), startedAt: Date.now()}} frame={untrusted('frame-clean')} width={120} />
-        <Footer busy tokens={100} maxTokens={1_000} changedFiles={0} frame={untrusted('footer-frame-clean')} themeName={untrusted('footer-theme-clean')} width={120} />
+        <Footer busy tokens={100} maxTokens={1_000} changedFiles={0} frame={untrusted('footer-frame-clean')} route={untrusted('footer-route-clean')} width={120} />
       </>,
       {columns: 120},
     );
@@ -91,7 +91,7 @@ describe('terminal display safety', () => {
       'task-title-clean', 'permission-tool-clean', 'command-clean', 'cwd-clean',
       'palette-title-clean', 'suggestion-label-clean', 'suggestion-description-clean',
       'list-title-clean', 'list-label-clean', 'list-detail-clean', 'activity-label-clean',
-      'frame-clean', 'footer-frame-clean', 'footer-theme-clean',
+      'frame-clean', 'footer-frame-clean', 'footer-route-clean',
     ]) {
       expect(output).toContain(value);
     }
@@ -122,7 +122,7 @@ describe('terminal display safety', () => {
           <PermissionCard call={{id: 'permission', name: 'shell', arguments: {command: 'npm test'}}} category="shell" glyphMode="ascii" width={80} />
           <PromptBar busy={false} value="" placeholder="Type a request" glyphMode="ascii" width={80}><></></PromptBar>
           <Footer busy tokens={1200} maxTokens={10_000} changedFiles={1} glyphMode="ascii" width={80} themeName="graphite" />
-          <TeamCockpit glyphMode="ascii" width={40} items={[
+          <TeamSummary glyphMode="ascii" width={40} items={[
             {id: 'a1', kind: 'agent', profile: 'reviewer', task: 'inspect', state: 'running', phase: 'review', provider: 'openai', model: 'gpt', inputTokens: 100, outputTokens: 50, toolCalls: 2},
             {id: 'm1', kind: 'agent-message', from: 'reviewer', to: 'lead', text: 'handoff ready'},
           ]} />
@@ -132,7 +132,7 @@ describe('terminal display safety', () => {
         </>,
         {columns: 80},
       );
-      expect(output).toContain('__\\o> SKEIN');
+      expect(output).toContain('SKEIN');
       expect(output).not.toMatch(/[^\x00-\x7F]/u);
     } finally {
       if (previous === undefined) delete process.env.SKEIN_GLYPHS;

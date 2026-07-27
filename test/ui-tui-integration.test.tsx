@@ -26,7 +26,7 @@ describe('SkeinApp completion flows', () => {
       const frame = harness.lastFrame();
       const lines = frame.split('\n');
       const nonEmptyLines = lines.filter((line) => line.trim());
-      const summaryRow = nonEmptyLines.findIndex((line) => line.includes('Workspace ready'));
+      const summaryRow = nonEmptyLines.findIndex((line) => line.includes('local context'));
       const composerRow = nonEmptyLines.findIndex((line) => line.includes('Type a request'));
       expect(summaryRow).toBeGreaterThanOrEqual(0);
       expect(composerRow).toBeGreaterThan(summaryRow);
@@ -41,7 +41,7 @@ describe('SkeinApp completion flows', () => {
     }
   });
 
-  it('shows the Goose lockup without stretching ultra-wide sessions and retracts it for inspectors', async () => {
+  it('keeps fresh identity compact and retracts it once an inspector owns the surface', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-wide-goose-ui-'));
     const session = testSession(root);
     const {runner} = mockRunner(root, session);
@@ -49,16 +49,16 @@ describe('SkeinApp completion flows', () => {
 
     try {
       const frame = harness.lastFrame();
-      expect(frame).toMatch(/╭────────╮|________/u);
-      expect(frame).toContain('context in formation');
+      expect(frame).toContain('SKEIN');
+      expect(frame).not.toMatch(/╭────────╮|________|__\\(?:●▶|o>)/u);
+      expect(frame).not.toContain('context in formation');
       expect(frame).toContain('Type a request');
       for (const line of frame.split('\n')) expect(displayWidth(line.trimEnd())).toBeLessThanOrEqual(126);
 
       harness.stdin.write('/status\r');
       await vi.waitFor(() => expect(harness.output()).toContain('Status'));
       const inspected = harness.lastFrame();
-      expect(inspected).not.toMatch(/╭────────╮|________/u);
-      expect(inspected).toMatch(/__\\(?:●▶|o>) SKEIN/u);
+      expect(inspected).not.toContain('SKEIN');
     } finally {
       await harness.cleanup();
       await rm(root, {recursive: true, force: true});
@@ -86,7 +86,7 @@ describe('SkeinApp completion flows', () => {
     try {
       const frame = harness.lastFrame();
       expect(frame).toContain('SKEIN');
-      expect(frame).toContain('Workspace ready');
+      expect(frame).toContain('local context');
       expect(frame).toContain('Type a request');
       expect(frame).not.toContain('WORKSPACE');
       expect(frame).not.toContain('RUNTIME');
@@ -633,6 +633,10 @@ describe('SkeinApp completion flows', () => {
       harness.stdin.write('review the delivery\r');
       await vi.waitFor(() => expect(harness.output()).toContain('Team run run-1 accepted'));
       await vi.waitFor(() => expect(harness.output()).toContain('judge accept 3 pass 0 fail 0 unknown'));
+      const completedFrame = harness.lastFrame();
+      expect(completedFrame).not.toContain('SKEIN');
+      expect(completedFrame).not.toContain('TEAM COCKPIT');
+      expect(completedFrame).not.toContain('agent/architect');
       harness.stdin.write('\u0014');
       await vi.waitFor(() => expect(harness.output()).toContain('TEAM WORKBENCH'));
       await vi.waitFor(() => expect(harness.output()).toContain('unpriced'));

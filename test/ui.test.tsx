@@ -2,7 +2,7 @@ import React from 'react';
 import {renderToString, Text} from 'ink';
 import stripAnsi from 'strip-ansi';
 import {describe, expect, it} from 'vitest';
-import {CommandPalette, ContextInspector, Footer, Header, PermissionCard, PromptBar, TaskRail, TeamCockpit, TeamWorkbench, Timeline, WorkspacePanel} from '../src/ui/components.js';
+import {CommandPalette, ContextInspector, Footer, Header, PermissionCard, PromptBar, TaskRail, TeamSummary, TeamWorkbench, Timeline, WorkspacePanel} from '../src/ui/components.js';
 import {toolMetaSummary} from '../src/ui/timeline-reducers.js';
 import {displayWidth, sanitizeTerminalText} from '../src/ui/text.js';
 import {detectTerminalAppearance, resolveTheme, resolveThemeWithColor, ThemeProvider} from '../src/ui/theme.js';
@@ -255,7 +255,7 @@ describe('terminal presentation', () => {
     expect(output).not.toContain('\n4-8');
   });
 
-  it('renders a recognizable responsive Goose brand lockup on wide terminals', () => {
+  it('keeps the fresh identity to one quiet row without permanent Goose art or marketing copy', () => {
     const output = renderToString(<Header config={{
       ...config,
       workspaceRoots: ['/work/skein'],
@@ -263,12 +263,11 @@ describe('terminal presentation', () => {
     }} askMode={false} width={118} expanded />, {columns: 118});
 
     const rows = output.trimEnd().split('\n');
-    expect(rows).toHaveLength(3);
-    expect(output).toContain('╭────────╮');
-    expect(output).toContain('╰────────────╯');
+    expect(rows).toHaveLength(1);
     expect(output).toContain('SKEIN');
     expect(output).toContain('BUILD');
-    expect(output).toContain('context in formation');
+    expect(output).not.toMatch(/╭────────╮|________|__\\●▶/u);
+    expect(output).not.toContain('context in formation');
     for (const row of rows) expect(displayWidth(row)).toBeLessThanOrEqual(118);
   });
 
@@ -343,8 +342,8 @@ describe('terminal presentation', () => {
       </>,
       {columns: 40},
     );
-    expect(output).toContain('__\\●▶ SKEIN');
-    expect(output).toContain('● ASK');
+    expect(output).toContain('SKEIN');
+    expect(output).toContain('ASK');
     expect(output).toContain('apply_patch');
     expect(output).toContain('2 changed');
     expect(output).not.toContain('session active');
@@ -420,7 +419,7 @@ describe('terminal presentation', () => {
     for (const line of output.split('\n')) {
       expect(displayWidth(line), `${columns}-column row overflowed: ${JSON.stringify(line)}`).toBeLessThanOrEqual(columns);
     }
-    expect(output).toContain('● ASK');
+    expect(output).toContain('ASK');
     expect(output).toContain('apply_patch');
     expect(output).toContain('/command-5');
     expect(output).not.toContain('contexcontext');
@@ -517,26 +516,46 @@ describe('terminal presentation', () => {
     expect(output).toContain('@2');
   });
 
-  it('renders routed agents and peer handoffs in the team cockpit', () => {
-    const output = renderToString(<TeamCockpit width={40} items={[
+  it('keeps routine telemetry hidden but surfaces context pressure when it becomes actionable', () => {
+    const routine = renderToString(<Footer busy={false} tokens={12_000} maxTokens={100_000} changedFiles={0} contextPressure={0.42} width={80} />);
+    const pressured = renderToString(<Footer busy={false} tokens={82_000} maxTokens={100_000} changedFiles={0} contextPressure={0.82} width={80} />);
+    expect(routine).not.toContain('ctx ');
+    expect(routine).not.toContain('tokens');
+    expect(pressured).toContain('ctx 82%');
+  });
+
+  it('can suppress the decorative composer rule for linear screen-reader output', () => {
+    const output = renderToString(<PromptBar busy={false} value="" placeholder="Type a request" width={40} showRule={false}><></></PromptBar>);
+    expect(output).toContain('Type a request');
+    expect(output).not.toMatch(/[-─]{10}/u);
+  });
+
+  it('compresses active agents into a two-line summary instead of a permanent cockpit', () => {
+    const output = renderToString(<TeamSummary width={64} items={[
       {id: 'worker', kind: 'agent', profile: 'architect', provider: 'anthropic', model: 'claude', phase: 'work', task: 'Map boundaries', state: 'ok'},
       {id: 'message', kind: 'agent-message', from: 'architect', to: 'reviewer', text: 'Boundary report ready.'},
       {id: 'reviewer', kind: 'agent', profile: 'reviewer', provider: 'openai', model: 'gpt', phase: 'review', task: 'Review evidence', state: 'running'},
-    ]} />, {columns: 40});
-    expect(output).toContain('TEAM COCKPIT');
-    expect(output).toContain('anthropic/claude');
-    expect(output).toContain('openai/gpt');
-    expect(output).toContain('architect→reviewer');
+    ]} />, {columns: 64});
+    expect(output).toContain('1 agent');
+    expect(output).toContain('1 running');
+    expect(output).toContain('1 review');
+    expect(output).toContain('reviewer');
+    expect(output).not.toContain('TEAM COCKPIT');
+    expect(output).not.toContain('openai/gpt');
+    expect(output).not.toContain('architect→reviewer');
+    expect(output.trimEnd().split('\n')).toHaveLength(2);
   });
 
-  it('surfaces queued and cancelled agent states in the team cockpit', () => {
-    const output = renderToString(<TeamCockpit width={48} items={[
+  it('shows only actionable queued or running agents in the compact team summary', () => {
+    const output = renderToString(<TeamSummary width={64} items={[
       {id: 'queued', kind: 'agent', profile: 'analyst', task: 'Await a scheduler slot', state: 'queued'},
       {id: 'cancelled', kind: 'agent', profile: 'reviewer', phase: 'review', task: 'Review evidence', state: 'cancelled', cancelReason: 'Cleared from queue after an agent timeout: worker exceeded budget'},
-    ]} />, {columns: 48});
+    ]} />, {columns: 64});
+    expect(output).toContain('1 agent');
+    expect(output).toContain('1 queued');
     expect(output).toContain('analyst');
-    expect(output).toContain('reviewer');
-    expect(output).toContain('Cleared from queue');
+    expect(output).not.toContain('reviewer');
+    expect(output).not.toContain('Cleared from queue');
   });
 
   it('surfaces queued and cancelled agents in the workbench without overflow', () => {
@@ -789,7 +808,7 @@ describe('terminal presentation', () => {
       version: '0.3.5',
     }]} />, {columns});
 
-    expect(output).toContain(columns < 28 ? 'Ready' : 'Workspace ready');
+    expect(output).toContain(columns < 28 ? 'ready' : 'local context');
     expect(output).toContain('v0.3.5');
     expect(output.trimEnd().split('\n')).toHaveLength(1);
     expect(output).not.toContain('S K E I N');
@@ -801,8 +820,8 @@ describe('terminal presentation', () => {
   });
 
   it.each([
-    ['empty', 'Empty workspace'],
-    ['blocked', 'Setup required'],
+    ['empty', 'empty workspace'],
+    ['blocked', 'setup required'],
   ] as const)('keeps the %s entry state explicit without restoring dashboard chrome', (status, expected) => {
     const output = renderToString(<Timeline width={80} glyphMode="ascii" items={[{
       id: `banner-${status}`,
@@ -829,8 +848,8 @@ describe('terminal presentation', () => {
         <Footer busy tokens={800} maxTokens={10_000} changedFiles={0} glyphMode="ascii" />
       </>,
     );
-    expect(output).toContain('__\\o> SKEIN');
-    expect(output).toContain('o ASK');
+    expect(output).toContain('SKEIN');
+    expect(output).toContain('ASK');
     expect(output).toContain('+ read_file');
     expect(output).toContain('~ working');
     expect(output).not.toMatch(/[⌁●✓◌]/u);

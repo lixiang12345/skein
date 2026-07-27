@@ -39,7 +39,7 @@ import {
   PromptBar,
   resolveGlyphs,
   TaskRail,
-  TeamCockpit,
+  TeamSummary,
   TeamWorkbench,
   type TeamRunSummary,
   type TeamWorkbenchView,
@@ -2043,12 +2043,11 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const constrainedHeight = terminalHeight < 18;
   const compactComposer = terminalHeight < 18;
   const minimalInspector = terminalHeight < 22;
-  const showHeader = terminalHeight >= 10;
   const latestSurface = timeline.at(-1)?.kind;
   const inspectorSurface = latestSurface === 'list' || latestSurface === 'context-inspector' ||
     latestSurface === 'theme' || latestSurface === 'clarification' || latestSurface === 'update';
-  const expandedHeader = showHeader && contentWidth >= 100 && terminalHeight >= 22 &&
-    !terminalAccessibility.screenReader && !permission && suggestionMode === 'none' &&
+  const conversationStarted = timeline.some((item) => item.kind === 'user' || item.kind === 'assistant');
+  const showHeader = terminalHeight >= 10 && !conversationStarted && !permission && suggestionMode === 'none' &&
     !showContextInspector && !teamWorkbenchOpen && !inspectorSurface;
   const taskLimit = compactUi ? 3 : 6;
   const paletteVisible = suggestions.length > 0 || Boolean(historySearch) || suggestionMode === 'mention';
@@ -2076,15 +2075,19 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const composerRows = permission
     ? permissionRows(contentWidth, Boolean(typeof permission.call.arguments.cwd === 'string' || runner.workspace.primaryRoot), constrainedHeight)
       + permissionPreviewRows(permission.preview, contentWidth, constrainedHeight)
-    : 3 + visibleAttachments.length + (visibleQueuePreview ? 1 : 0) + composerValueRows(composerPreview, Math.max(1, contentWidth - 2), compactComposer ? 1 : 4);
+    : (terminalAccessibility.screenReader ? 2 : 3) + visibleAttachments.length + (visibleQueuePreview ? 1 : 0) + composerValueRows(composerPreview, Math.max(1, contentWidth - 2), compactComposer ? 1 : 4);
   const inspectorRows = renderContextInspector ? contextInspectorRows(session, compactUi, contentWidth, minimalInspector) : 0;
-  const footerRows = showFooter ? (contentWidth < 48 ? 2 : 1) : 0;
+  const footerRows = showFooter ? 1 : 0;
   const activityRows = showActivity && activity ? (contentWidth < 48 && activity.turn ? 3 : 2) : 0;
-  const headerRows = showHeader ? (expandedHeader ? 4 : 2) : 0;
-  const chromeRows = headerRows + composerRows + footerRows + taskRows + paletteRows + inspectorRows + activityRows;
-  const availableTimelineRows = Math.max(0, terminalHeight - chromeRows);
   const teamItems = timeline.filter((item) => item.kind === 'agent' || item.kind === 'agent-message');
-  const timelineContentRows = timeline.reduce((rows, item) => rows + estimateTimelineItemRows(item, {
+  const showTeamSummary = config.agents?.cockpit !== false && !teamWorkbenchOpen && !permission && !paletteVisible && !showContextInspector && !inspectorSurface &&
+    teamItems.some((item) => item.kind === 'agent' && (item.state === 'queued' || item.state === 'running'));
+  const teamSummaryRows = showTeamSummary ? (contentWidth >= 64 ? 3 : 2) : 0;
+  const headerRows = showHeader ? 2 : 0;
+  const chromeRows = headerRows + composerRows + footerRows + taskRows + paletteRows + inspectorRows + activityRows + teamSummaryRows;
+  const availableTimelineRows = Math.max(0, terminalHeight - chromeRows);
+  const mainTimeline = timeline.filter((item) => item.kind !== 'agent' && item.kind !== 'agent-message');
+  const timelineContentRows = mainTimeline.reduce((rows, item) => rows + estimateTimelineItemRows(item, {
     width: contentWidth,
     rows: availableTimelineRows,
     compact: compactUi,
@@ -2096,13 +2099,8 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const timelineRows = teamWorkbenchOpen
     ? availableTimelineRows
     : Math.min(availableTimelineRows, timelineContentRows);
-  const showTeamCockpit = config.agents?.cockpit !== false && contentWidth >= 100 &&
-    timelineRows >= 7 && teamItems.some((item) => item.kind === 'agent');
-  const cockpitWidth = showTeamCockpit ? Math.min(38, Math.max(30, Math.floor(contentWidth * 0.32))) : 0;
-  const hasSidePanel = showTeamCockpit;
-  const timelineWidth = Math.max(1, contentWidth - cockpitWidth - (hasSidePanel ? 1 : 0));
-  const visibleTimeline = fitTimelineToRows(timeline, {
-    width: timelineWidth,
+  const visibleTimeline = fitTimelineToRows(mainTimeline, {
+    width: contentWidth,
     rows: timelineRows,
     compact: compactUi,
     showToolOutput,
@@ -2129,9 +2127,9 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         width={contentWidth + horizontalPadding * 2}
         overflowY="hidden"
       >
-        {showHeader ? <Header config={config} askMode={interactionMode !== 'build'} planMode={interactionMode === 'plan'} width={contentWidth} glyphMode={glyphMode} expanded={expandedHeader} /> : null}
+        {showHeader ? <Header config={config} askMode={interactionMode !== 'build'} planMode={interactionMode === 'plan'} width={contentWidth} glyphMode={glyphMode} /> : null}
         {timelineRows > 0 ? (
-          <Box flexDirection="row" height={timelineRows} overflowY="hidden">
+          <Box flexDirection="column" height={timelineRows} overflowY="hidden">
             {teamWorkbenchOpen ? (
               <TeamWorkbench
                 items={teamItems}
@@ -2144,26 +2142,22 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
                 {...(teamWorkbenchNotice ? {notice: teamWorkbenchNotice} : {})}
                 {...(teamRun ? {run: teamRun} : {})}
               />
-            ) : <>
-              <Box flexDirection="column" width={timelineWidth} overflowY="hidden">
+            ) : (
+              <Box flexDirection="column" width={contentWidth} overflowY="hidden">
                 <Timeline
                   items={visibleTimeline}
-                  width={timelineWidth}
+                  width={contentWidth}
                   glyphMode={glyphMode}
                   showToolOutput={showToolOutput}
                   {...(expandedToolId ? {expandedToolId} : {})}
                   compact={compactUi}
                 />
               </Box>
-              {showTeamCockpit ? (
-                <Box marginLeft={1}>
-                  <TeamCockpit items={teamItems} width={cockpitWidth} glyphMode={glyphMode} />
-                </Box>
-              ) : null}
-            </>}
+            )}
           </Box>
         ) : null}
         {showTaskRail ? <TaskRail tasks={tasks} width={contentWidth} glyphMode={glyphMode} maxItems={taskLimit} /> : null}
+        {showTeamSummary ? <TeamSummary items={teamItems} width={contentWidth} glyphMode={glyphMode} /> : null}
         {renderContextInspector ? (
           <ContextInspector
             status={contextInspectorStatus(contextStatus)}
@@ -2207,6 +2201,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
             {...(visibleQueuePreview ? {queuePreview: visibleQueuePreview} : {})}
             attachments={visibleAttachments}
             glyphMode={glyphMode}
+            showRule={!terminalAccessibility.screenReader}
           >
             <ComposerInput
               value={input}
@@ -2233,9 +2228,13 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
             contextPressure={contextStatus.pressure}
             themeName={theme.name}
             queueCount={queue.length}
-            activeAgents={activeAgents}
+            activeAgents={showTeamSummary ? 0 : activeAgents}
             frame={frame}
             glyphMode={glyphMode}
+            mode={interactionMode.toUpperCase()}
+            route={config.activeConnection && config.activeConnection.source !== 'legacy'
+              ? `@${config.activeConnection.id}/${config.model.model}`
+              : `${config.model.provider}/${config.model.model}`}
           />
         ) : null}
       </Box>

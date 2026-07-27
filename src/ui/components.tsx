@@ -187,7 +187,7 @@ export function resolveGlyphs(mode: GlyphMode = 'auto'): UiGlyphs {
   return mode === 'ascii' || (mode === 'auto' && forceAscii) ? asciiGlyphs : unicodeGlyphs;
 }
 
-export function Header({config, askMode, planMode = false, width = 80, glyphMode = 'auto', expanded = false}: {
+export function Header({config, askMode, planMode = false, width = 80, glyphMode = 'auto'}: {
   config: MosaicConfig;
   askMode: boolean;
   planMode?: boolean;
@@ -203,49 +203,19 @@ export function Header({config, askMode, planMode = false, width = 80, glyphMode
   // Each mode gets a semantic hue: BUILD is "go" (mutations live), PLAN is the
   // amber "thinking" state, ASK is a calm read-only muted tone.
   const modeColor = planMode ? theme.warning : askMode ? theme.muted : theme.accent;
-  const ascii = glyphs.borderStyle === 'classic';
-  const inlineMark = ascii ? '__\\o>' : '__\\●▶';
-  const brand = `${inlineMark} ${PRODUCT_NAME.toUpperCase()}`;
-  const modeLabel = `${glyphs.activity} ${mode}`;
+  const brand = PRODUCT_NAME.toUpperCase();
+  const modeLabel = mode;
   const separator = ` ${glyphs.separator} `;
-  const model = sanitizeInlineTerminalText(`${config.activeConnection && config.activeConnection.source !== 'legacy' ? `@${config.activeConnection.id} ` : ''}${config.model.provider}/${config.model.model}`);
+  const model = sanitizeInlineTerminalText(config.activeConnection && config.activeConnection.source !== 'legacy'
+    ? `@${config.activeConnection.id}/${config.model.model}`
+    : `${config.model.provider}/${config.model.model}`);
   const repository = sanitizeInlineTerminalText(basename(root) || root);
-  const minimum = `${brand} ${modeLabel}`;
-  const withRepository = `${brand}${separator}${repository}${separator}${modeLabel}`;
+  const minimum = `${brand}${separator}${modeLabel}`;
+  const withRepository = `${brand}${separator}${repository}`;
   const showRepository = terminalWidth >= 32 && displayWidth(withRepository) <= terminalWidth;
   const leftWidth = displayWidth(showRepository ? withRepository : minimum);
   const modelSpace = terminalWidth - leftWidth - 2;
   const showModel = terminalWidth >= 72 && modelSpace >= 12;
-
-  if (expanded && terminalWidth >= 96) {
-    const artWidth = 20;
-    const detailWidth = Math.max(1, terminalWidth - artWidth - 3);
-    const connection = config.activeConnection && config.activeConnection.source !== 'legacy'
-      ? `@${sanitizeInlineTerminalText(config.activeConnection.id)}`
-      : sanitizeInlineTerminalText(config.model.provider);
-    const route = `${connection}${separator}${sanitizeInlineTerminalText(config.model.model)}`;
-    return (
-      <Box marginBottom={1} height={3} overflowY="hidden">
-        <Box width={artWidth} flexDirection="column" aria-label="Skein Goose">
-          {ascii ? <>
-            <Text bold color={theme.textStrong}> {'________     __'}</Text>
-            <Text color={theme.textStrong}>{'/ __     \\___/ o>'}</Text>
-            <Text color={theme.accent}>{'\\_/ \\__________/'}</Text>
-          </> : <>
-            <Text bold color={theme.textStrong}>{'╭────────╮    ╭─╮'}</Text>
-            <Box><Text bold color={theme.accent}>{'╰━━╮'}</Text><Text color={theme.textStrong}>{'     ╰────╯●╰▶'}</Text></Box>
-            <Text color={theme.textStrong}>{'   ╰────────────╯'}</Text>
-          </>}
-        </Box>
-        <Box width={3} />
-        <Box width={detailWidth} flexDirection="column">
-          <Text bold color={theme.accent}>{truncateDisplay(`${PRODUCT_NAME.toUpperCase()}  ${separator} ${modeLabel}`, detailWidth)}</Text>
-          <Text color={theme.muted}>{truncateDisplay(`${repository}${separator}${route}`, detailWidth)}</Text>
-          <Text color={theme.dim}>{truncateDisplay(`grounded coding workspace${separator}context in formation`, detailWidth)}</Text>
-        </Box>
-      </Box>
-    );
-  }
 
   return (
     <Box marginBottom={1} height={1} overflowY="hidden">
@@ -253,10 +223,9 @@ export function Header({config, askMode, planMode = false, width = 80, glyphMode
       {showRepository ? <>
         <Text color={theme.border}>{separator}</Text>
         <Text color={theme.muted}>{repository}</Text>
-        <Text color={theme.border}>{separator}</Text>
       </> : <Text> </Text>}
+      {showModel ? <><Box flexGrow={1} /><Text color={theme.dim} wrap="truncate">{truncateDisplay(model, Math.max(1, modelSpace - displayWidth(modeLabel) - displayWidth(separator)))}</Text><Text color={theme.border}>{separator}</Text></> : showRepository ? <Text color={theme.border}>{separator}</Text> : null}
       <Text bold color={modeColor}>{modeLabel}</Text>
-      {showModel ? <><Box flexGrow={1} /><Text color={theme.dim} wrap="truncate">{truncateDisplay(model, modelSpace)}</Text></> : null}
     </Box>
   );
 }
@@ -522,59 +491,37 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
   );
 }
 
-export function TeamCockpit({items, width = 36, glyphMode = 'auto'}: {
+export function TeamSummary({items, width = 36, glyphMode = 'auto'}: {
   items: TimelineItem[];
   width?: number;
   glyphMode?: GlyphMode;
 }) {
   const theme = useTheme();
   const glyphs = resolveGlyphs(glyphMode);
-  const agents = items.filter((item): item is Extract<TimelineItem, {kind: 'agent'}> => item.kind === 'agent' && !item.superseded).slice(-3);
-  const messages = items.filter((item): item is Extract<TimelineItem, {kind: 'agent-message'}> => item.kind === 'agent-message').slice(-2);
-  const inner = Math.max(8, safeWidth(width) - 4);
+  const agents = items.filter((item): item is Extract<TimelineItem, {kind: 'agent'}> => item.kind === 'agent' && !item.superseded);
+  const active = agents.filter((agent) => agent.state === 'queued' || agent.state === 'running');
+  if (!active.length) return null;
+  const rowWidth = safeWidth(width);
+  const padding = rowWidth >= 24 ? 2 : 0;
+  const inner = Math.max(1, rowWidth - padding);
+  const running = active.filter((agent) => agent.state === 'running').length;
+  const queued = active.length - running;
+  const reviewing = active.filter((agent) => agent.phase === 'review').length;
+  const summary = [
+    `${glyphs.agent} ${active.length} agent${active.length === 1 ? '' : 's'}`,
+    running ? `${running} running` : '',
+    queued ? `${queued} queued` : '',
+    reviewing ? `${reviewing} review` : '',
+    rowWidth >= 48 ? 'ctrl+t details' : '',
+  ].filter(Boolean).join(` ${glyphs.separator} `);
+  const profiles = active.map((agent) => {
+    const state = agent.state === 'running' ? glyphs.running : glyphs.pending;
+    return `${state} ${sanitizeInlineTerminalText(agent.profile)}`;
+  }).join(`  ${glyphs.separator}  `);
   return (
-    <Box flexDirection="column" width={width} borderStyle={glyphs.borderStyle} borderColor={theme.border} paddingX={1}>
-      <Text bold color={theme.accent}>{truncateDisplay(`${glyphs.agent} TEAM COCKPIT`, inner)}</Text>
-      {agents.map((agent) => {
-        const status = agent.state === 'queued' ? glyphs.pending : agent.state === 'running' ? glyphs.running : agent.state === 'ok' ? glyphs.success : agent.state === 'cancelled' ? glyphs.warning : glyphs.error;
-        const route = agent.provider && agent.model ? `${agent.provider}/${agent.model}` : 'inherited model';
-        const activity = agent.state === 'cancelled' && agent.cancelReason
-          ? agent.cancelReason
-          : agent.activeTool
-            ? `${agent.stage ?? 'tool'}: ${agent.activeTool}`
-            : agent.activityDetail
-              ? `${agent.stage ?? 'working'}: ${agent.activityDetail}`
-              : agent.stage ?? 'queued';
-        const telemetry = [
-          agent.startedAt !== undefined || agent.durationMs !== undefined
-            ? formatDuration(agent.durationMs ?? Math.max(0, Date.now() - (agent.startedAt ?? Date.now())))
-            : '',
-          agent.inputTokens !== undefined || agent.outputTokens !== undefined
-            ? `${formatTokens((agent.inputTokens ?? 0) + (agent.outputTokens ?? 0))} tok`
-            : '',
-          agent.toolCalls !== undefined ? `${agent.toolCalls} tools` : '',
-          agent.cost?.status === 'priced'
-            ? `$${(agent.cost.amountMicros / 1_000_000).toFixed(6)}`
-            : agent.cost ? 'unpriced' : '',
-          agent.hostedToolCalls !== undefined ? `${agent.hostedToolCalls} hosted` : '',
-          agent.sourceCount !== undefined ? `${agent.sourceCount} sources` : '',
-        ].filter(Boolean).join(` ${glyphs.separator} `);
-        return (
-          <Box key={agent.id} flexDirection="column">
-            <Text color={agent.state === 'error' ? theme.error : agent.state === 'cancelled' ? theme.muted : agent.state === 'running' ? theme.accent : theme.text}>
-              {truncateDisplay(`${status} ${agent.profile}${agent.phase && agent.phase !== 'work' ? ` ${glyphs.separator} ${agent.phase}` : ''}`, inner)}
-            </Text>
-            <Text color={theme.dim}>{truncateDisplay(route, inner)}</Text>
-            <Text color={theme.muted}>{truncateDisplay(activity, inner)}</Text>
-            {telemetry ? <Text color={theme.dim}>{truncateDisplay(telemetry, inner)}</Text> : null}
-            {agent.alerts?.at(-1) ? <Text color={theme.warning}>{truncateDisplay(`${glyphs.warning} ${agent.alerts.at(-1)}`, inner)}</Text> : null}
-          </Box>
-        );
-      })}
-      {messages.length ? <Text color={theme.border}>{truncateDisplay('peer messages', inner)}</Text> : null}
-      {messages.map((message) => (
-        <Text key={message.id} color={theme.muted}>{truncateDisplay(`${message.from}${glyphs.arrow}${message.to}: ${message.text}`, inner)}</Text>
-      ))}
+    <Box flexDirection="column" width={rowWidth} paddingLeft={padding} marginBottom={1} aria-label={`Active team agents: ${summary}${rowWidth >= 64 ? `. ${profiles}` : ''}`}>
+      <Text color={theme.accent}>{truncateDisplay(summary, inner)}</Text>
+      {rowWidth >= 64 ? <Text color={theme.dim}>{truncateDisplay(profiles, inner)}</Text> : null}
     </Box>
   );
 }
@@ -927,7 +874,7 @@ function permissionRisk(category: ToolCategory): string {
   return 'data may leave this machine or remote state may change';
 }
 
-export function PromptBar({busy, value, placeholder, width = 80, mode = 'chat', queueCount = 0, queuePreview, attachments = [], glyphMode = 'auto', children}: {
+export function PromptBar({busy, value, placeholder, width = 80, mode = 'chat', queueCount = 0, queuePreview, attachments = [], glyphMode = 'auto', showRule = true, children}: {
   busy: boolean;
   value: string;
   placeholder: string;
@@ -937,6 +884,7 @@ export function PromptBar({busy, value, placeholder, width = 80, mode = 'chat', 
   queuePreview?: string;
   attachments?: string[];
   glyphMode?: GlyphMode;
+  showRule?: boolean;
   children: React.ReactNode;
 }) {
   const theme = useTheme();
@@ -964,7 +912,7 @@ export function PromptBar({busy, value, placeholder, width = 80, mode = 'chat', 
   const queuePreviewWidth = Math.max(1, innerWidth - displayWidth(queueLabel) - 1);
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text color={borderColor}>{ruleLine(width, glyphs, shell ? 'shell' : busy ? 'follow-up' : 'request')}</Text>
+      {showRule ? <Text color={borderColor}>{ruleLine(width, glyphs)}</Text> : null}
       {attachments.length ? (
         <Box paddingLeft={2}>
           <Text color={theme.accent}>{glyphs.context} </Text>
@@ -988,12 +936,9 @@ export function PromptBar({busy, value, placeholder, width = 80, mode = 'chat', 
   );
 }
 
-function ruleLine(width: number, glyphs: UiGlyphs, label: string): string {
+function ruleLine(width: number, glyphs: UiGlyphs): string {
   const character = glyphs.borderStyle === 'classic' ? '-' : '─';
-  const prefix = glyphs.borderStyle === 'classic' ? `-- ${label} ` : `─ ${label} `;
-  const safeWidth = Math.max(1, width);
-  if (safeWidth <= displayWidth(prefix) + 2) return character.repeat(safeWidth);
-  return `${prefix}${character.repeat(safeWidth - displayWidth(prefix))}`;
+  return character.repeat(Math.max(1, width));
 }
 
 interface InlinePart {
@@ -1046,7 +991,7 @@ function InlineRow({parts, width, separator, separatorColor}: {
   );
 }
 
-export function Footer({busy, approval = false, tokens, maxTokens, changedFiles, width = 80, contextPressure, themeName, queueCount = 0, activeAgents = 0, frame, glyphMode = 'auto'}: {
+export function Footer({busy, approval = false, changedFiles, width = 80, contextPressure, queueCount = 0, activeAgents = 0, frame, glyphMode = 'auto', mode = 'BUILD', route}: {
   busy: boolean;
   approval?: boolean;
   tokens: number;
@@ -1059,62 +1004,32 @@ export function Footer({busy, approval = false, tokens, maxTokens, changedFiles,
   activeAgents?: number;
   frame?: string;
   glyphMode?: GlyphMode;
+  mode?: string;
+  route?: string;
 }) {
   const theme = useTheme();
   const glyphs = resolveGlyphs(glyphMode);
-  const pressure = contextPressure ?? (maxTokens ? tokens / maxTokens : 0);
-  const pressureColor = pressure >= 0.9 ? theme.error : pressure >= 0.75 ? theme.warning : theme.muted;
   const rowWidth = safeWidth(width);
   const safeFrame = sanitizeInlineTerminalText(frame ?? '');
   const status = approval
     ? `${glyphs.warning} approval required`
     : `${busy ? (safeFrame || glyphs.running) : glyphs.activity} ${busy ? 'working' : 'ready'}`;
-  const context = `ctx ${formatPercent(pressure)}`;
-  const tokenCount = `${formatTokens(tokens)} tokens`;
   const changed = `${changedFiles} changed`;
-  const queued = queueCount ? `q${queueCount}` : '';
-  const agents = activeAgents ? `${glyphs.agent}${activeAgents}` : '';
   const statusPart: InlinePart = {text: status, color: approval ? theme.warning : busy ? theme.accent : theme.success};
-  const contextPart: InlinePart = {text: context, color: pressureColor};
-  const changedPart: InlinePart = {text: changed, color: changedFiles ? theme.text : theme.dim};
-  const queuePart: InlinePart | undefined = queued ? {text: queued, color: theme.muted} : undefined;
-  const agentPart: InlinePart | undefined = agents ? {text: agents, color: theme.accent} : undefined;
-
-  if (rowWidth < 48) {
-    const firstLine = inlinePartsWidth([statusPart, contextPart], ` ${glyphs.separator} `) <= rowWidth
-      ? [statusPart, contextPart]
-      : [statusPart];
-    const secondLine = [firstLine.length === 1 ? contextPart : undefined, changedPart, agentPart, queuePart]
-      .filter((part): part is InlinePart => part !== undefined);
-    return (
-      <Box flexDirection="column">
-        <InlineRow parts={firstLine} width={rowWidth} separator={` ${glyphs.separator} `} separatorColor={theme.border} />
-        <InlineRow parts={secondLine} width={rowWidth} separator={` ${glyphs.separator} `} separatorColor={theme.border} />
-      </Box>
-    );
-  }
-
+  const pressurePart: InlinePart | undefined = contextPressure !== undefined && contextPressure >= 0.75 && rowWidth >= 40
+    ? {text: `ctx ${formatPercent(contextPressure)}`, color: contextPressure >= 0.9 ? theme.error : theme.warning}
+    : undefined;
   const mainParts: InlinePart[] = [
     statusPart,
-    contextPart,
-    ...(rowWidth >= 56 ? [{text: tokenCount, color: theme.muted, optional: true}] : []),
-    changedPart,
-    ...(agentPart ? [agentPart] : []),
-    ...(queuePart ? [queuePart] : []),
+    ...(pressurePart ? [pressurePart] : []),
+    ...(rowWidth >= 28 ? [{text: sanitizeInlineTerminalText(mode), color: theme.muted}] : []),
+    ...(rowWidth >= 64 && route ? [{text: sanitizeInlineTerminalText(route), color: theme.dim, optional: true}] : []),
+    ...(rowWidth >= 40 && changedFiles ? [{text: changed, color: theme.text, optional: true}] : []),
+    ...(activeAgents ? [{text: `${glyphs.agent}${activeAgents}`, color: theme.accent, optional: true}] : []),
+    ...(queueCount ? [{text: `q${queueCount}`, color: theme.muted, optional: true}] : []),
+    ...(rowWidth >= 72 ? [{text: '/help', color: theme.muted, optional: true}] : []),
   ];
-  const right = rowWidth >= 72 ? `${sanitizeInlineTerminalText(themeName ?? theme.name)} ${glyphs.separator} /help` : '';
-  const rightWidth = right ? displayWidth(right) + 2 : 0;
-  return (
-    <Box>
-      <InlineRow
-        parts={fitInlineParts(mainParts, Math.max(1, rowWidth - rightWidth), `  ${glyphs.separator}  `)}
-        width={Math.max(1, rowWidth - rightWidth)}
-        separator={`  ${glyphs.separator}  `}
-        separatorColor={theme.border}
-      />
-      {right ? <><Box flexGrow={1} /><Text color={theme.muted}>{right}</Text></> : null}
-    </Box>
-  );
+  return <InlineRow parts={mainParts} width={rowWidth} separator={`  ${glyphs.separator}  `} separatorColor={theme.border} />;
 }
 
 export function CommandHints({input, selectedIndex = 0}: {input: string; selectedIndex?: number}) {
@@ -1458,22 +1373,19 @@ function Banner({engine, status, version, width, glyphs, files}: {
   const innerWidth = Math.max(1, rowWidth - padding);
   const safeEngine = sanitizeInlineTerminalText(engine);
   const glyph = status === 'ready' ? glyphs.success : glyphs.warning;
-  const label = status === 'ready'
-    ? 'Workspace ready'
-    : status === 'empty'
-      ? 'Empty workspace'
-      : 'Setup required';
+  const label = status === 'ready' ? 'Workspace ready' : status === 'empty' ? 'Empty workspace' : 'Setup required';
   const color = status === 'ready' ? theme.success : theme.warning;
   const indexed = files !== undefined && files > 0 && rowWidth >= 64
-    ? `${glyphs.separator} ${files.toLocaleString('en-US')} files `
+    ? `${glyphs.separator} ${files.toLocaleString('en-US')} files`
     : '';
   const detail = rowWidth >= 48
-    ? `${label} ${glyphs.separator} ${safeEngine} context ${indexed}${glyphs.separator} v${version}`
+    ? `${status === 'ready' ? `${safeEngine} context${indexed}` : status === 'empty' ? 'empty workspace' : 'setup required'} ${glyphs.separator} v${version}`
     : rowWidth >= 28
-      ? `${label} ${glyphs.separator} v${version}`
-      : `${status === 'ready' ? 'Ready' : status === 'empty' ? 'Empty' : 'Setup'} ${glyphs.separator} v${version}`;
+      ? `${status === 'ready' ? 'local context' : status === 'empty' ? 'empty workspace' : 'setup required'} ${glyphs.separator} v${version}`
+      : `${status === 'ready' ? 'ready' : status === 'empty' ? 'empty' : 'setup'} ${glyphs.separator} v${version}`;
+  const spokenDetail = `${label}.${status === 'ready' ? ` ${safeEngine} context.${files !== undefined && files > 0 ? ` ${files.toLocaleString('en-US')} files.` : ''}` : ''} Version v${version}.`;
   return (
-    <Box marginBottom={1} paddingLeft={padding} flexDirection="column">
+    <Box marginBottom={1} paddingLeft={padding} flexDirection="column" aria-label={spokenDetail}>
       <Box height={1} overflowY="hidden">
         <Text bold color={color}>{glyph} </Text>
         <Text color={status === 'ready' ? theme.text : theme.warning}>{truncateDisplay(detail, Math.max(1, innerWidth - 2))}</Text>
