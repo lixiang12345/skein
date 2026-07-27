@@ -1,0 +1,8 @@
+{
+  "name": "skein-live-route-eval-seed",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test checks/core.mjs"
+  }
+}
