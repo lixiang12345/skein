@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.54",
+  "version": "0.3.55",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -24,6 +24,11 @@
   },
   "skein": {
     "releaseNotes": [
+      "Interactive sessions now use a recognizable responsive Skein Goose lockup, keep prior-session prose and verbose context receipts out of the resting frame, cap ultra-wide reading width, and collapse safely across narrow, ASCII, dumb-terminal, and screen-reader profiles",
+      "Configured Claude external-agent routes now pass their exact relay endpoint, credential reference, authentication placement, and safe custom headers to the isolated child, while agents list remains usable as a credential-free inspection command",
+      "Named connections now separate provider identity from OpenAI Responses, OpenAI Chat, Anthropic Messages, or Gemini wire protocols, support Bearer, x-api-key, custom-header, command, and explicit no-auth credentials, and keep model-catalog discovery distinct from inference",
+      "Shell completion for bash, zsh, and fish is generated from the live Commander graph so new subcommands and options cannot silently drift out of the completion surface",
+      "A versioned strong-provider comparison corpus records deterministic capability, orchestration, security, context, and UX scenarios for GPT and Claude relay evaluation without turning model self-report into completion evidence",
       "Markdown files under .agents/commands become workspace slash commands with $ARGUMENTS substitution and unshadowable built-ins, Esc/Ctrl+C cleared drafts return via ArrowUp history, and an idle Ctrl+C now asks for a second press before exiting",
       "The bilingual Fable 5 rewrite is now the deployed website: GitHub Pages serves website-fable-5, the old intro.html URL redirects to the guide, and the rewrite's verification joins npm run check",
       "A ground-up bilingual EN/zh-CN website rewrite ships under website-fable-5/ with pre-paint language selection, enforced string parity, truthful-claims guards, and its own verification script",
