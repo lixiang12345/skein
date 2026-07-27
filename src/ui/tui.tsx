@@ -80,6 +80,7 @@ import {
   firstLine,
   nextId,
   cancelAgent,
+  startAgent,
   updateAgent,
   updateAgentQueued,
   updateAgentTelemetry,
@@ -499,21 +500,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         setTimeline((items) => cancelAgent(items, event));
         break;
       case 'agent_start':
-        setTimeline((items) => [
-          ...items.map((item) => item.kind === 'agent' && item.id === event.retryOf ? {...item, superseded: true} : item),
-          {
-            id: event.id,
-            kind: 'agent' as const,
-            profile: event.profile,
-            task: event.task,
-            state: 'running' as const,
-            startedAt: Date.now(),
-            ...(event.provider ? {provider: event.provider} : {}),
-            ...(event.model ? {model: event.model} : {}),
-            ...(event.phase ? {phase: event.phase} : {}),
-            ...(event.retryOf ? {retryOf: event.retryOf} : {}),
-          },
-        ].slice(-500));
+        setTimeline((items) => startAgent(items, event));
         setTeamWorkbenchIndex(0);
         break;
       case 'agent_message':

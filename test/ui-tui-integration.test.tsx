@@ -616,6 +616,7 @@ describe('SkeinApp completion flows', () => {
       run: async (_input, options) => {
         const cost = routeCostReceipt({inputTokens: 120, outputTokens: 40, source: 'actual'});
         options?.onEvent?.({type: 'team_start', id: 'run-1', objective: 'Review the delivery'});
+        options?.onEvent?.({type: 'agent_queued', id: 'agent-1', profile: 'architect', task: 'Inspect boundaries', phase: 'work'});
         options?.onEvent?.({type: 'agent_start', id: 'agent-1', profile: 'architect', provider: 'anthropic', model: 'claude', task: 'Inspect boundaries', phase: 'work'});
         options?.onEvent?.({type: 'agent_update', id: 'agent-1', profile: 'architect', stage: 'response', detail: 'provider search 1 call; 2 sources', inputTokens: 120, outputTokens: 40, cost, hostedToolCalls: 1, sourceCount: 2});
         options?.onEvent?.({type: 'agent_done', id: 'agent-1', profile: 'architect', ok: true, summary: 'Boundary report ready.', provider: 'anthropic', model: 'claude', phase: 'work', durationMs: 12, usage: {inputTokens: 120, outputTokens: 40}, cost, hostedToolCalls: 1, sourceCount: 2, toolCalls: 2});
@@ -636,6 +637,8 @@ describe('SkeinApp completion flows', () => {
       await vi.waitFor(() => expect(harness.output()).toContain('TEAM WORKBENCH'));
       await vi.waitFor(() => expect(harness.output()).toContain('unpriced'));
       await vi.waitFor(() => expect(harness.output()).toContain('2 sources'));
+      expect(harness.errors()).not.toContain('Encountered two children with the same key');
+      expect(harness.lastFrame().match(/architect/gu)).toHaveLength(1);
       harness.stdin.write('\u001B[C');
       await vi.waitFor(() => expect(harness.output()).toContain('[tasks]'));
       harness.stdin.write('\r');
@@ -892,6 +895,7 @@ async function mountApp(
   stdin: MockInput;
   instance: Instance;
   output(): string;
+  errors(): string;
   lastFrame(): string;
   cleanup(): Promise<void>;
 }> {
@@ -923,6 +927,7 @@ async function mountApp(
     stdin,
     instance,
     output: () => stdout.captured,
+    errors: () => stderr.captured,
     lastFrame: () => lastSynchronizedFrame(stdout.captured),
     async cleanup() {
       instance.unmount();

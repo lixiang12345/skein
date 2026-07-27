@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest';
-import {toolMetaSummary, updateContractProgress} from '../src/ui/timeline-reducers.js';
+import {startAgent, toolMetaSummary, updateAgentQueued, updateContractProgress} from '../src/ui/timeline-reducers.js';
 import type {TaskContract} from '../src/types.js';
 import type {TimelineItem} from '../src/ui/components.js';
 
@@ -29,6 +29,48 @@ describe('timeline reducers', () => {
     }]);
     expect(updateContractProgress(blocked, contract('satisfied', ['satisfied', 'satisfied'])))
       .toEqual(initial);
+  });
+
+  it('upserts a queued agent when it starts instead of duplicating its React key', () => {
+    const id = 'fdf2703f-f72c-489f-b60d-9ed8cdb997f4';
+    const queued = updateAgentQueued([], {
+      type: 'agent_queued', id, profile: 'tester', task: 'Verify the answer', phase: 'work',
+    });
+    const running = startAgent(queued, {
+      type: 'agent_start', id, profile: 'tester', task: 'Verify the answer', phase: 'work',
+      provider: 'compatible', model: 'gpt-5.6-sol',
+    }, 1_234);
+
+    expect(running.filter((item) => item.kind === 'agent' && item.id === id)).toEqual([{
+      id,
+      kind: 'agent',
+      profile: 'tester',
+      task: 'Verify the answer',
+      phase: 'work',
+      provider: 'compatible',
+      model: 'gpt-5.6-sol',
+      state: 'running',
+      startedAt: 1_234,
+    }]);
+    expect(new Set(running.map((item) => item.id)).size).toBe(running.length);
+  });
+
+  it('supersedes only the previous attempt when a queued retry starts', () => {
+    const previous: TimelineItem = {
+      id: 'attempt-1', kind: 'agent', profile: 'tester', task: 'Verify', state: 'error',
+    };
+    const queued = updateAgentQueued([previous], {
+      type: 'agent_queued', id: 'attempt-2', profile: 'tester', task: 'Verify', phase: 'review',
+    });
+    const running = startAgent(queued, {
+      type: 'agent_start', id: 'attempt-2', profile: 'tester', task: 'Verify', phase: 'review',
+      retryOf: 'attempt-1', provider: 'compatible', model: 'gpt-5.6-sol',
+    }, 2_345);
+
+    expect(running.filter((item) => item.kind === 'agent' && item.id === 'attempt-1'))
+      .toMatchObject([{state: 'error', superseded: true}]);
+    expect(running.filter((item) => item.kind === 'agent' && item.id === 'attempt-2'))
+      .toMatchObject([{state: 'running', retryOf: 'attempt-1', startedAt: 2_345}]);
   });
 });
 

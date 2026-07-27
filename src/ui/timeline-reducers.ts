@@ -196,6 +196,39 @@ export function updateAgentQueued(items: TimelineItem[], event: Extract<AgentEve
 }
 
 /**
+ * Promote a queued agent to running without leaving two rows with the same id.
+ * Scheduler events intentionally reuse the attempt id across queued/start/done;
+ * React keys and cockpit identity therefore depend on this being an upsert.
+ */
+export function startAgent(
+  items: TimelineItem[],
+  event: Extract<AgentEvent, {type: 'agent_start'}>,
+  startedAt = Date.now(),
+): TimelineItem[] {
+  const existing = items.findLast((item): item is Extract<TimelineItem, {kind: 'agent'}> =>
+    item.kind === 'agent' && item.id === event.id);
+  const withoutAttempt = items
+    .filter((item) => item.kind !== 'agent' || item.id !== event.id)
+    .map((item) => item.kind === 'agent' && item.id === event.retryOf && item.id !== event.id
+      ? {...item, superseded: true}
+      : item);
+  const running: Extract<TimelineItem, {kind: 'agent'}> = {
+    ...existing,
+    id: event.id,
+    kind: 'agent',
+    profile: event.profile,
+    task: event.task,
+    state: 'running',
+    startedAt,
+    ...(event.provider ? {provider: event.provider} : {}),
+    ...(event.model ? {model: event.model} : {}),
+    ...(event.phase ? {phase: event.phase} : {}),
+    ...(event.retryOf ? {retryOf: event.retryOf} : {}),
+  };
+  return [...withoutAttempt, running].slice(-500);
+}
+
+/**
  * Mark a queued or running agent as cancelled — the scheduler cleared it after
  * a parent cancellation or an upstream timeout — and record why.
  */
