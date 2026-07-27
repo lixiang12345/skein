@@ -23,7 +23,7 @@ function renderBanner(width: number, extras: Record<string, unknown> = {}): stri
 describe('fresh-session banner', () => {
   it('shows real index size on wide terminals only', () => {
     const wide = renderBanner(80, {files: 279});
-    expect(wide).toContain('279 files');
+    expect(wide).toContain('local context · 279 files');
     const narrow = renderBanner(48, {files: 279});
     expect(narrow).not.toContain('279 files');
   });

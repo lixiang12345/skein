@@ -1376,7 +1376,7 @@ function Banner({engine, status, version, width, glyphs, files}: {
   const label = status === 'ready' ? 'Workspace ready' : status === 'empty' ? 'Empty workspace' : 'Setup required';
   const color = status === 'ready' ? theme.success : theme.warning;
   const indexed = files !== undefined && files > 0 && rowWidth >= 64
-    ? `${glyphs.separator} ${files.toLocaleString('en-US')} files`
+    ? ` ${glyphs.separator} ${files.toLocaleString('en-US')} files`
     : '';
   const detail = rowWidth >= 48
     ? `${status === 'ready' ? `${safeEngine} context${indexed}` : status === 'empty' ? 'empty workspace' : 'setup required'} ${glyphs.separator} v${version}`
