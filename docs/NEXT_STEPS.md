@@ -9,7 +9,7 @@ one of the milestones below.
 
 - Product name: `Skein`; primary executable: `skein`.
 - Compatibility executables: `mosaic` and `mosaic-code`.
-- Current repository version: `0.3.59`.
+- Current repository version: `0.3.60`.
 - Runtime requirement: Node.js `>=22.16.0` (the runtime uses unflagged
   `node:sqlite` with FTS5, and current CLI/build dependencies require this
   Node 22 baseline).
@@ -24,7 +24,8 @@ one of the milestones below.
   composer-first single-column flow; detailed runtime state is available through
   `/status`, while active team work collapses into a short summary above the
   composer and full details remain in the Team Workbench. All sizes support prompt
-  history, `@file` completion, command completion, multiline editing, queued
+  history, full transcript paging plus mouse-wheel/trackpad scroll, `@file`
+  completion, command completion, multiline editing, queued
   follow-ups, live context inspection, permission approval, themes, ASCII mode,
   `NO_COLOR`, `TERM=dumb`, screen-reader output, reduced motion, and
   narrow-height degradation.
@@ -44,8 +45,8 @@ npm audit --omit=dev
 npm run release:verify -- --output-dir artifacts/package
 ```
 
-The latest verified package is `skein-code-cli-0.3.59.tgz`. The verifier writes
-its SHA-256 to `artifacts/package/skein-code-cli-0.3.59.tgz.sha256`, and CI
+The latest verified package is `skein-code-cli-0.3.60.tgz`. The verifier writes
+its SHA-256 to `artifacts/package/skein-code-cli-0.3.60.tgz.sha256`, and CI
 retains the checksum beside the package metadata. The checksum is deliberately
 not copied into this packaged document because doing so would change the
 archive it describes.
@@ -497,7 +498,7 @@ must not load arbitrary plugin JavaScript in-process.
 
 ### Delivered: bounded long-session continuity and intent sufficiency
 
-- Durable sessions now separate a 250k-token context epoch from a 1m-token
+- Durable sessions now separate a 500k-token context epoch from a 1m-token
   lifetime ceiling. Epoch handoffs retain Contract, failure, changed-file, and
   verification receipts while preserving the complete transcript and session id.
 - The Context inspector and structured session summary expose epoch/lifetime

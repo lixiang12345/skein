@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.59",
+  "version": "0.3.60",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -24,6 +24,9 @@
   },
   "skein": {
     "releaseNotes": [
+      "Context pressure now measures the latest actual or estimated packed prompt against a dedicated model context window, defaults every unspecified route to 500k without confusing retrieval or lifetime budgets, and exposes prompt, persisted transcript, tool, epoch, and lifetime ledgers separately",
+      "The transcript is now fully reachable after resume and during long responses through row-virtualized PageUp/PageDown, Shift+Up/Down, Home/End, mouse-wheel, and trackpad navigation with stable streaming anchors and safe mouse-sequence suppression in the composer",
+      "Each user turn keeps only its four newest bulky tool results model-visible while replacing superseded output with structured evidence receipts, preventing one agentic question from repeatedly resending an unbounded tool transcript",
       "Graphite, Cinder, and Midnight terminal themes now use brighter, more saturated semantic colors with measured hierarchy and contrast guards for common elevated dark backgrounds, while Paper, Mono, NO_COLOR, ASCII, dumb-terminal, and screen-reader behavior stays stable",
       "Fresh-session local-context metadata now preserves visible spacing around its separator, with an exact banner regression guarding the published terminal frame",
       "Interactive sessions now keep a composer-first single-column workspace: permanent Goose art, marketing copy, labelled composer rules, multi-line telemetry, and the wide Team Cockpit are replaced by a quiet one-row identity, one-row footer, and a collapsible active-agent summary with accessible responsive fallbacks",
@@ -131,7 +134,7 @@
       "Read-only review commands pin working-tree, commit, or branch scope and inject a content-free redacted evidence bundle without storing it in the user transcript",
       "JSON and JSONL terminal records now follow the published headless v1 schema with stable completed, verification, input, blocked, cancellation, turn, token, and error exit codes",
       "Short terminal viewports clip long lists without overflow and pending clarifications cannot be consumed by recovery commands",
-      "Durable sessions now separate a 250k-token context epoch from a 1m-token lifetime ceiling without changing the session id or deleting transcript history",
+      "Durable sessions now separate a 500k-token context epoch from a 1m-token lifetime ceiling without changing the session id or deleting transcript history",
       "Content-free epoch handoffs preserve Task Contract criteria, unresolved failure circuits, changed files, and verification receipts across long runs",
       "Intent Sufficiency routes clear requests to execution, repository-inferable gaps to inspection, and genuine product choices to one persisted clarification",
       "TUI and headless output expose epoch, lifetime, and needs-input state; queued follow-ups pause and resume after keyboard clarification instead of becoming accidental answers",
