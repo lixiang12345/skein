@@ -13,6 +13,17 @@ export interface TerminalAccessibilityConfig {
   incrementalRendering: boolean;
 }
 
+export type TerminalMouseInput = 'wheel-up' | 'wheel-down' | 'other';
+
+/** Parse SGR mouse reports after Ink has removed their leading Escape byte. */
+export function parseTerminalMouseInput(value: string): TerminalMouseInput | undefined {
+  const match = value.match(/^\[<(\d+);\d+;\d+[Mm]$/u);
+  if (!match?.[1]) return undefined;
+  const button = Number(match[1]);
+  if (!Number.isInteger(button) || (button & 64) === 0) return 'other';
+  return (button & 1) === 0 ? 'wheel-up' : 'wheel-down';
+}
+
 /** Resolve deterministic low-capability and assistive terminal behavior. */
 export function resolveTerminalAccessibility(
   environment: TerminalEnvironment = process.env,

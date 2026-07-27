@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import {Box, render, Text, useApp, useInput, useStdin, useWindowSize} from 'ink';
+import {Box, render, Text, useApp, useInput, useStdin, useStdout, useWindowSize} from 'ink';
 import {relative} from 'node:path';
 import type {AgentRunner} from '../agent/index.js';
 import {PLAN_MODE_INSTRUCTIONS} from '../agent/prompt.js';
@@ -62,12 +62,12 @@ import {
   type HistorySearchState,
 } from './history-search.js';
 import {displayWidth, sanitizeTerminalText, terminalEllipsis, truncateDisplay} from './text.js';
-import {resolveKittyKeyboardConfig, resolveTerminalAccessibility} from './terminal-capabilities.js';
+import {parseTerminalMouseInput, resolveKittyKeyboardConfig, resolveTerminalAccessibility} from './terminal-capabilities.js';
 import {nextTheme, reloadUserThemes, resolveThemeWithColor, ThemeProvider, themes} from './theme.js';
 import {editComposerDraft} from './external-editor.js';
 import {starterHint} from './starter-hints.js';
 import {buildPermissionPreview, permissionPreviewRows, type PermissionPreview} from './permission-preview.js';
-import {estimateTimelineItemRows, fitTimelineToRows} from './viewport.js';
+import {fitTimelineToRows, timelineTotalRows} from './viewport.js';
 import {
   buildRedactedReviewBundle,
   parseReviewScope,
@@ -142,6 +142,7 @@ export interface TuiOptions {
 export function SkeinApp({runner, config, extensions, initialPrompt, askMode = false, planMode = false, workspaceReadiness, resumeHint}: TuiOptions) {
   const {exit} = useApp();
   const {setRawMode} = useStdin();
+  const {stdout} = useStdout();
   const {columns, rows} = useWindowSize();
   const terminalWidth = Math.max(1, columns || 80);
   const terminalHeight = Math.max(1, rows || 24);
@@ -187,6 +188,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [showToolOutput, setShowToolOutput] = useState(false);
   const [expandedToolId, setExpandedToolId] = useState<string>();
+  const [timelineScrollOffsetRows, setTimelineScrollOffsetRows] = useState(0);
   const [showContextInspector, setShowContextInspector] = useState(false);
   const [teamWorkbenchOpen, setTeamWorkbenchOpen] = useState(false);
   const [teamWorkbenchView, setTeamWorkbenchView] = useState<TeamWorkbenchView>('agents');
@@ -209,6 +211,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const historyDraft = useRef('');
   const mentionRequest = useRef(0);
   const exitArmedAt = useRef(0);
+  const previousTimelineMetrics = useRef<{rows: number; width: number}>({rows: 0, width: contentWidth});
 
   const workflows = useMemo(() => extensions?.listWorkflows() ?? [], [extensions]);
   const [customCommands, setCustomCommands] = useState<CustomCommand[]>([]);
@@ -253,7 +256,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const selectedSuggestion = suggestions[selectedIndex] ?? suggestions[0];
 
   const append = useCallback((item: TimelineItem) => {
-    setTimeline((items) => [...items, item].slice(-500));
+    setTimeline((items) => [...items, item]);
   }, []);
 
   // A cleared draft is never lost: it joins prompt history so ArrowUp
@@ -368,6 +371,16 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     const timer = setInterval(() => setFrameIndex((value) => (value + 1) % spinnerFrames().length), 120);
     return () => clearInterval(timer);
   }, [busy, terminalAccessibility.reducedMotion]);
+
+  useEffect(() => {
+    if (!stdout.isTTY || terminalAccessibility.screenReader || process.env.TERM === 'dumb') return undefined;
+    // Basic + SGR mouse reporting lets terminal wheels and trackpads move the
+    // internal transcript instead of relying on accidental repaint scrollback.
+    stdout.write('\u001b[?1000h\u001b[?1006h');
+    return () => {
+      stdout.write('\u001b[?1006l\u001b[?1000l');
+    };
+  }, [stdout, terminalAccessibility.screenReader]);
 
   const composerEmpty = input.length === 0;
   useEffect(() => {
@@ -706,9 +719,11 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         {label: 'Alt+Enter', detail: 'queue a follow-up while a run is active'},
         {label: '/queue', detail: 'inspect, drop, or clear queued follow-ups'},
         {label: 'Ctrl+J', detail: 'insert a newline'},
-        {label: 'Ctrl+R', detail: 'search prompt history'},
         {label: 'Ctrl+O', detail: 'toggle the latest tool result'},
         {label: 'Ctrl+T', detail: 'open the Team Workbench'},
+        {label: 'PageUp/PageDown', detail: 'scroll the transcript by one page'},
+        {label: 'Shift+Up/Down / Home/End', detail: 'scroll one row or jump to oldest/latest'},
+        {label: 'Ctrl+R', detail: 'search prompt history'},
         {label: 'Ctrl+L', detail: 'clear the visible transcript'},
         {label: 'Alt+E', detail: 'edit the current draft with VISUAL or EDITOR'},
         {label: 'Esc', detail: busy ? 'interrupt the active run' : 'clear the composer'},
@@ -1765,6 +1780,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   }, [append, exit, interactionMode, onEvent, requestHumanApproval, requestPermission, runLocalCommand, runner]);
 
   const submitFromComposer = useCallback((raw: string, mode: 'steer' | 'follow-up' | 'normal' = 'normal') => {
+    setTimelineScrollOffsetRows(0);
     if (historySearch) {
       const selected = resolveHistorySearch(historySearch, 'select');
       setHistorySearch(undefined);
@@ -1838,6 +1854,15 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   }
 
   useInput((inputKey, key) => {
+    const mouseInput = parseTerminalMouseInput(inputKey);
+    if (mouseInput) {
+      if (!permission && !teamWorkbenchOpen && mouseInput !== 'other') {
+        setTimelineScrollOffsetRows((current) => mouseInput === 'wheel-up'
+          ? Math.min(maxTimelineScrollOffset, current + 3)
+          : Math.max(0, current - 3));
+      }
+      return;
+    }
     if (permission) {
       const armed = Date.now() - permission.armedAt >= PERMISSION_ARMING_MS;
       if (key.ctrl && inputKey.toLocaleLowerCase() === 'c') {
@@ -1912,6 +1937,23 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         setTeamWorkbenchExpanded((expanded) => !expanded);
         return;
       }
+      return;
+    }
+    if (key.pageUp || key.pageDown) {
+      const pageRows = Math.max(1, availableTimelineRows - 1);
+      setTimelineScrollOffsetRows((current) => key.pageUp
+        ? Math.min(maxTimelineScrollOffset, current + pageRows)
+        : Math.max(0, current - pageRows));
+      return;
+    }
+    if ((key.ctrl || !input) && (key.home || key.end) && suggestionMode === 'none' && !historySearch) {
+      setTimelineScrollOffsetRows(key.home ? maxTimelineScrollOffset : 0);
+      return;
+    }
+    if (key.shift && (key.upArrow || key.downArrow) && suggestionMode === 'none' && !historySearch) {
+      setTimelineScrollOffsetRows((current) => key.upArrow
+        ? Math.min(maxTimelineScrollOffset, current + 1)
+        : Math.max(0, current - 1));
       return;
     }
     if (key.ctrl && inputKey.toLocaleLowerCase() === 't') {
@@ -2084,31 +2126,42 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     teamItems.some((item) => item.kind === 'agent' && (item.state === 'queued' || item.state === 'running'));
   const teamSummaryRows = showTeamSummary ? (contentWidth >= 64 ? 3 : 2) : 0;
   const headerRows = showHeader ? 2 : 0;
-  const chromeRows = headerRows + composerRows + footerRows + taskRows + paletteRows + inspectorRows + activityRows + teamSummaryRows;
+  const scrollHintRows = timelineScrollOffsetRows > 0 && !teamWorkbenchOpen ? 1 : 0;
+  const chromeRows = headerRows + composerRows + footerRows + taskRows + paletteRows + inspectorRows + activityRows + teamSummaryRows + scrollHintRows;
   const availableTimelineRows = Math.max(0, terminalHeight - chromeRows);
   const mainTimeline = timeline.filter((item) => item.kind !== 'agent' && item.kind !== 'agent-message');
-  const timelineContentRows = mainTimeline.reduce((rows, item) => rows + estimateTimelineItemRows(item, {
+  const timelineViewportOptions = {
     width: contentWidth,
     rows: availableTimelineRows,
     compact: compactUi,
     showToolOutput,
     ...(expandedToolId ? {expandedToolId} : {}),
-  }), 0);
+  };
+  const timelineContentRows = timelineTotalRows(mainTimeline, timelineViewportOptions);
   // Keep short sessions inline with the surrounding terminal. The viewport
   // grows only as transcript content needs it, up to the real terminal height.
   const timelineRows = teamWorkbenchOpen
     ? availableTimelineRows
     : Math.min(availableTimelineRows, timelineContentRows);
+  const maxTimelineScrollOffset = Math.max(0, timelineContentRows - timelineRows);
   const visibleTimeline = fitTimelineToRows(mainTimeline, {
-    width: contentWidth,
+    ...timelineViewportOptions,
     rows: timelineRows,
-    compact: compactUi,
-    showToolOutput,
-    ...(expandedToolId ? {expandedToolId} : {}),
+    scrollOffsetRows: Math.min(timelineScrollOffsetRows, maxTimelineScrollOffset),
   });
   const activeAgents = timeline.filter((item) => item.kind === 'agent' && item.state === 'running').length;
   const mcpServers = extensions?.mcpStatus() ?? [];
   const memoryStats = extensions?.memoryStats();
+  useEffect(() => {
+    const previous = previousTimelineMetrics.current;
+    if (previous.width === contentWidth && timelineScrollOffsetRows > 0 && timelineContentRows > previous.rows) {
+      const addedRows = timelineContentRows - previous.rows;
+      setTimelineScrollOffsetRows((current) => Math.min(maxTimelineScrollOffset, current + addedRows));
+    } else if (timelineScrollOffsetRows > maxTimelineScrollOffset) {
+      setTimelineScrollOffsetRows(maxTimelineScrollOffset);
+    }
+    previousTimelineMetrics.current = {rows: timelineContentRows, width: contentWidth};
+  }, [contentWidth, maxTimelineScrollOffset, timelineContentRows, timelineScrollOffsetRows]);
   if (terminalHeight < 8) {
     return (
       <ThemeProvider theme={theme}>
@@ -2155,6 +2208,11 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
               </Box>
             )}
           </Box>
+        ) : null}
+        {scrollHintRows ? (
+          <Text color={theme.muted} wrap="truncate">
+            {truncateDisplay(`history ${glyphs.separator} ${timelineScrollOffsetRows} rows above latest ${glyphs.separator} PgUp/PgDn ${glyphs.separator} End follows`, contentWidth)}
+          </Text>
         ) : null}
         {showTaskRail ? <TaskRail tasks={tasks} width={contentWidth} glyphMode={glyphMode} maxItems={taskLimit} /> : null}
         {showTeamSummary ? <TeamSummary items={teamItems} width={contentWidth} glyphMode={glyphMode} /> : null}
@@ -2267,7 +2325,6 @@ export async function runInteractiveTui(options: TuiOptions): Promise<void> {
 function initialTimeline(session: Session, banner: BannerInfo, setupProblem?: string): TimelineItem[] {
   const items: TimelineItem[] = session.messages
     .filter((message) => (message.role === 'user' || message.role === 'assistant') && visibleMessage(message))
-    .slice(-20)
     .map((message) => ({id: message.id, kind: message.role as 'user' | 'assistant', text: message.content}));
   // A fresh session opens on the product banner instead of an empty screen; a
   // resumed session keeps its transcript and skips the banner.
@@ -2466,7 +2523,7 @@ function permissionRows(width: number, hasCwd: boolean, compact: boolean): numbe
 function contextInspectorRows(session: Session, compact: boolean, width: number, minimal: boolean): number {
   if (minimal) return 2;
   const working = session.workingMemory;
-  const entries = 6 + (compact ? 0 : (working?.constraints.length ? 1 : 0) +
+  const entries = 7 + (compact ? 0 : (working?.constraints.length ? 1 : 0) +
     (working?.decisions.length ? 1 : 0) + (working?.openQuestions.length ? 1 : 0) +
     (working?.relevantFiles.length ? 1 : 0));
   return 2 + entries * (width < 52 ? 2 : 1);
@@ -2475,6 +2532,9 @@ function contextInspectorRows(session: Session, compact: boolean, width: number,
 function contextInspectorStatus(status: ReturnType<AgentRunner['getContextStatus']>): ContextInspectorStatus {
   return {
     pressure: status.pressure,
+    promptTokens: status.promptTokens,
+    promptSource: status.promptSource,
+    contextWindowTokens: status.contextWindowTokens,
     messageCount: status.messageCount,
     activeTokens: status.activeTokens,
     summaryTokens: status.summaryTokens,

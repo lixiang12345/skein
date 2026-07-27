@@ -1,6 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {ContextEngine} from '../context/context-engine.js';
 import {activeMessages, clearOldToolResults, ContextManager} from '../context/manager.js';
+import {modelContextWindowTokens} from './model-context.js';
 import {resolveMentions} from '../context/mentions.js';
 import {emptyPackedContext, selectContextBudget} from '../context/budget.js';
 import {
@@ -129,6 +130,7 @@ export class AgentRunner {
   private steering: string[] = [];
   private readonly sessionApprovals = new Set<string>();
   private activeReuseGate: {requestId: string; request: string; attempted: boolean} | undefined;
+  private pendingPromptTokens: number | undefined;
 
   constructor(options: AgentRunnerOptions) {
     this.config = options.config;
@@ -401,7 +403,7 @@ export class AgentRunner {
       const maxTurns = options.maxTurns ?? this.config.agent.maxTurns;
       const epochTokenBudget = this.config.agent.maxEpochTokens ?? this.config.agent.maxSessionTokens;
 
-      const contextBudget = Math.max(24_000, Math.min(100_000, this.config.context.maxTokens * 3));
+      const contextBudget = this.contextPromptBudget();
       if (this.contextManager.shouldCompact(this.session, contextBudget)) {
         const compacted = await this.compactContext(undefined, options.signal, 'automatic');
         if (compacted.status === 'compacted') {
@@ -467,6 +469,7 @@ export class AgentRunner {
           loadedProgressiveTools,
         );
         const estimatedInputTokens = estimateMessages(messages) + estimateToolDefinitions(visibleTools);
+        this.pendingPromptTokens = estimatedInputTokens;
         if (estimatedInputTokens >= availableLifetimeTokens) {
           return finishRun('token_budget');
         }
@@ -555,6 +558,7 @@ export class AgentRunner {
           },
           retrieval: tokenRetrievalReceipt(packed),
         });
+        this.pendingPromptTokens = undefined;
         await emit({
           type: 'usage',
           inputTokens: this.session.usage.inputTokens,
@@ -687,6 +691,7 @@ export class AgentRunner {
       this.running = false;
       this.steering = [];
       this.activeReuseGate = undefined;
+      this.pendingPromptTokens = undefined;
     }
   }
 
@@ -1317,7 +1322,7 @@ export class AgentRunner {
     emit: (event: AgentEvent) => Promise<void>,
   ): Promise<void> {
     let receipt;
-    const contextBudget = Math.max(24_000, Math.min(100_000, this.config.context.maxTokens * 3));
+    const contextBudget = this.contextPromptBudget();
     if (this.contextManager.shouldCompact(this.session, contextBudget)) {
       const compacted = await this.compactContext(
         'Create a boundary handoff for the next bounded context epoch.',
@@ -1341,7 +1346,11 @@ export class AgentRunner {
   }
 
   getContextStatus() {
-    return this.contextManager.status(this.session);
+    return this.contextManager.status(
+      this.session,
+      modelContextWindowTokens(this.config),
+      this.pendingPromptTokens,
+    );
   }
 
   /** List the user-controlled context sources on the live session. */
@@ -1375,7 +1384,7 @@ export class AgentRunner {
   }
 
   private toolOutputBudget(): number {
-    const contextWindowTokens = Math.max(24_000, Math.min(100_000, this.config.context.maxTokens * 3));
+    const contextWindowTokens = modelContextWindowTokens(this.config);
     const activeContextTokens = this.contextManager.status(this.session, contextWindowTokens).activeTokens;
     const remainingLifetimeTokens = this.config.agent.maxSessionTokens -
       (this.session.usage.inputTokens + this.session.usage.outputTokens);
@@ -1386,6 +1395,13 @@ export class AgentRunner {
       activeContextTokens,
       Math.min(remainingLifetimeTokens, remainingEpochTokens),
     );
+  }
+
+  private contextPromptBudget(): number {
+    const contextWindowTokens = modelContextWindowTokens(this.config);
+    const configuredOutput = this.config.model.maxTokens ?? 8_192;
+    const outputReserve = Math.min(configuredOutput, Math.max(1_024, Math.floor(contextWindowTokens * 0.25)));
+    return Math.max(4_000, contextWindowTokens - outputReserve);
   }
 
   private async protectToolResult(result: ToolResult): Promise<ToolResult> {

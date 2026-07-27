@@ -73,7 +73,10 @@
 
 A user-visible session has two different token boundaries:
 
-- `agent.maxEpochTokens` (default 250,000) bounds one internal reasoning epoch.
+- `context.windowTokens` (default 500,000) is the fallback model prompt window;
+  explicit connection model metadata takes precedence. It is independent from
+  the local retrieval budget in `context.maxTokens`.
+- `agent.maxEpochTokens` (default 500,000) bounds one internal reasoning epoch.
 - `agent.maxSessionTokens` (default 1,000,000) is the hard lifetime ceiling
   across every epoch and resume.
 

@@ -651,6 +651,9 @@ model:
   maxTokens: 8192
 
 context:
+  # Model prompt window; connection model metadata can override this fallback.
+  windowTokens: 500000
+  # Local retrieval budget; this is not the model context window.
   maxTokens: 12000
   topK: 12
 
@@ -672,7 +675,7 @@ permissions:
 agent:
   maxTurns: 24
   # Rotate deterministic context handoffs without changing the session id.
-  maxEpochTokens: 250000
+  maxEpochTokens: 500000
   # Hard lifetime cost/usage ceiling across every resumed epoch.
   maxSessionTokens: 1000000
   autoVerify: true

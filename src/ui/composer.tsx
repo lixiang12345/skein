@@ -1,6 +1,7 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {Text, useInput, usePaste} from 'ink';
 import {displayWidth, sanitizeTerminalText, terminalEllipsis, truncateDisplay} from './text.js';
+import {parseTerminalMouseInput} from './terminal-capabilities.js';
 
 const editorHistoryLimit = 100;
 
@@ -118,6 +119,7 @@ export function ComposerInput({
   }, {isActive: focus});
 
   useInput((input, key) => {
+    if (parseTerminalMouseInput(input)) return;
     const current = valueRef.current;
     const cursor = cursorRef.current;
     const commandInput = input.toLocaleLowerCase();
@@ -163,6 +165,7 @@ export function ComposerInput({
       deleteRange(cursor, nextWordBoundary(current, cursor));
       return;
     }
+    if (key.shift && (key.upArrow || key.downArrow)) return;
     if ((key.upArrow || key.downArrow) && !captureVerticalArrows) {
       const result = moveComposerCursorVertically(
         current,

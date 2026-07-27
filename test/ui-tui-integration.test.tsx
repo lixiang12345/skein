@@ -331,6 +331,45 @@ describe('SkeinApp completion flows', () => {
     }
   });
 
+  it('pages through the full resumed transcript and returns to the latest message', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-transcript-scroll-ui-'));
+    const session = testSession(root);
+    session.messages.push(...Array.from({length: 36}, (_, index) =>
+      userMessage(`history-${index}`, `historical request ${index}`)));
+    const {runner} = mockRunner(root, session);
+    const harness = await mountApp(runner, root, undefined, undefined, undefined, {columns: 60, rows: 12});
+
+    try {
+      expect(harness.lastFrame()).toContain('historical request 35');
+
+      harness.stdin.write('\u001b[5~');
+      await settleRender(harness.instance);
+      const older = harness.lastFrame();
+      expect(older).toContain('rows above latest');
+      expect(older).not.toContain('historical request 35');
+
+      harness.stdin.write('\u001b[F');
+      await settleRender(harness.instance);
+      expect(harness.lastFrame()).toContain('historical request 35');
+      expect(harness.lastFrame()).not.toContain('rows above latest');
+
+      harness.stdin.write('\u001b[<64;1;1M');
+      await settleRender(harness.instance);
+      expect(harness.lastFrame()).toContain('rows above latest');
+      harness.stdin.write('\u001b[<65;1;1M');
+      await settleRender(harness.instance);
+      expect(harness.lastFrame()).toContain('historical request 35');
+      expect(harness.lastFrame()).not.toContain('rows above latest');
+
+      harness.stdin.write('\u001b[<0;10;5M');
+      await settleRender(harness.instance);
+      expect(harness.lastFrame()).not.toContain('[<0;10;5M');
+    } finally {
+      await harness.cleanup();
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
   it('completes an active @file token from the workspace and submits the attachment', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-mention-ui-'));
     const sourcePath = join(root, 'src', 'agent.ts');
@@ -965,6 +1004,9 @@ function mockRunner(root: string, session: Session, hits: ContextHit[] = [], opt
     tools: {definitions: () => Array.from({length: options.toolCount ?? 0}, (_, index) => ({name: `tool_${index}`}))},
     getSession: () => session,
     getContextStatus: () => ({
+      promptTokens: 0,
+      promptSource: 'none',
+      contextWindowTokens: 500_000,
       activeTokens: 0,
       summaryTokens: 0,
       toolTokens: 0,

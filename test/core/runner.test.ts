@@ -335,6 +335,7 @@ describe('AgentRunner', () => {
     ]);
     const events: AgentEvent[] = [];
     const runnerConfig = config(root);
+    runnerConfig.context.windowTokens = 32_000;
     runnerConfig.agent.maxSessionTokens = 100_000;
     const runner = new AgentRunner({
       config: runnerConfig, provider, contextEngine: context, session, persistSession: false,

@@ -51,6 +51,9 @@ export interface ContextSpan {
 
 export interface ContextInspectorStatus {
   pressure: number;
+  promptTokens: number;
+  promptSource: 'actual' | 'estimated' | 'none';
+  contextWindowTokens: number;
   messageCount: number;
   activeTokens: number;
   summaryTokens: number;
@@ -1017,7 +1020,7 @@ export function Footer({busy, approval = false, changedFiles, width = 80, contex
   const changed = `${changedFiles} changed`;
   const statusPart: InlinePart = {text: status, color: approval ? theme.warning : busy ? theme.accent : theme.success};
   const pressurePart: InlinePart | undefined = contextPressure !== undefined && contextPressure >= 0.75 && rowWidth >= 40
-    ? {text: `ctx ${formatPercent(contextPressure)}`, color: contextPressure >= 0.9 ? theme.error : theme.warning}
+    ? {text: `prompt ${formatPercent(contextPressure)}`, color: contextPressure >= 0.9 ? theme.error : theme.warning}
     : undefined;
   const mainParts: InlinePart[] = [
     statusPart,
@@ -1268,14 +1271,14 @@ export function ContextInspector({status, working, summary, width, memory, conne
     const rowWidth = safeWidth(width);
     const padding = rowWidth >= 4 ? 2 : 0;
     const innerWidth = Math.max(1, rowWidth - padding);
-    const active = `${status.messageCount} msg ${glyphs.separator} ~${formatTokens(status.activeTokens)} tok`;
+    const prompt = `~${formatTokens(status.promptTokens)}/${formatTokens(status.contextWindowTokens)} ${status.promptSource}`;
     const focus = sanitizeTerminalText(working?.focus || working?.goal || (hasCompactedContext ? 'handoff ready' : 'not established'))
       .replace(/\s+/g, ' ')
       .trim() || 'not established';
     return (
       <Box flexDirection="column" paddingLeft={padding}>
         <Text bold color={theme.textStrong}>
-          {truncateDisplay(`Context ${formatPercent(status.pressure)} ${glyphs.separator} ${active}`, innerWidth)}
+          {truncateDisplay(`Context ${glyphs.separator} prompt ${formatPercent(status.pressure)} ${glyphs.separator} ${prompt}`, innerWidth)}
         </Text>
         <Text color={working ? theme.text : theme.muted}>
           {truncateDisplay(`working ${focus}`, innerWidth)}
@@ -1284,7 +1287,8 @@ export function ContextInspector({status, working, summary, width, memory, conne
     );
   }
   const entries: ListEntry[] = [
-    {label: 'active', detail: `${status.messageCount} messages ${glyphs.separator} ~${formatTokens(status.activeTokens)} tokens ${glyphs.separator} tools ~${formatTokens(status.toolTokens)}`},
+    {label: 'prompt', detail: `~${formatTokens(status.promptTokens)}/${formatTokens(status.contextWindowTokens)} tokens ${glyphs.separator} ${status.promptSource === 'none' ? 'not requested' : status.promptSource}`},
+    {label: 'transcript', detail: `${status.messageCount} persisted messages ${glyphs.separator} ~${formatTokens(status.activeTokens)} tokens ${glyphs.separator} tools ~${formatTokens(status.toolTokens)}`},
     {label: 'short-term', detail: working ? `${working.focus || working.goal || 'ready'} ${glyphs.separator} ${relativeTime(working.lastUpdatedAt)}` : 'not established'},
     {label: 'summary', detail: hasCompactedContext ? `~${formatTokens(status.summaryTokens)} tokens ${glyphs.separator} ${status.compactedMessages} compacted${summary ? '' : ` ${glyphs.separator} facts`}` : 'not created'},
     {label: 'long-term', detail: memory ?? `retrieved by relevance ${glyphs.separator} untrusted context`},
@@ -1318,25 +1322,18 @@ export function ContextInspector({status, working, summary, width, memory, conne
   const rowWidth = safeWidth(width);
   const innerWidth = Math.max(1, rowWidth - 2);
   const pressureColor = status.pressure >= 0.9 ? theme.error : status.pressure >= 0.75 ? theme.warning : theme.accent;
-  const summaryTokens = hasCompactedContext ? status.summaryTokens : 0;
   const segments: MeterSegment[] = [
-    {label: 'active', value: status.activeTokens, color: theme.accent},
-    {label: 'tools', value: status.toolTokens, color: theme.assistant},
-    {label: 'summary', value: summaryTokens, color: theme.warning},
+    {label: 'prompt', value: status.promptTokens, color: theme.accent},
   ];
-  // Scale the track to the same pressure the footer reports, so the remainder
-  // reads as real headroom rather than an artifact of the segment sum.
-  const meterTotal = status.pressure > 0
-    ? (status.activeTokens + status.toolTokens + summaryTokens) / status.pressure
-    : status.activeTokens + status.toolTokens + summaryTokens;
   const showMeter = rowWidth >= 32;
   const meterWidth = Math.max(8, Math.min(innerWidth - displayWidth(`Context ${formatPercent(status.pressure)} `), 48));
   return (
     <Box flexDirection="column" marginBottom={1} paddingLeft={2}>
       <Box>
         <Text bold color={theme.textStrong}>{`Context `}</Text>
+        <Text color={theme.dim}>{`${glyphs.separator} prompt `}</Text>
         <Text bold color={pressureColor}>{formatPercent(status.pressure)}</Text>
-        {showMeter ? <><Text> </Text><MeterBar segments={segments} total={meterTotal} width={meterWidth} glyphs={glyphs} /></> : null}
+        {showMeter ? <><Text> </Text><MeterBar segments={segments} total={status.contextWindowTokens} width={meterWidth} glyphs={glyphs} /></> : null}
       </Box>
       <ListPanel title="" hideTitle entries={entries} width={Math.max(1, rowWidth - 2)} glyphMode={glyphMode} />
     </Box>

@@ -115,6 +115,8 @@ set enter "\r"
 set escape "\033"
 set ctrl_c "\003"
 set ctrl_r "\022"
+set page_up "\033\[5~"
+set end_key "\033\[F"
 
 send -- "/memory privacy"
 await_pattern {/memory privacy} {the memory privacy command}
@@ -154,6 +156,11 @@ await_frame {the hotkey command frame}
 send -- $enter
 await_pattern {Keyboard} {the hotkey panel}
 await_frame {the hotkey panel frame}
+send -- $page_up
+await_pattern {history.*rows} {the scrolled transcript indicator}
+await_frame {the scrolled transcript frame}
+send -- $end_key
+await_frame {the restored latest transcript frame}
 
 send -- "/diff"
 await_pattern {/diff} {the diff command}

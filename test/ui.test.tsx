@@ -6,7 +6,7 @@ import {CommandPalette, ContextInspector, Footer, Header, PermissionCard, Prompt
 import {toolMetaSummary} from '../src/ui/timeline-reducers.js';
 import {displayWidth, sanitizeTerminalText} from '../src/ui/text.js';
 import {detectTerminalAppearance, resolveTheme, resolveThemeWithColor, ThemeProvider} from '../src/ui/theme.js';
-import {resolveKittyKeyboardConfig, resolveTerminalAccessibility} from '../src/ui/terminal-capabilities.js';
+import {parseTerminalMouseInput, resolveKittyKeyboardConfig, resolveTerminalAccessibility} from '../src/ui/terminal-capabilities.js';
 import {routeCostReceipt} from '../src/agent/route-cost.js';
 import type {MosaicConfig, ToolCall} from '../src/types.js';
 
@@ -24,6 +24,12 @@ const config: MosaicConfig = {
 };
 
 describe('terminal presentation', () => {
+  it('parses wheel reports and classifies other mouse input for safe suppression', () => {
+    expect(parseTerminalMouseInput('[<64;10;5M')).toBe('wheel-up');
+    expect(parseTerminalMouseInput('[<65;10;5M')).toBe('wheel-down');
+    expect(parseTerminalMouseInput('[<0;10;5M')).toBe('other');
+    expect(parseTerminalMouseInput('ordinary input')).toBeUndefined();
+  });
   it('surfaces only degraded context refresh metadata', () => {
     expect(toolMetaSummary({contextRefresh: {status: 'current', paths: 1}})).toBeUndefined();
     expect(toolMetaSummary({
@@ -521,7 +527,7 @@ describe('terminal presentation', () => {
     const pressured = renderToString(<Footer busy={false} tokens={82_000} maxTokens={100_000} changedFiles={0} contextPressure={0.82} width={80} />);
     expect(routine).not.toContain('ctx ');
     expect(routine).not.toContain('tokens');
-    expect(pressured).toContain('ctx 82%');
+    expect(pressured).toContain('prompt 82%');
   });
 
   it('can suppress the decorative composer rule for linear screen-reader output', () => {
@@ -689,6 +695,9 @@ describe('terminal presentation', () => {
       <ContextInspector
         status={{
           pressure: 0.42,
+          promptTokens: 210_000,
+          promptSource: 'actual',
+          contextWindowTokens: 500_000,
           messageCount: 8,
           activeTokens: 3200,
           summaryTokens: 900,
@@ -715,7 +724,7 @@ describe('terminal presentation', () => {
     const rows = output.split('\n');
 
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toContain('Context 42%');
+    expect(rows[0]).toContain('prompt 42%');
     expect(rows[1]).toContain('working Keep the composer visible');
     expect(output).not.toContain('long-term');
     expect(output).not.toContain('connections');
@@ -728,7 +737,8 @@ describe('terminal presentation', () => {
     const output = renderToString(
       <ContextInspector
         status={{
-          pressure: 0.3, messageCount: 6, activeTokens: 1200,
+          pressure: 0.3, promptTokens: 150_000, promptSource: 'estimated', contextWindowTokens: 500_000,
+          messageCount: 6, activeTokens: 1200,
           summaryTokens: 420, toolTokens: 100, compactedMessages: 8,
         }}
         working={undefined}
@@ -748,7 +758,8 @@ describe('terminal presentation', () => {
   it('shows epoch and lifetime usage as separate context facts', () => {
     const output = renderToString(<ContextInspector
       status={{
-        pressure: 0.4, messageCount: 4, activeTokens: 900, summaryTokens: 200,
+        pressure: 0.4, promptTokens: 200_000, promptSource: 'actual', contextWindowTokens: 500_000,
+        messageCount: 4, activeTokens: 900, summaryTokens: 200,
         toolTokens: 100, compactedMessages: 2, epochIndex: 3, epochCount: 3,
         epochTokens: 125_000, epochBudget: 250_000,
         lifetimeTokens: 410_000, lifetimeBudget: 1_000_000,

@@ -393,6 +393,8 @@ export interface MosaicConfig {
   model: ModelConfig;
   workspaceRoots: string[];
   context: {
+    /** Model prompt window; independent from retrieval and session-lifetime budgets. */
+    windowTokens?: number;
     maxTokens: number;
     topK: number;
   };

@@ -24,6 +24,42 @@ const provider: ModelProvider = {
 };
 
 describe('ContextManager', () => {
+  it('reports the latest packed prompt against the model window instead of persisted transcript size', () => {
+    const session = createSession({workspace: '/tmp/example', provider: 'compatible', model: 'test'});
+    session.messages.push(message('user', 'x'.repeat(200_000)));
+    session.tokenLedger = [{
+      requestId: 'request-1',
+      turn: 1,
+      recordedAt: '2026-07-27T00:00:00.000Z',
+      estimated: {
+        stableTokens: 10_000,
+        dynamicTokens: 5_000,
+        conversationTokens: 40_000,
+        toolResultTokens: 30_000,
+        retrievedTokens: 2_000,
+        toolSchemaTokens: 3_000,
+        estimatedInputTokens: 60_000,
+        outputAllowanceTokens: 8_000,
+        outputTokens: 1_000,
+      },
+      actual: {inputTokens: 50_000, outputTokens: 800},
+      inputSource: 'actual',
+      outputSource: 'actual',
+      tools: {loaded: [], deferredCount: 0},
+      retrieval: {engine: 'test', discarded: []},
+    }];
+
+    const status = new ContextManager(config()).status(session, 500_000);
+
+    expect(status).toMatchObject({
+      promptTokens: 50_000,
+      promptSource: 'actual',
+      contextWindowTokens: 500_000,
+      pressure: 0.1,
+    });
+    expect(status.activeTokens).toBeGreaterThan(40_000);
+  });
+
   it('maintains working memory and compacts old messages while keeping recent context', async () => {
     const session = createSession({workspace: '/tmp/example', provider: 'compatible', model: 'test'});
     const manager = new ContextManager(config());
@@ -225,6 +261,19 @@ describe('ContextManager', () => {
     expect(output[0]?.content).toContain('status: failure (exit 1)');
     expect(output[0]?.content).toContain('src/queue.ts:12');
     expect(output.at(-1)?.content).toBe(recent.content);
+  });
+
+  it('masks superseded bulky tool results inside a single user turn', () => {
+    const tools = Array.from({length: 7}, (_, index) => {
+      const tool = message('tool', `result ${index}\n${String(index).repeat(2_000)}`);
+      tool.name = 'read_file';
+      tool.toolCallId = `call-${index}`;
+      return tool;
+    });
+    const output = clearOldToolResults([message('user', 'inspect the repository'), ...tools]);
+
+    expect(output.slice(1, 4).every((item) => item.content.includes('structured receipt'))).toBe(true);
+    expect(output.slice(-4).map((item) => item.content)).toEqual(tools.slice(-4).map((item) => item.content));
   });
 });
 

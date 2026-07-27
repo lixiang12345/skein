@@ -16,6 +16,9 @@ import {estimateTokens} from '../utils/tokens.js';
 import {activeContextEpoch} from './epochs.js';
 
 export interface ContextStatus {
+  promptTokens: number;
+  promptSource: 'actual' | 'estimated' | 'none';
+  contextWindowTokens: number;
   activeTokens: number;
   summaryTokens: number;
   toolTokens: number;
@@ -39,7 +42,7 @@ export interface CompactionResult {
 }
 
 const RECENT_TURN_RESERVE = 3;
-const COMPACTION_HIGH_WATER = 0.78;
+const COMPACTION_HIGH_WATER = 0.9;
 const TOOL_PRESSURE_WATER = 0.28;
 const COMPACTION_OUTPUT_ALLOWANCE = 1_600;
 const PREDICTED_REUSES = 3;
@@ -81,15 +84,17 @@ export class ContextManager {
     session.workingMemory = memory;
   }
 
-  status(session: Session, modelContextTokens?: number): ContextStatus {
+  status(session: Session, modelContextTokens?: number, pendingPromptTokens?: number): ContextStatus {
     const active = activeMessages(session);
     const activeTokens = estimateMessages(active);
     const summaryTokens = compactedContextTokens(session);
     const toolTokenCount = toolTokens(active);
-    const contextLimit = Math.max(
-      8_000,
-      modelContextTokens ?? Math.min(100_000, this.config.context.maxTokens * 3),
-    );
+    const contextLimit = Math.max(8_000, modelContextTokens ?? this.config.context.windowTokens ?? 500_000);
+    const latestRequest = session.tokenLedger?.at(-1);
+    const actualPromptTokens = validTokens(latestRequest?.actual.inputTokens);
+    const estimatedPromptTokens = validTokens(latestRequest?.estimated.estimatedInputTokens);
+    const pendingPrompt = validTokens(pendingPromptTokens);
+    const promptTokens = pendingPrompt ?? actualPromptTokens ?? estimatedPromptTokens ?? 0;
     const compactedMessages = session.compactedThroughMessageId
       ? Math.max(0, session.messages.findIndex((message) =>
         message.id === session.compactedThroughMessageId) + 1)
@@ -97,12 +102,19 @@ export class ContextManager {
     const epoch = activeContextEpoch(session);
     const epochBudget = this.config.agent.maxEpochTokens ?? this.config.agent.maxSessionTokens;
     return {
+      promptTokens,
+      promptSource: pendingPrompt !== undefined
+        ? 'estimated'
+        : actualPromptTokens !== undefined
+        ? 'actual'
+        : estimatedPromptTokens !== undefined ? 'estimated' : 'none',
+      contextWindowTokens: contextLimit,
       activeTokens,
       summaryTokens,
       toolTokens: toolTokenCount,
       messageCount: active.length,
       compactedMessages,
-      pressure: Math.min(1, (activeTokens + summaryTokens) / contextLimit),
+      pressure: Math.min(1, promptTokens / contextLimit),
       epochIndex: epoch.index,
       epochCount: epoch.index,
       epochTokens: epoch.usage.inputTokens + epoch.usage.outputTokens,
@@ -473,15 +485,31 @@ export function activeMessages(session: Session): ChatMessage[] {
   return index < 0 ? session.messages : session.messages.slice(index + 1);
 }
 
-export function clearOldToolResults(messages: ChatMessage[], keepRecentTurns = 3): ChatMessage[] {
+export function clearOldToolResults(
+  messages: ChatMessage[],
+  keepRecentTurns = 3,
+  keepLargeToolResultsPerTurn = 4,
+): ChatMessage[] {
   const userTurns = messages
     .map((message, index) => message.role === 'user' ? index : -1)
     .filter((index) => index >= 0);
   const cutoff = userTurns.length > keepRecentTurns
     ? userTurns[userTurns.length - keepRecentTurns] ?? messages.length
-    : Math.max(0, messages.length - 8);
+    : 0;
+  const retainedLargeTools = new Set<number>();
+  const turnStarts = userTurns.length ? userTurns : [0];
+  for (let turn = 0; turn < turnStarts.length; turn += 1) {
+    const start = turnStarts[turn] ?? 0;
+    const end = turnStarts[turn + 1] ?? messages.length;
+    const largeTools = messages.slice(start, end)
+      .map((message, offset) => message.role === 'tool' && message.content.length >= 1_200 ? start + offset : -1)
+      .filter((index) => index >= 0);
+    for (const index of largeTools.slice(-keepLargeToolResultsPerTurn)) retainedLargeTools.add(index);
+  }
   return messages.map((message, index) => {
-    if (index >= cutoff || message.role !== 'tool' || message.content.length < 1_200) return message;
+    const oldTurn = index < cutoff;
+    const supersededInTurn = message.role === 'tool' && message.content.length >= 1_200 && !retainedLargeTools.has(index);
+    if (message.role !== 'tool' || message.content.length < 1_200 || (!oldTurn && !supersededInTurn)) return message;
     return {
       ...message,
       content: toolReceipt(message),

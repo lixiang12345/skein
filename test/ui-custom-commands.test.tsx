@@ -72,6 +72,7 @@ function makeRunner(root: string, session: Session): {runner: AgentRunner; run: 
     tools: {definitions: () => []},
     getSession: () => session,
     getContextStatus: () => ({
+      promptTokens: 0, promptSource: 'none', contextWindowTokens: 500_000,
       activeTokens: 0, summaryTokens: 0, toolTokens: 0,
       messageCount: session.messages.length, compactedMessages: 0, pressure: 0,
     }),

@@ -137,7 +137,7 @@ describe('configuration defaults', () => {
       },
     }));
     const safe = await loadConfig(root);
-    expect(safe.context).toEqual({maxTokens: 12_000, topK: 12});
+    expect(safe.context).toEqual({windowTokens: 500_000, maxTokens: 12_000, topK: 12});
     expect(safe.model.baseUrl).toBeUndefined();
     expect(safe.model.apiKey).not.toBe('project-secret');
     expect(safe.permissions.shell).toBe('ask');
@@ -161,7 +161,7 @@ describe('configuration defaults', () => {
     expect(safe.backgroundJobs?.enabled).toBe(false);
 
     const trusted = await loadConfig(root, undefined, {trustProjectConfig: true});
-    expect(trusted.context).toEqual({maxTokens: 12_000, topK: 12});
+    expect(trusted.context).toEqual({windowTokens: 500_000, maxTokens: 12_000, topK: 12});
     expect(trusted.model.baseUrl).toBeUndefined();
     expect(trusted.model.apiKey).not.toBe('project-secret');
     expect(trusted.permissions.shell).toBe('allow');

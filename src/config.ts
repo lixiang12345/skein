@@ -350,6 +350,7 @@ const partialConfigSchema = z.object({
   }).partial().optional(),
   workspaceRoots: z.array(z.string()).optional(),
   context: z.object({
+    windowTokens: z.number().int().positive().max(100_000_000).optional(),
     maxTokens: z.number().positive().optional(),
     topK: z.number().int().positive().optional(),
   }).partial().optional(),
@@ -459,6 +460,7 @@ export function defaultConfig(workspace = process.cwd()): MosaicConfig {
     },
     workspaceRoots: [resolve(workspace)],
     context: {
+      windowTokens: 500_000,
       maxTokens: 12_000,
       topK: 12,
     },
@@ -466,7 +468,7 @@ export function defaultConfig(workspace = process.cwd()): MosaicConfig {
     hooks: {},
     agent: {
       maxTurns: 24,
-      maxEpochTokens: 250_000,
+      maxEpochTokens: 500_000,
       maxSessionTokens: 1_000_000,
       autoVerify: true,
       verifyCommands: [],
@@ -1074,6 +1076,7 @@ export function configSummary(config: MosaicConfig): Record<string, unknown> {
     activeConnection: config.activeConnection,
     connectionCatalog: config.connectionCatalog,
     context: {
+      windowTokens: config.context.windowTokens,
       maxTokens: config.context.maxTokens,
       topK: config.context.topK,
     },

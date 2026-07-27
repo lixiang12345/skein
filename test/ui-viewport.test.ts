@@ -33,6 +33,47 @@ describe('timeline viewport budgeting', () => {
     expect(visible.slice(1).map((item) => item.id)).toEqual(['4', '5', '6', '7']);
   });
 
+  it('scrolls to older transcript rows without replacing them with the latest tail', () => {
+    const items: TimelineItem[] = Array.from({length: 10}, (_, index) => ({
+      id: String(index), kind: 'notice', text: `entry ${index}`,
+    }));
+    const visible = fitTimelineToRows(items, {
+      width: 80, rows: 4, compact: true, scrollOffsetRows: 3,
+    });
+
+    expect(visible.map((item) => item.id)).toEqual(['3', '4', '5', '6']);
+    expect(JSON.stringify(visible)).not.toContain('entry 9');
+  });
+
+  it('pages through the middle of one oversized assistant response', () => {
+    const response: TimelineItem = {
+      id: 'long', kind: 'assistant',
+      text: Array.from({length: 12}, (_, index) => `answer line ${index}`).join('\n'),
+    };
+    const visible = fitTimelineToRows([response], {
+      width: 40, rows: 4, compact: true, scrollOffsetRows: 4,
+    });
+
+    expect(visible).toHaveLength(1);
+    expect(visible[0]).toMatchObject({id: 'long', kind: 'assistant', clipped: true});
+    expect((visible[0] as Extract<TimelineItem, {kind: 'assistant'}>).text).not.toContain('answer line 11');
+    expect(estimateTimelineItemRows(visible[0]!, {width: 40, rows: 4, compact: true})).toBeLessThanOrEqual(4);
+  });
+
+  it('pages through expanded tool output instead of pinning its latest tail', () => {
+    const tool: TimelineItem = {
+      id: 'tool', kind: 'tool', name: 'shell', detail: 'test', state: 'ok',
+      output: Array.from({length: 12}, (_, index) => `tool line ${index}`).join('\n'),
+    };
+    const visible = fitTimelineToRows([tool], {
+      width: 80, rows: 4, compact: true, expandedToolId: 'tool', scrollOffsetRows: 4,
+    });
+
+    expect(visible).toHaveLength(1);
+    expect((visible[0] as Extract<TimelineItem, {kind: 'tool'}>).output).not.toContain('tool line 11');
+    expect(estimateTimelineItemRows(visible[0]!, {width: 80, rows: 4, compact: true, expandedToolId: 'tool'})).toBeLessThanOrEqual(4);
+  });
+
   it('keeps the tail of an oversized newest item inside the row budget', () => {
     const latest: TimelineItem = {id: 'latest', kind: 'assistant', text: 'line\n'.repeat(20)};
     const visible = fitTimelineToRows([
