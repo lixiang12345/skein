@@ -2,7 +2,7 @@ import React from 'react';
 import {Box, Text} from 'ink';
 import {basename} from 'node:path';
 import type {AgentPhase, ContextBudgetTier, ContextDegradation, ContextSource, MosaicConfig, PendingInput, PromptTokenBreakdown, RouteCostReceipt, SessionTask, ToolCall, ToolCategory, WorkingMemory} from '../types.js';
-import {PRODUCT_COMMAND, PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
+import {PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
 import {commandForCall} from '../tools/permissions.js';
 import {commandSuggestions, type CommandSuggestion} from './commands.js';
 import {
@@ -187,12 +187,13 @@ export function resolveGlyphs(mode: GlyphMode = 'auto'): UiGlyphs {
   return mode === 'ascii' || (mode === 'auto' && forceAscii) ? asciiGlyphs : unicodeGlyphs;
 }
 
-export function Header({config, askMode, planMode = false, width = 80, glyphMode = 'auto'}: {
+export function Header({config, askMode, planMode = false, width = 80, glyphMode = 'auto', expanded = false}: {
   config: MosaicConfig;
   askMode: boolean;
   planMode?: boolean;
   width?: number;
   glyphMode?: GlyphMode;
+  expanded?: boolean;
 }) {
   const theme = useTheme();
   const glyphs = resolveGlyphs(glyphMode);
@@ -202,7 +203,9 @@ export function Header({config, askMode, planMode = false, width = 80, glyphMode
   // Each mode gets a semantic hue: BUILD is "go" (mutations live), PLAN is the
   // amber "thinking" state, ASK is a calm read-only muted tone.
   const modeColor = planMode ? theme.warning : askMode ? theme.muted : theme.accent;
-  const brand = `${glyphs.brand} ${PRODUCT_NAME.toUpperCase()}`;
+  const ascii = glyphs.borderStyle === 'classic';
+  const inlineMark = ascii ? '__\\o>' : '__\\●▶';
+  const brand = `${inlineMark} ${PRODUCT_NAME.toUpperCase()}`;
   const modeLabel = `${glyphs.activity} ${mode}`;
   const separator = ` ${glyphs.separator} `;
   const model = sanitizeInlineTerminalText(`${config.activeConnection && config.activeConnection.source !== 'legacy' ? `@${config.activeConnection.id} ` : ''}${config.model.provider}/${config.model.model}`);
@@ -213,6 +216,36 @@ export function Header({config, askMode, planMode = false, width = 80, glyphMode
   const leftWidth = displayWidth(showRepository ? withRepository : minimum);
   const modelSpace = terminalWidth - leftWidth - 2;
   const showModel = terminalWidth >= 72 && modelSpace >= 12;
+
+  if (expanded && terminalWidth >= 96) {
+    const artWidth = 20;
+    const detailWidth = Math.max(1, terminalWidth - artWidth - 3);
+    const connection = config.activeConnection && config.activeConnection.source !== 'legacy'
+      ? `@${sanitizeInlineTerminalText(config.activeConnection.id)}`
+      : sanitizeInlineTerminalText(config.model.provider);
+    const route = `${connection}${separator}${sanitizeInlineTerminalText(config.model.model)}`;
+    return (
+      <Box marginBottom={1} height={3} overflowY="hidden">
+        <Box width={artWidth} flexDirection="column" aria-label="Skein Goose">
+          {ascii ? <>
+            <Text bold color={theme.textStrong}> {'________     __'}</Text>
+            <Text color={theme.textStrong}>{'/ __     \\___/ o>'}</Text>
+            <Text color={theme.accent}>{'\\_/ \\__________/'}</Text>
+          </> : <>
+            <Text bold color={theme.textStrong}>{'╭────────╮    ╭─╮'}</Text>
+            <Box><Text bold color={theme.accent}>{'╰━━╮'}</Text><Text color={theme.textStrong}>{'     ╰────╯●╰▶'}</Text></Box>
+            <Text color={theme.textStrong}>{'   ╰────────────╯'}</Text>
+          </>}
+        </Box>
+        <Box width={3} />
+        <Box width={detailWidth} flexDirection="column">
+          <Text bold color={theme.accent}>{truncateDisplay(`${PRODUCT_NAME.toUpperCase()}  ${separator} ${modeLabel}`, detailWidth)}</Text>
+          <Text color={theme.muted}>{truncateDisplay(`${repository}${separator}${route}`, detailWidth)}</Text>
+          <Text color={theme.dim}>{truncateDisplay(`grounded coding workspace${separator}context in formation`, detailWidth)}</Text>
+        </Box>
+      </Box>
+    );
+  }
 
   return (
     <Box marginBottom={1} height={1} overflowY="hidden">
@@ -278,35 +311,15 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
           );
         }
         if (item.kind === 'context') {
-          const spans = item.spans ?? [];
-          const spanLimit = compact ? 2 : 3;
-          const innerWidth = Math.max(1, safeWidth(width) - 2);
           return (
             <Box key={item.id} flexDirection="column">
               <MetaRow
                 width={width}
                 glyph={glyphs.context}
                 label="context"
-                detail={`${sanitizeInlineTerminalText(item.engine)} ${glyphs.separator} ${item.hits} spans ${glyphs.separator} ~${formatTokens(item.tokens)} estimated${item.budgetTokens === undefined ? '' : ` ${glyphs.separator} ${item.budgetTier ?? 'adaptive'} ${formatTokens(item.budgetTokens)} budget`}${item.truncated ? ` ${glyphs.separator} truncated` : ''}`}
+                detail={`${sanitizeInlineTerminalText(item.engine)} ${glyphs.separator} ${item.hits} span${item.hits === 1 ? '' : 's'} ${glyphs.separator} ~${formatTokens(item.tokens)} context${item.truncated ? ` ${glyphs.separator} clipped` : ''}`}
                 labelColor={theme.accent}
               />
-              {!compact && item.budgetReason ? (
-                <Text color={theme.dim}>{truncateDisplay(`${glyphs.branchLast} ${sanitizeInlineTerminalText(item.budgetReason)}`, innerWidth)}</Text>
-              ) : null}
-              {spans.slice(0, spanLimit).map((span, spanIndex) => {
-                const lines = span.startLine === span.endLine ? `${span.startLine}` : `${span.startLine}-${span.endLine}`;
-                const location = `${compactDisplayPath(sanitizeInlineTerminalText(span.path), 44)}:${lines}`;
-                const symbol = span.symbol ? ` ${glyphs.separator} ${sanitizeInlineTerminalText(span.symbol)}` : '';
-                const marker = spanIndex === spans.length - 1 || spanIndex === spanLimit - 1 ? glyphs.branchLast : glyphs.branch;
-                return (
-                  <Text key={`${item.id}-span-${spanIndex}`} color={theme.dim}>
-                    {truncateDisplay(`${marker} ${location}${symbol} ${glyphs.separator} ${span.score.toFixed(2)}`, innerWidth)}
-                  </Text>
-                );
-              })}
-              {spans.length > spanLimit ? (
-                <Text color={theme.dim}>{truncateDisplay(`${glyphs.branchLast} +${spans.length - spanLimit} more spans`, innerWidth)}</Text>
-              ) : null}
               {item.degradation ? (
                 <MetaRow
                   width={width}
@@ -320,16 +333,13 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
           );
         }
         if (item.kind === 'prompt') {
-          const detail = item.breakdown
-            ? `~${formatTokens(item.tokens)} estimated ${glyphs.separator} stable ${formatTokens(item.breakdown.stableTokens)} ${glyphs.separator} dynamic ${formatTokens(item.breakdown.dynamicTokens)} ${glyphs.separator} history ${formatTokens(item.breakdown.conversationTokens)} ${glyphs.separator} tool results ${formatTokens(item.breakdown.toolResultTokens)} ${glyphs.separator} retrieved ${formatTokens(item.breakdown.retrievedTokens)} ${glyphs.separator} tools ${formatTokens(item.breakdown.toolSchemaTokens)} ${glyphs.separator} output cap ${formatTokens(item.breakdown.outputAllowanceTokens)}`
-            : `${item.sections.map(sanitizeInlineTerminalText).join(` ${glyphs.separator} `)} ${glyphs.separator} ~${formatTokens(item.tokens)} estimated`;
           return (
             <MetaRow
               key={item.id}
               width={width}
               glyph={glyphs.pending}
               label={`prompt/${sanitizeInlineTerminalText(item.intent)}`}
-              detail={detail}
+              detail={`~${formatTokens(item.tokens)} input ${glyphs.separator} /context for receipt`}
             />
           );
         }
@@ -481,7 +491,7 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
           return <ContextInspector key={item.id} status={item.status} working={item.working} summary={item.summary} width={width} compact={compact} glyphMode={glyphMode} />;
         }
         if (item.kind === 'theme') return <ThemePreview key={item.id} name={item.name} width={width} glyphs={glyphs} />;
-        if (item.kind === 'banner') return <Banner key={item.id} engine={item.engine} status={item.status} version={item.version} width={width} glyphs={glyphs} {...(item.files !== undefined ? {files: item.files} : {})} {...(item.resume ? {resume: item.resume} : {})} />;
+        if (item.kind === 'banner') return <Banner key={item.id} engine={item.engine} status={item.status} version={item.version} width={width} glyphs={glyphs} {...(item.files !== undefined ? {files: item.files} : {})} />;
         if (item.kind === 'update') {
           return <UpdateNotice key={item.id} current={item.current} latest={item.latest} command={item.command} width={width} glyphs={glyphs} {...(item.highlights ? {highlights: item.highlights} : {})} />;
         }
@@ -500,27 +510,16 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
             ? glyphs.success
             : glyphs.info;
         return (
-          <Box key={item.id}>
-            <Text color={color} wrap="wrap">{
-              item.wrapWidth
-                ? wrapCompletionNotice(`${noticeGlyph} ${sanitizeTerminalText(item.text)}`, item.wrapWidth)
-                : `${noticeGlyph} ${sanitizeTerminalText(item.text)}`
-            }</Text>
+          <Box key={item.id} width={safeWidth(width)}>
+            <Box width={2}><Text color={color}>{noticeGlyph}</Text></Box>
+            <Box width={Math.max(1, safeWidth(item.wrapWidth ?? width) - 2)}>
+              <Text color={color} wrap="wrap">{sanitizeTerminalText(item.text)}</Text>
+            </Box>
           </Box>
         );
       })}
     </Box>
   );
-}
-
-function wrapCompletionNotice(value: string, width: number): string {
-  const safe = Math.max(4, width);
-  return value.split(/\s+/u).reduce<string[]>((lines, word) => {
-    const current = lines.at(-1) ?? '';
-    if (!current || displayWidth(`${current} ${word}`) > safe) lines.push(word);
-    else lines[lines.length - 1] = `${current} ${word}`;
-    return lines;
-  }, []).join('\n');
 }
 
 export function TeamCockpit({items, width = 36, glyphMode = 'auto'}: {
@@ -965,7 +964,7 @@ export function PromptBar({busy, value, placeholder, width = 80, mode = 'chat', 
   const queuePreviewWidth = Math.max(1, innerWidth - displayWidth(queueLabel) - 1);
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text color={borderColor}>{ruleLine(width, glyphs)}</Text>
+      <Text color={borderColor}>{ruleLine(width, glyphs, shell ? 'shell' : busy ? 'follow-up' : 'request')}</Text>
       {attachments.length ? (
         <Box paddingLeft={2}>
           <Text color={theme.accent}>{glyphs.context} </Text>
@@ -989,9 +988,12 @@ export function PromptBar({busy, value, placeholder, width = 80, mode = 'chat', 
   );
 }
 
-function ruleLine(width: number, glyphs: UiGlyphs): string {
+function ruleLine(width: number, glyphs: UiGlyphs, label: string): string {
   const character = glyphs.borderStyle === 'classic' ? '-' : '─';
-  return character.repeat(Math.max(1, width));
+  const prefix = glyphs.borderStyle === 'classic' ? `-- ${label} ` : `─ ${label} `;
+  const safeWidth = Math.max(1, width);
+  if (safeWidth <= displayWidth(prefix) + 2) return character.repeat(safeWidth);
+  return `${prefix}${character.repeat(safeWidth - displayWidth(prefix))}`;
 }
 
 interface InlinePart {
@@ -1442,14 +1444,13 @@ function ThemePreview({name, width, glyphs}: {name: string; width: number; glyph
   );
 }
 
-function Banner({engine, status, version, width, glyphs, files, resume}: {
+function Banner({engine, status, version, width, glyphs, files}: {
   engine: string;
   status: 'ready' | 'empty' | 'blocked';
   version: string;
   width: number;
   glyphs: UiGlyphs;
   files?: number;
-  resume?: {title: string; updatedAt: string};
 }) {
   const theme = useTheme();
   const rowWidth = safeWidth(width);
@@ -1471,34 +1472,14 @@ function Banner({engine, status, version, width, glyphs, files, resume}: {
     : rowWidth >= 28
       ? `${label} ${glyphs.separator} v${version}`
       : `${status === 'ready' ? 'Ready' : status === 'empty' ? 'Empty' : 'Setup'} ${glyphs.separator} v${version}`;
-  const showResume = Boolean(resume) && status !== 'blocked' && rowWidth >= 48;
-
   return (
     <Box marginBottom={1} paddingLeft={padding} flexDirection="column">
       <Box height={1} overflowY="hidden">
         <Text bold color={color}>{glyph} </Text>
         <Text color={status === 'ready' ? theme.text : theme.warning}>{truncateDisplay(detail, Math.max(1, innerWidth - 2))}</Text>
       </Box>
-      {showResume && resume ? (
-        <Box height={1} overflowY="hidden">
-          <Text color={theme.muted}>{'  '}{truncateDisplay(
-            `last session "${sanitizeInlineTerminalText(resume.title)}" ${glyphs.separator} ${relativeAge(resume.updatedAt)} ${glyphs.separator} resume: ${PRODUCT_COMMAND} --continue`,
-            Math.max(1, innerWidth - 2),
-          )}</Text>
-        </Box>
-      ) : null}
     </Box>
   );
-}
-
-/** Coarse local age label for the fresh-session resume hint. */
-function relativeAge(iso: string): string {
-  const elapsedMinutes = Math.round((Date.now() - Date.parse(iso)) / 60_000);
-  if (!Number.isFinite(elapsedMinutes) || elapsedMinutes < 1) return 'just now';
-  if (elapsedMinutes < 60) return `${elapsedMinutes}m ago`;
-  const hours = Math.round(elapsedMinutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
 }
 function UpdateNotice({current, latest, command, highlights, width, glyphs}: {
   current: string;

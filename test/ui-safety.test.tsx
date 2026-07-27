@@ -132,7 +132,7 @@ describe('terminal display safety', () => {
         </>,
         {columns: 80},
       );
-      expect(output).toMatch(/\* SKEIN/u);
+      expect(output).toContain('__\\o> SKEIN');
       expect(output).not.toMatch(/[^\x00-\x7F]/u);
     } finally {
       if (previous === undefined) delete process.env.SKEIN_GLYPHS;

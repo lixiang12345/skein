@@ -18,12 +18,13 @@ OpenAI, Anthropic, Gemini, and OpenAI-compatible endpoints, with a local,
 inspectable index for code retrieval and no retrieval service dependency.
 
 ```text
-⌁ SKEIN  ·  ~/work/api                                      ● BUILD
-  anthropic/claude-sonnet-4-5  ·  context local  ·  memory on  ·  agents 3
+╭────────╮    ╭─╮      SKEIN   ·  ● BUILD
+╰━━╮     ╰────╯●╰▶     api · @work · claude-sonnet-4-5
+   ╰────────────╯      grounded coding workspace · context in formation
 
 › Find the webhook retry bug and add a regression test.
-◇ context  local · 12 spans · ~8.4k
-· prompt/debug  intent:debug · working-memory · code:local
+◇ context  local · 12 spans · ~8.4k context
+· prompt/debug  ~10k input · /context for receipt
 ✓ read_file  src/billing/webhook.ts  31ms
 ✓ apply_patch  src/billing/webhook.ts  18ms
 
@@ -31,7 +32,7 @@ inspectable index for code retrieval and no retrieval service dependency.
   The retry timestamp was advanced before the failed attempt was persisted.
   I moved the update after persistence and added the timeout regression test.
 
-────────────────────────────────────────────────────────────────────
+─ request ───────────────────────────────────────────────────────────
 › ask anything…
   Type a request · @file · /command
 

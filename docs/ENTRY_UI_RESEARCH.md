@@ -180,3 +180,23 @@ The local benchmark measured 2.007 ms input p95 against a 25 ms budget and
 9.445 ms streaming-render p95 against a 150 ms budget. These measurements are
 machine-local regression evidence, not cross-device performance claims.
 
+## User-recognition correction · 2026-07-27
+
+The single-cell Goose decision was technically bounded but visually
+unsuccessful in a real wide-terminal session. The `⌁` header mark was not
+recognised as the product animal, while the otherwise prompt-first frame became
+dense again once retrieval paths, prompt-token partitions, a long prior-session
+title, and a verbose recovery notice accumulated.
+
+The corrected contract is:
+
+- render a three-row code-native Goose only at 100+ content columns and 22+
+  rows; cap the main reading width so ultra-wide terminals do not create
+  dashboard-length rules and telemetry lines;
+- use `__\●▶` or ASCII `__\o>` at ordinary widths and keep screen-reader output
+  textual;
+- keep prior-session prose, retrieval paths, adaptive-budget reasons, and token
+  partitions out of the resting timeline; `/context`, `/status`, and `/recover`
+  remain the evidence surfaces;
+- preserve one compact context receipt, one compact prompt receipt, and one
+  actionable failure row so the composer remains the dominant next action.

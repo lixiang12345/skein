@@ -61,15 +61,21 @@ only carrier of identity or status.
 
 ## Terminal Identity
 
-- Unicode mark: `⌁` (`U+2301`, one terminal cell in the supported width model)
-- ASCII fallback: `*`
+- Wide interactive lockup: a three-row code-native Goose silhouette with a
+  contrasting woven lower wing, paired with repository, route, model, and mode.
+- Compact Unicode signature: `__\●▶`
+- Compact ASCII fallback: `__\o>`
+- Transcript signer: `⌁` (`U+2301`) or `*` in ASCII mode, where repeating the
+  full animal would add noise to every assistant response.
 - Accessible name: `Skein`
 
-The Unicode mark is a compact “thread in flight” rather than a miniature picture
-of a goose. It aligns with the raster mark's motion while staying stable in one
-cell. `TERM=dumb`, `SKEIN_GLYPHS=ascii`, and screen-reader modes keep the
-deterministic ASCII/name path. Decorative glyphs receive the accessible label
-“Skein”; users are not expected to identify a Unicode character by name.
+The former single-cell-only header passed width tests but failed real-user
+recognition: `⌁` read as an abstract thread, not the Goose. Interactive sessions
+therefore use the recognizable responsive lockup above. Terminals under 100
+columns keep the compact flight signature; constrained-height and screen-reader
+modes never receive multi-line artwork. `TERM=dumb`, `SKEIN_GLYPHS=ascii`, and
+screen-reader modes retain deterministic ASCII/name paths. Decorative glyphs
+receive the accessible label “Skein”.
 
 ## Size Contract
 

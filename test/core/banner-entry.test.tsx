@@ -28,12 +28,12 @@ describe('fresh-session banner', () => {
     expect(narrow).not.toContain('279 files');
   });
 
-  it('offers a resume pointer for the latest prior session', () => {
+  it('keeps prior-session content out of the resting frame', () => {
     const resume = {title: 'fix webhook retry', updatedAt: new Date(Date.now() - 2 * 3600_000).toISOString()};
     const wide = renderBanner(80, {resume});
-    expect(wide).toContain('last session "fix webhook retry"');
-    expect(wide).toContain('2h ago');
-    expect(wide).toContain('skein --continue');
+    expect(wide).not.toContain('last session');
+    expect(wide).not.toContain('fix webhook retry');
+    expect(wide).not.toContain('skein --continue');
   });
 
   it('hides the resume pointer on narrow terminals and keeps one-line banners', () => {
@@ -41,7 +41,7 @@ describe('fresh-session banner', () => {
     const narrow = renderBanner(40, {resume});
     expect(narrow).not.toContain('last session');
     expect(estimateTimelineItemRows({id: 'b', kind: 'banner', engine: 'local', status: 'ready', version: '0'}, {width: 80, rows: 24})).toBe(2);
-    expect(estimateTimelineItemRows({id: 'b', kind: 'banner', engine: 'local', status: 'ready', version: '0', resume}, {width: 80, rows: 24})).toBe(3);
+    expect(estimateTimelineItemRows({id: 'b', kind: 'banner', engine: 'local', status: 'ready', version: '0', resume}, {width: 80, rows: 24})).toBe(2);
     expect(estimateTimelineItemRows({id: 'b', kind: 'banner', engine: 'local', status: 'ready', version: '0', resume}, {width: 40, rows: 24})).toBe(2);
   });
 });

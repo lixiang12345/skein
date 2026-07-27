@@ -63,7 +63,7 @@ function clipTimelineItem(item: TimelineItem, options: TimelineViewportOptions):
     return {...item, clipped: true, text: tailText(item.text, Math.max(1, width - 2), options.rows)};
   }
   if (item.kind === 'notice') {
-    return {...item, text: tailText(item.text, width, options.rows)};
+    return {...item, text: tailText(item.text, Math.max(1, width - 2), options.rows)};
   }
   if (item.kind === 'list') {
     if (options.rows <= 1) return {id: item.id, kind: 'notice', text: truncateDisplay(item.title, width)};
@@ -153,7 +153,7 @@ export function estimateTimelineItemRows(
   if (item.kind === 'assistant') {
     return 1 + richTextRows(item.text, Math.max(1, rowWidth - 2)) + (item.clipped ? 0 : gap);
   }
-  if (item.kind === 'notice') return wrappedRows(item.text, rowWidth);
+  if (item.kind === 'notice') return wrappedRows(item.text, Math.max(1, rowWidth - 2));
   if (item.kind === 'update') return (rowWidth < 48 ? 3 : 2) + (item.highlights?.length ?? 0);
   if (item.kind === 'tool') {
     const narrow = rowWidth < 64;
@@ -178,11 +178,8 @@ export function estimateTimelineItemRows(
   if (item.kind === 'theme') return 3;
   if (item.kind === 'context') {
     const metaRows = rowWidth < 64 ? 2 : 1;
-    const spanLimit = compact ? 2 : 3;
-    const spanCount = Math.min(item.spans?.length ?? 0, spanLimit);
-    const moreRow = (item.spans?.length ?? 0) > spanLimit ? 1 : 0;
     const degradationRows = item.degradation ? metaRows : 0;
-    return metaRows + spanCount + moreRow + degradationRows;
+    return metaRows + degradationRows;
   }
   if (item.kind === 'prompt') {
     return rowWidth < 64 ? 2 : 1;
@@ -195,7 +192,7 @@ export function estimateTimelineItemRows(
   if (item.kind === 'clarification') {
     return 3 + item.pending.options.length * (rowWidth < 48 ? 2 : 1);
   }
-  if (item.kind === 'banner') return item.resume && rowWidth >= 48 ? 3 : 2;
+  if (item.kind === 'banner') return 2;
   return 1;
 }
 

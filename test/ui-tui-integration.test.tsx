@@ -12,6 +12,7 @@ import {routeCostReceipt} from '../src/agent/route-cost.js';
 import type {ExtensionRuntime} from '../src/runtime/index.js';
 import {createSession} from '../src/session/index.js';
 import {SkeinApp} from '../src/ui/tui.js';
+import {displayWidth} from '../src/ui/text.js';
 import type {AgentEvent, ChatMessage, ContextHit, Session} from '../src/types.js';
 
 describe('SkeinApp completion flows', () => {
@@ -34,6 +35,30 @@ describe('SkeinApp completion flows', () => {
       expect(lines.length).toBeLessThan(12);
       expect(frame.match(/SKEIN/gu)).toHaveLength(1);
       expect(frame).not.toContain('context runs automatically');
+    } finally {
+      await harness.cleanup();
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
+  it('shows the Goose lockup without stretching ultra-wide sessions and retracts it for inspectors', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-wide-goose-ui-'));
+    const session = testSession(root);
+    const {runner} = mockRunner(root, session);
+    const harness = await mountApp(runner, root, undefined, undefined, undefined, {columns: 180, rows: 28});
+
+    try {
+      const frame = harness.lastFrame();
+      expect(frame).toMatch(/╭────────╮|________/u);
+      expect(frame).toContain('context in formation');
+      expect(frame).toContain('Type a request');
+      for (const line of frame.split('\n')) expect(displayWidth(line.trimEnd())).toBeLessThanOrEqual(126);
+
+      harness.stdin.write('/status\r');
+      await vi.waitFor(() => expect(harness.output()).toContain('Status'));
+      const inspected = harness.lastFrame();
+      expect(inspected).not.toMatch(/╭────────╮|________/u);
+      expect(inspected).toMatch(/__\\(?:●▶|o>) SKEIN/u);
     } finally {
       await harness.cleanup();
       await rm(root, {recursive: true, force: true});
@@ -844,11 +869,11 @@ function mockInput(): MockInput {
   return stream;
 }
 
-function mockOutput(): MockOutput {
+function mockOutput(dimensions: {columns?: number; rows?: number} = {}): MockOutput {
   const stream = new PassThrough() as MockOutput;
   stream.isTTY = true;
-  stream.columns = 100;
-  stream.rows = 32;
+  stream.columns = dimensions.columns ?? 100;
+  stream.rows = dimensions.rows ?? 32;
   stream.captured = '';
   stream.on('data', (chunk: Buffer) => {
     stream.captured += chunk.toString();
@@ -862,6 +887,7 @@ async function mountApp(
   extensions?: ExtensionRuntime,
   workspaceReadiness?: import('../src/ui/workspace-preparation.js').WorkspaceReadiness,
   providedConfig?: import('../src/types.js').MosaicConfig,
+  dimensions?: {columns?: number; rows?: number},
 ): Promise<{
   stdin: MockInput;
   instance: Instance;
@@ -870,8 +896,8 @@ async function mountApp(
   cleanup(): Promise<void>;
 }> {
   const stdin = mockInput();
-  const stdout = mockOutput();
-  const stderr = mockOutput();
+  const stdout = mockOutput(dimensions);
+  const stderr = mockOutput(dimensions);
   const base = defaultConfig(root);
   const config = providedConfig ?? {
     ...base,

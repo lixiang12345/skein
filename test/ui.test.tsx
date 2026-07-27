@@ -255,6 +255,23 @@ describe('terminal presentation', () => {
     expect(output).not.toContain('\n4-8');
   });
 
+  it('renders a recognizable responsive Goose brand lockup on wide terminals', () => {
+    const output = renderToString(<Header config={{
+      ...config,
+      workspaceRoots: ['/work/skein'],
+      model: {provider: 'compatible', model: 'gpt-5.6-sol'},
+    }} askMode={false} width={118} expanded />, {columns: 118});
+
+    const rows = output.trimEnd().split('\n');
+    expect(rows).toHaveLength(3);
+    expect(output).toContain('╭────────╮');
+    expect(output).toContain('╰────────────╯');
+    expect(output).toContain('SKEIN');
+    expect(output).toContain('BUILD');
+    expect(output).toContain('context in formation');
+    for (const row of rows) expect(displayWidth(row)).toBeLessThanOrEqual(118);
+  });
+
   it.each([72, 80, 120])('labels the active named connection without overflowing at %i columns', (columns) => {
     const output = renderToString(<Header config={{
       ...config,
@@ -326,7 +343,7 @@ describe('terminal presentation', () => {
       </>,
       {columns: 40},
     );
-    expect(output).toContain('⌁ SKEIN');
+    expect(output).toContain('__\\●▶ SKEIN');
     expect(output).toContain('● ASK');
     expect(output).toContain('apply_patch');
     expect(output).toContain('2 changed');
@@ -812,7 +829,7 @@ describe('terminal presentation', () => {
         <Footer busy tokens={800} maxTokens={10_000} changedFiles={0} glyphMode="ascii" />
       </>,
     );
-    expect(output).toContain('* SKEIN');
+    expect(output).toContain('__\\o> SKEIN');
     expect(output).toContain('o ASK');
     expect(output).toContain('+ read_file');
     expect(output).toContain('~ working');

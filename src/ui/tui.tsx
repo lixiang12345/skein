@@ -145,7 +145,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const terminalWidth = Math.max(1, columns || 80);
   const terminalHeight = Math.max(1, rows || 24);
   const horizontalPadding = terminalWidth >= 24 ? 1 : 0;
-  const contentWidth = Math.max(1, terminalWidth - horizontalPadding * 2);
+  const contentWidth = Math.max(1, Math.min(124, terminalWidth - horizontalPadding * 2));
   const terminalAccessibility = resolveTerminalAccessibility();
   const glyphMode = terminalAccessibility.ascii ? 'ascii' as const : 'auto' as const;
   const glyphs = resolveGlyphs(glyphMode);
@@ -599,7 +599,10 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       case 'error':
         lastEventError.current = event.error.message;
         setTimeline(endStreamingAssistants);
-        append({id: nextId(), kind: 'notice', tone: 'error', text: `${event.error.message}${separator}Run /recover to inspect evidence, changes, and safe next actions.`});
+        append({
+          id: nextId(), kind: 'notice', tone: 'error', wrapWidth: contentWidth,
+          text: `${event.error.message}${separator}/recover for details and safe retry`,
+        });
         setActivity(undefined);
         break;
       case 'done':
@@ -647,7 +650,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       default:
         break;
     }
-  }, [append, refreshSession, runner.workspace.roots]);
+  }, [append, contentWidth, refreshSession, runner.workspace.roots]);
 
   const appendList = useCallback((title: string, entries: ListEntry[]) => {
     append({id: nextId(), kind: 'list', title, entries});
@@ -2054,6 +2057,12 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const compactComposer = terminalHeight < 18;
   const minimalInspector = terminalHeight < 22;
   const showHeader = terminalHeight >= 10;
+  const latestSurface = timeline.at(-1)?.kind;
+  const inspectorSurface = latestSurface === 'list' || latestSurface === 'context-inspector' ||
+    latestSurface === 'theme' || latestSurface === 'clarification' || latestSurface === 'update';
+  const expandedHeader = showHeader && contentWidth >= 100 && terminalHeight >= 22 &&
+    !terminalAccessibility.screenReader && !permission && suggestionMode === 'none' &&
+    !showContextInspector && !teamWorkbenchOpen && !inspectorSurface;
   const taskLimit = compactUi ? 3 : 6;
   const paletteVisible = suggestions.length > 0 || Boolean(historySearch) || suggestionMode === 'mention';
   const paletteSuggestions = constrainedHeight && suggestions.length
@@ -2084,7 +2093,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const inspectorRows = renderContextInspector ? contextInspectorRows(session, compactUi, contentWidth, minimalInspector) : 0;
   const footerRows = showFooter ? (contentWidth < 48 ? 2 : 1) : 0;
   const activityRows = showActivity && activity ? (contentWidth < 48 && activity.turn ? 3 : 2) : 0;
-  const headerRows = showHeader ? 2 : 0;
+  const headerRows = showHeader ? (expandedHeader ? 4 : 2) : 0;
   const chromeRows = headerRows + composerRows + footerRows + taskRows + paletteRows + inspectorRows + activityRows;
   const availableTimelineRows = Math.max(0, terminalHeight - chromeRows);
   const teamItems = timeline.filter((item) => item.kind === 'agent' || item.kind === 'agent-message');
@@ -2127,8 +2136,13 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
 
   return (
     <ThemeProvider theme={theme}>
-      <Box flexDirection="column" paddingX={horizontalPadding} overflowY="hidden">
-        {showHeader ? <Header config={config} askMode={interactionMode !== 'build'} planMode={interactionMode === 'plan'} width={contentWidth} glyphMode={glyphMode} /> : null}
+      <Box
+        flexDirection="column"
+        paddingX={horizontalPadding}
+        width={contentWidth + horizontalPadding * 2}
+        overflowY="hidden"
+      >
+        {showHeader ? <Header config={config} askMode={interactionMode !== 'build'} planMode={interactionMode === 'plan'} width={contentWidth} glyphMode={glyphMode} expanded={expandedHeader} /> : null}
         {timelineRows > 0 ? (
           <Box flexDirection="row" height={timelineRows} overflowY="hidden">
             {teamWorkbenchOpen ? (
