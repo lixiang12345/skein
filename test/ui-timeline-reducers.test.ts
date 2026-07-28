@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest';
-import {startAgent, toolMetaSummary, updateAgentQueued, updateContractProgress} from '../src/ui/timeline-reducers.js';
+import {cancelRunningTools, startAgent, toolMetaSummary, updateAgentQueued, updateContractProgress, updateTool} from '../src/ui/timeline-reducers.js';
 import type {TaskContract} from '../src/types.js';
 import type {TimelineItem} from '../src/ui/components.js';
 
@@ -71,6 +71,43 @@ describe('timeline reducers', () => {
       .toMatchObject([{state: 'error', superseded: true}]);
     expect(running.filter((item) => item.kind === 'agent' && item.id === 'attempt-2'))
       .toMatchObject([{state: 'running', retryOf: 'attempt-1', startedAt: 2_345}]);
+  });
+
+  it('settles queued and running tools as cancelled without changing completed results', () => {
+    const items: TimelineItem[] = [
+      {id: 'queued', kind: 'tool', name: 'read_file', detail: 'a.ts', state: 'queued'},
+      {id: 'running', kind: 'tool', name: 'shell', detail: 'npm test', state: 'running', startedAt: Date.now() - 10},
+      {id: 'done', kind: 'tool', name: 'search', detail: 'query', state: 'ok'},
+    ];
+
+    const cancelled = cancelRunningTools(items, 'Interrupted by user');
+
+    expect(cancelled.slice(0, 2)).toMatchObject([
+      {id: 'queued', state: 'cancelled', errorDetail: 'Interrupted by user'},
+      {id: 'running', state: 'cancelled', errorDetail: 'Interrupted by user'},
+    ]);
+    expect(cancelled[2]).toEqual(items[2]);
+  });
+
+  it('preserves runner cancellation metadata through the real result event order', () => {
+    const started: TimelineItem[] = [{
+      id: 'cancelled-tool', kind: 'tool', name: 'shell', detail: 'npm test',
+      state: 'running', startedAt: Date.now() - 10,
+    }];
+    const settled = updateTool(started, {
+      toolCallId: 'cancelled-tool',
+      name: 'shell',
+      ok: false,
+      content: 'Command cancelled by user',
+      metadata: {failure: {class: 'cancelled', code: 'aborted'}},
+    });
+
+    expect(settled).toMatchObject([{
+      id: 'cancelled-tool', state: 'cancelled', errorDetail: 'Command cancelled by user',
+    }]);
+    expect(cancelRunningTools(settled, 'Interrupted by user')).toMatchObject([{
+      id: 'cancelled-tool', state: 'cancelled', errorDetail: 'Command cancelled by user',
+    }]);
   });
 });
 

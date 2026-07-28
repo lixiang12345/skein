@@ -162,7 +162,7 @@ export class HeadlessReporter {
             ? ` ${this.glyphs.separator} stable ${event.breakdown.stableTokens} ${this.glyphs.separator} dynamic ${event.breakdown.dynamicTokens} ${this.glyphs.separator} history ${event.breakdown.conversationTokens} ${this.glyphs.separator} tool results ${event.breakdown.toolResultTokens} ${this.glyphs.separator} retrieved ${event.breakdown.retrievedTokens} ${this.glyphs.separator} tools ${event.breakdown.toolSchemaTokens} ${this.glyphs.separator} output cap ${event.breakdown.outputAllowanceTokens}`
             : '';
           process.stderr.write(this.paint.dim(
-            `${this.glyphs.meta} prompt ${this.glyphs.separator} ${event.intent} ${this.glyphs.separator} ~${event.estimatedTokens} estimated tokens${partition}\n`,
+            `${this.glyphs.meta} model input ${this.glyphs.separator} ${event.intent} ${this.glyphs.separator} ~${event.estimatedTokens} estimated tokens${partition}\n`,
           ));
         }
         break;

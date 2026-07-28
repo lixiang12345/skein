@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.61",
+  "version": "0.3.62",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -24,6 +24,10 @@
   },
   "skein": {
     "releaseNotes": [
+      "The interactive workspace now uses Ink with @inkjs/ui for a production hierarchy across status, conversation, grouped tools, and a compact composer, with restrained dark, light, monochrome, ASCII, dumb-terminal, and screen-reader themes",
+      "Ctrl+O and /transcript toggle every tool detail together, while loading, success, error, cancelled, disabled, queued, approval, and streaming states retain consistent keyboard focus and truthful cancellation semantics",
+      "Routine zero-hit context events and per-turn model-input estimates stay out of the conversation timeline; detailed model-input and context-window accounting remains available through /context and structured headless output",
+      "Responsive terminal verification covers 20, 24, 40, 80, and 120 columns, 40x10, real PTY input, terminal UI latency budgets, Markdown, code highlighting, resize behavior, and Ctrl+C safe exit",
       "Assistant replies drop the repeated brand nameplate, fenced code and quotes gain a quiet left rail with their own colour, and the readiness banner shares the column-zero receipt gutter so the transcript reads with one consistent left edge",
       "Context pressure now measures the latest actual or estimated packed prompt against a dedicated model context window, defaults every unspecified route to 500k without confusing retrieval or lifetime budgets, and exposes prompt, persisted transcript, tool, epoch, and lifetime ledgers separately",
       "The transcript is now fully reachable after resume and during long responses through row-virtualized PageUp/PageDown, Shift+Up/Down, Home/End, mouse-wheel, and trackpad navigation with stable streaming anchors and safe mouse-sequence suppression in the composer",
@@ -218,6 +222,7 @@
     "prepublishOnly": "npm run check"
   },
   "dependencies": {
+    "@inkjs/ui": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "chalk": "^5.6.2",
     "commander": "^15.0.0",

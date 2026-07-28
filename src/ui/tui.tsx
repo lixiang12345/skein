@@ -36,6 +36,7 @@ import {
   Footer,
   Header,
   PermissionCard,
+  prepareTimelineItems,
   PromptBar,
   resolveGlyphs,
   TaskRail,
@@ -80,6 +81,7 @@ import {
   firstLine,
   nextId,
   cancelAgent,
+  cancelRunningTools,
   startAgent,
   updateAgent,
   updateAgentQueued,
@@ -199,7 +201,6 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [suggestionsDismissedFor, setSuggestionsDismissedFor] = useState<string>();
   const [frameIndex, setFrameIndex] = useState(0);
-  const [starterHintIndex, setStarterHintIndex] = useState(0);
   const controller = useRef<AbortController | undefined>(undefined);
   const processing = useRef(false);
   const queued = useRef<QueueItem[]>([]);
@@ -382,16 +383,6 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     };
   }, [stdout, terminalAccessibility.screenReader]);
 
-  const composerEmpty = input.length === 0;
-  useEffect(() => {
-    if (busy || !composerEmpty || terminalAccessibility.reducedMotion) {
-      setStarterHintIndex(0);
-      return undefined;
-    }
-    const timer = setInterval(() => setStarterHintIndex((value) => value + 1), 10_000);
-    return () => clearInterval(timer);
-  }, [busy, composerEmpty, terminalAccessibility.reducedMotion]);
-
   const requestPermission = useCallback(async (call: ToolCall, category: ToolCategory, reason?: string) => {
     // Live approval UI shows the person exactly what they are approving: a
     // bounded diff for writes, the complete wrapped command otherwise. The
@@ -437,34 +428,31 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         break;
       case 'context':
         refreshSession();
-        append({
-          id: nextId(),
-          kind: 'context',
-          engine: event.packed.engine,
-          hits: event.packed.hits.length,
-          tokens: event.packed.estimatedTokens,
-          ...(event.packed.budgetTier ? {budgetTier: event.packed.budgetTier} : {}),
-          ...(event.packed.budgetTokens !== undefined ? {budgetTokens: event.packed.budgetTokens} : {}),
-          ...(event.packed.budgetReason ? {budgetReason: event.packed.budgetReason} : {}),
-          truncated: event.packed.truncated,
-          spans: event.packed.hits.slice(0, 5).map((hit) => ({
-            path: relative(runner.workspace.primaryRoot, hit.path) || hit.path,
-            startLine: hit.startLine,
-            endLine: hit.endLine,
-            score: hit.score,
-            ...(hit.symbol ? {symbol: hit.symbol} : {}),
-          })),
-          ...(event.packed.degradation ? {degradation: event.packed.degradation} : {}),
-        });
+        if (event.packed.hits.length || event.packed.degradation) {
+          append({
+            id: nextId(),
+            kind: 'context',
+            engine: event.packed.engine,
+            hits: event.packed.hits.length,
+            tokens: event.packed.estimatedTokens,
+            ...(event.packed.budgetTier ? {budgetTier: event.packed.budgetTier} : {}),
+            ...(event.packed.budgetTokens !== undefined ? {budgetTokens: event.packed.budgetTokens} : {}),
+            ...(event.packed.budgetReason ? {budgetReason: event.packed.budgetReason} : {}),
+            truncated: event.packed.truncated,
+            spans: event.packed.hits.slice(0, 5).map((hit) => ({
+              path: relative(runner.workspace.primaryRoot, hit.path) || hit.path,
+              startLine: hit.startLine,
+              endLine: hit.endLine,
+              score: hit.score,
+              ...(hit.symbol ? {symbol: hit.symbol} : {}),
+            })),
+            ...(event.packed.degradation ? {degradation: event.packed.degradation} : {}),
+          });
+        }
         setActivity({label: 'Assembling relevant context', startedAt: Date.now()});
         break;
       case 'prompt':
-        append({
-          id: nextId(), kind: 'prompt', intent: event.intent, sections: event.sections,
-          tokens: event.estimatedTokens,
-          ...(event.breakdown ? {breakdown: event.breakdown} : {}),
-        });
-        setActivity({label: 'Preparing the model prompt', startedAt: Date.now()});
+        setActivity({label: 'Preparing model request', startedAt: Date.now()});
         break;
       case 'assistant_delta':
         setTimeline((items) => updateAssistantDelta(items, event.id, event.content));
@@ -719,7 +707,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         {label: 'Alt+Enter', detail: 'queue a follow-up while a run is active'},
         {label: '/queue', detail: 'inspect, drop, or clear queued follow-ups'},
         {label: 'Ctrl+J', detail: 'insert a newline'},
-        {label: 'Ctrl+O', detail: 'toggle the latest tool result'},
+        {label: 'Ctrl+O', detail: 'toggle all tool details'},
         {label: 'Ctrl+T', detail: 'open the Team Workbench'},
         {label: 'PageUp/PageDown', detail: 'scroll the transcript by one page'},
         {label: 'Shift+Up/Down / Home/End', detail: 'scroll one row or jump to oldest/latest'},
@@ -785,6 +773,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         : normalized === 'off' || normalized === 'compact'
           ? false
           : !showToolOutput;
+      setExpandedToolId(undefined);
       setShowToolOutput(next);
       append({
         id: nextId(),
@@ -1632,6 +1621,9 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       } catch (error) {
         append({id: nextId(), kind: 'notice', tone: 'error', text: error instanceof Error ? error.message : String(error)});
       } finally {
+        if (abortController.signal.aborted) {
+          setTimeline((items) => cancelRunningTools(items, 'Interrupted by user'));
+        }
         controller.current = undefined;
         processing.current = false;
         setBusy(false);
@@ -1761,6 +1753,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
           }
         }
         if (abortController.signal.aborted || stopRequested.current) {
+          setTimeline((items) => cancelRunningTools(items, 'Interrupted by user'));
           const discarded = queued.current.length + clarificationBacklog.current.length;
           queued.current = [];
           clarificationBacklog.current = [];
@@ -2010,11 +2003,8 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       return;
     }
     if (key.ctrl && inputKey.toLocaleLowerCase() === 'o') {
-      const latest = [...timeline].reverse().find((item) => item.kind === 'tool' && item.output);
-      if (latest?.kind === 'tool') {
-        setShowToolOutput(false);
-        setExpandedToolId((current) => current === latest.id ? undefined : latest.id);
-      }
+      setExpandedToolId(undefined);
+      setShowToolOutput((visible) => !visible);
       return;
     }
     if (historySearch && key.tab) {
@@ -2080,7 +2070,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const tokenTotal = session.usage.inputTokens + session.usage.outputTokens;
   const contextStatus = runner.getContextStatus();
   const frame = spinnerFrames()[frameIndex % spinnerFrames().length] as string;
-  const composerStarterHint = starterHint(starterHintIndex, separator);
+  const composerStarterHint = starterHint(0, separator);
   const compactUi = compact || terminalHeight < 28;
   const constrainedHeight = terminalHeight < 18;
   const compactComposer = terminalHeight < 18;
@@ -2135,7 +2125,11 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const scrollHintRows = timelineScrollOffsetRows > 0 && !teamWorkbenchOpen ? 1 : 0;
   const chromeRows = headerRows + composerRows + footerRows + taskRows + paletteRows + inspectorRows + activityRows + teamSummaryRows + scrollHintRows;
   const availableTimelineRows = Math.max(0, terminalHeight - chromeRows);
-  const mainTimeline = timeline.filter((item) => item.kind !== 'agent' && item.kind !== 'agent-message');
+  const mainTimeline = prepareTimelineItems(
+    timeline.filter((item) => item.kind !== 'agent' && item.kind !== 'agent-message'),
+    expandedToolId,
+    showToolOutput,
+  );
   const timelineViewportOptions = {
     width: contentWidth,
     rows: availableTimelineRows,
@@ -2256,7 +2250,9 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
             } : {})}
           />
           <PromptBar
-            busy={busy || editing}
+            busy={busy}
+            disabled={editing}
+            focused={!editing}
             value={input}
             mode={input.trimStart().startsWith('!') ? 'shell' : 'chat'}
             width={contentWidth}

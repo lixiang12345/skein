@@ -649,6 +649,76 @@ describe('SkeinApp completion flows', () => {
     }
   });
 
+  it('keeps routine context and model-input telemetry out of the conversation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-quiet-telemetry-ui-'));
+    const session = testSession(root);
+    const {runner} = mockRunner(root, session, [], {
+      run: async (_input, options) => {
+        options?.onEvent?.({
+          type: 'context',
+          packed: {text: '', hits: [], estimatedTokens: 0, engine: 'local', truncated: false},
+        });
+        options?.onEvent?.({
+          type: 'prompt', intent: 'implement', sections: ['rules', 'history', 'tools'],
+          estimatedTokens: 12_240,
+        });
+        options?.onEvent?.({type: 'assistant', id: 'assistant-quiet', content: 'Ready to continue.'});
+        return session;
+      },
+    });
+    const harness = await mountApp(runner, root);
+
+    try {
+      harness.stdin.write('continue\r');
+      await vi.waitFor(() => expect(harness.lastFrame()).toContain('Ready to continue.'));
+      const frame = harness.lastFrame();
+      expect(frame).not.toContain('12.2k');
+      expect(frame).not.toContain('model input/');
+      expect(frame).not.toContain('0 spans');
+    } finally {
+      await harness.cleanup();
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
+  it('toggles every completed tool detail with Ctrl+O', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skein-global-tool-details-ui-'));
+    const session = testSession(root);
+    const {runner} = mockRunner(root, session, [], {
+      run: async (_input, options) => {
+        options?.onEvent?.({type: 'tool_start', call: {id: 'tool-a', name: 'read_file', arguments: {}}, category: 'read'});
+        options?.onEvent?.({type: 'tool_result', result: {
+          toolCallId: 'tool-a', name: 'read_file', ok: true, content: 'FIRST_OUTPUT_MARKER',
+        }});
+        options?.onEvent?.({type: 'tool_start', call: {id: 'tool-b', name: 'search', arguments: {}}, category: 'read'});
+        options?.onEvent?.({type: 'tool_result', result: {
+          toolCallId: 'tool-b', name: 'search', ok: true, content: 'SECOND_OUTPUT_MARKER',
+        }});
+        options?.onEvent?.({type: 'assistant', id: 'assistant-tools', content: 'Tool work complete.'});
+        return session;
+      },
+    });
+    const harness = await mountApp(runner, root, undefined, undefined, undefined, {columns: 100, rows: 32});
+
+    try {
+      harness.stdin.write('inspect files\r');
+      await vi.waitFor(() => expect(harness.lastFrame()).toContain('Tool work complete.'));
+      expect(harness.lastFrame()).not.toContain('FIRST_OUTPUT_MARKER');
+      expect(harness.lastFrame()).not.toContain('SECOND_OUTPUT_MARKER');
+
+      harness.stdin.write('\u000f');
+      await vi.waitFor(() => expect(harness.lastFrame()).toContain('FIRST_OUTPUT_MARKER'));
+      expect(harness.lastFrame()).toContain('SECOND_OUTPUT_MARKER');
+
+      harness.stdin.write('\u000f');
+      await vi.waitFor(() => expect(harness.lastFrame()).not.toContain('FIRST_OUTPUT_MARKER'));
+      expect(harness.lastFrame()).not.toContain('SECOND_OUTPUT_MARKER');
+    } finally {
+      await harness.cleanup();
+      await rm(root, {recursive: true, force: true});
+    }
+  });
+
   it('opens and navigates the Team Workbench from the live input stream', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-workbench-ui-'));
     const session = testSession(root);

@@ -2,7 +2,7 @@ import React from 'react';
 import {renderToString, Text} from 'ink';
 import stripAnsi from 'strip-ansi';
 import {describe, expect, it} from 'vitest';
-import {CommandPalette, ContextInspector, Footer, Header, PermissionCard, PromptBar, TaskRail, TeamSummary, TeamWorkbench, Timeline, WorkspacePanel} from '../src/ui/components.js';
+import {CommandPalette, ContextInspector, Footer, Header, PermissionCard, prepareTimelineItems, PromptBar, TaskRail, TeamSummary, TeamWorkbench, Timeline, WorkspacePanel} from '../src/ui/components.js';
 import {toolMetaSummary} from '../src/ui/timeline-reducers.js';
 import {displayWidth, sanitizeTerminalText} from '../src/ui/text.js';
 import {detectTerminalAppearance, resolveTheme, resolveThemeWithColor, ThemeProvider} from '../src/ui/theme.js';
@@ -261,7 +261,7 @@ describe('terminal presentation', () => {
     expect(output).not.toContain('\n4-8');
   });
 
-  it('keeps the fresh identity to one quiet row without permanent Goose art or marketing copy', () => {
+  it('keeps the fresh identity to one quiet row without terminal art or marketing copy', () => {
     const output = renderToString(<Header config={{
       ...config,
       workspaceRoots: ['/work/skein'],
@@ -269,12 +269,12 @@ describe('terminal presentation', () => {
     }} askMode={false} width={118} expanded />, {columns: 118});
 
     const rows = output.trimEnd().split('\n');
-    // The single-row budget is the real guard: a one-cell goose lockup is
-    // identity, while the retired multi-row art spent the workspace on itself.
+    // A one-cell product mark carries identity without turning the work surface
+    // into an illustration.
     expect(rows).toHaveLength(1);
     expect(output).toContain('SKEIN');
     expect(output).toContain('BUILD');
-    expect(output).toContain('__\\●▶');
+    expect(output).toContain('⌁ SKEIN');
     expect(output).not.toMatch(/╭────────╮|________/u);
     expect(output).not.toContain('context in formation');
     for (const row of rows) expect(displayWidth(row)).toBeLessThanOrEqual(118);
@@ -323,6 +323,41 @@ describe('terminal presentation', () => {
     expect(output).not.toContain('\u001B[31m');
     expect(output).not.toContain('\u0007');
     expect(sanitizeTerminalText('\u001B[2Jclear\u0007')).toBe('clear');
+  });
+
+  it('groups tool activity with complete loading and terminal states', () => {
+    const items = prepareTimelineItems([
+      {id: 'queued', kind: 'tool', name: 'queued_tool', detail: 'waiting', state: 'queued'},
+      {id: 'running', kind: 'tool', name: 'running_tool', detail: 'working', state: 'running'},
+      {id: 'success', kind: 'tool', name: 'read_file', detail: 'src/ui/tui.tsx', state: 'ok', output: 'read'},
+      {id: 'failed', kind: 'tool', name: 'shell', detail: 'npm test', state: 'error', errorDetail: 'exit 1', output: 'failed'},
+      {id: 'cancelled', kind: 'tool', name: 'search', detail: 'workspace', state: 'cancelled', errorDetail: 'Interrupted'},
+    ], undefined, false);
+    const output = renderToString(<Timeline items={items} width={80} glyphMode="ascii" />, {columns: 80});
+
+    expect(items.filter((item) => item.kind === 'tool-group')).toHaveLength(1);
+    expect(output).toContain('Tools');
+    expect(output).toContain('2 active');
+    expect(output).toContain('1 done');
+    expect(output).toContain('1 failed');
+    expect(output).toContain('1 cancelled');
+    expect(output).toContain('Ctrl+O details');
+    for (const line of output.split('\n')) expect(displayWidth(line)).toBeLessThanOrEqual(80);
+  });
+
+  it('keeps running tools static when reduced motion is requested', () => {
+    const previous = process.env.SKEIN_REDUCE_MOTION;
+    process.env.SKEIN_REDUCE_MOTION = '1';
+    try {
+      const output = renderToString(<Timeline items={[
+        {id: 'running', kind: 'tool', name: 'shell', detail: 'npm test', state: 'running'},
+      ]} width={80} />);
+      expect(output).toContain('◌');
+      expect(output).not.toContain('⠋');
+    } finally {
+      if (previous === undefined) delete process.env.SKEIN_REDUCE_MOTION;
+      else process.env.SKEIN_REDUCE_MOTION = previous;
+    }
   });
 
   it("strips terminal capability-probe responses without eating normal bracketed text", () => {
@@ -458,6 +493,18 @@ describe('terminal presentation', () => {
     }
   });
 
+  it.each([20, 40, 80])('shows a stable disabled composer while the external editor owns input at %i columns', (columns) => {
+    const output = renderToString(
+      <PromptBar busy={false} disabled focused={false} value="draft" placeholder="" width={columns}>
+        <Text>draft</Text>
+      </PromptBar>,
+      {columns},
+    );
+    if (columns >= 20) expect(output).toContain('Editor');
+    expect(output).toContain('input paused');
+    for (const line of output.split('\n')) expect(displayWidth(line)).toBeLessThanOrEqual(columns);
+  });
+
   it('renders an actionable permission state with semantic controls', () => {
     const call: ToolCall = {
       id: 'call-1',
@@ -530,7 +577,7 @@ describe('terminal presentation', () => {
     const pressured = renderToString(<Footer busy={false} tokens={82_000} maxTokens={100_000} changedFiles={0} contextPressure={0.82} width={80} />);
     expect(routine).not.toContain('ctx ');
     expect(routine).not.toContain('tokens');
-    expect(pressured).toContain('prompt 82%');
+    expect(pressured).toContain('context 82%');
   });
 
   it('can suppress the decorative composer rule for linear screen-reader output', () => {
@@ -727,7 +774,7 @@ describe('terminal presentation', () => {
     const rows = output.split('\n');
 
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toContain('prompt 42%');
+    expect(rows[0]).toContain('window 42%');
     expect(rows[1]).toContain('working Keep the composer visible');
     expect(output).not.toContain('long-term');
     expect(output).not.toContain('connections');
@@ -808,7 +855,7 @@ describe('terminal presentation', () => {
 
   it('keeps an empty transcript linear instead of drawing a large viewport card', () => {
     const output = renderToString(<Timeline items={[]} />);
-    expect(output).toContain('Start with a request, @file, or /help.');
+    expect(output).toContain('No messages yet.');
     expect(output.trimEnd().split('\n')).toHaveLength(1);
     expect(output).not.toMatch(/[┌┐└┘╭╮╰╯│]/u);
   });

@@ -1,5 +1,6 @@
 import React from 'react';
 import {Box, Text} from 'ink';
+import {Spinner} from '@inkjs/ui';
 import {basename} from 'node:path';
 import type {AgentPhase, ContextBudgetTier, ContextDegradation, ContextSource, MosaicConfig, PendingInput, PromptTokenBreakdown, RouteCostReceipt, SessionTask, ToolCall, ToolCategory, WorkingMemory} from '../types.js';
 import {PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
@@ -15,13 +16,15 @@ import {
   truncateDisplay,
 } from './text.js';
 import {formatPercent, formatTokens, useTheme} from './theme.js';
+import {resolveTerminalAccessibility} from './terminal-capabilities.js';
 
 export type TimelineItem =
   | {id: string; kind: 'user'; text: string; clipped?: boolean}
   | {id: string; kind: 'assistant'; text: string; streaming?: boolean; clipped?: boolean}
   | {id: string; kind: 'context'; engine: string; hits: number; tokens: number; budgetTier?: ContextBudgetTier; budgetTokens?: number; budgetReason?: string; degradation?: ContextDegradation; truncated?: boolean; spans?: ContextSpan[]}
   | {id: string; kind: 'prompt'; intent: string; sections: string[]; tokens: number; breakdown?: PromptTokenBreakdown}
-  | {id: string; kind: 'tool'; name: string; detail: string; state: 'running' | 'ok' | 'error'; startedAt?: number; durationMs?: number; errorDetail?: string; output?: string; meta?: string}
+  | {id: string; kind: 'tool-group'; total: number; running: number; succeeded: number; failed: number; cancelled: number; expandable: number; expanded: boolean}
+  | {id: string; kind: 'tool'; name: string; detail: string; state: 'queued' | 'running' | 'ok' | 'error' | 'cancelled'; grouped?: boolean; startedAt?: number; durationMs?: number; errorDetail?: string; output?: string; meta?: string}
   | {id: string; kind: 'skill'; name: string; description: string}
   | {id: string; kind: 'memory'; count: number; scope: string}
   | {id: string; kind: 'agent'; profile: string; task: string; provider?: string; model?: string; phase?: AgentPhase; stage?: 'context' | 'thinking' | 'tool' | 'response' | 'review'; activityDetail?: string; activeTool?: string; toolCalls?: number; inputTokens?: number; outputTokens?: number; cost?: RouteCostReceipt; hostedToolCalls?: number; sourceCount?: number; summary?: string; alerts?: string[]; retryOf?: string; superseded?: boolean; state: 'queued' | 'running' | 'ok' | 'error' | 'cancelled'; cancelReason?: string; startedAt?: number; durationMs?: number}
@@ -147,7 +150,10 @@ const unicodeGlyphs: UiGlyphs = {
   // A thin rail reads as a measurement; full blocks read as a wall of ink and
   // dominate every other row in the frame.
   meterFull: '━',
-  meterEmpty: '─',
+  // A dashed track, not a solid one: `─` is already the composer rule and the
+  // `└─` continuation marker, so a solid empty slot made one glyph carry three
+  // different meanings in a single frame.
+  meterEmpty: '┄',
   separator: '·',
   arrow: '→',
   collapsed: '›',
@@ -216,9 +222,9 @@ export function Header({config, askMode, planMode = false, width = 80, glyphMode
   // Each mode gets a semantic hue: BUILD is "go" (mutations live), PLAN is the
   // amber "thinking" state, ASK is a calm read-only muted tone.
   const modeColor = planMode ? theme.warning : askMode ? theme.muted : theme.accent;
-  // A one-row goose lockup, not the retired multi-row art: the mark reads as
-  // identity on entry and leaves with the header once a conversation starts.
-  const goose = glyphs.borderStyle === 'classic' ? '__\\o>' : '__\\●▶';
+  // One cell of identity is enough in a work surface. It retracts with the
+  // header after the conversation starts and leaves the transcript unbranded.
+  const mark = glyphs.brand;
   const brand = PRODUCT_NAME.toUpperCase();
   const modeLabel = mode;
   const separator = ` ${glyphs.separator} `;
@@ -228,18 +234,18 @@ export function Header({config, askMode, planMode = false, width = 80, glyphMode
   const repository = sanitizeInlineTerminalText(basename(root) || root);
   // The mark is the first thing to drop: identity survives on the wordmark
   // alone, so narrow terminals keep the repository and mode instead.
-  const showGoose = terminalWidth >= 48;
-  const gooseWidth = showGoose ? displayWidth(goose) + 1 : 0;
+  const showMark = terminalWidth >= 48;
+  const markWidth = showMark ? displayWidth(mark) + 1 : 0;
   const minimum = `${brand}${separator}${modeLabel}`;
   const withRepository = `${brand}${separator}${repository}`;
-  const showRepository = terminalWidth >= 32 && displayWidth(withRepository) + gooseWidth <= terminalWidth;
-  const leftWidth = displayWidth(showRepository ? withRepository : minimum) + gooseWidth;
+  const showRepository = terminalWidth >= 32 && displayWidth(withRepository) + markWidth <= terminalWidth;
+  const leftWidth = displayWidth(showRepository ? withRepository : minimum) + markWidth;
   const modelSpace = terminalWidth - leftWidth - 2;
   const showModel = terminalWidth >= 72 && modelSpace >= 12;
 
   return (
     <Box marginBottom={1} height={1} overflowY="hidden">
-      {showGoose ? <Text color={theme.accent} aria-label={`${PRODUCT_NAME} goose`}>{goose} </Text> : null}
+      {showMark ? <Text color={theme.accent} aria-hidden>{mark} </Text> : null}
       <Text bold color={theme.accent} aria-label={PRODUCT_NAME}>{brand}</Text>
       {showRepository ? <>
         <Text color={theme.border}>{separator}</Text>
@@ -254,10 +260,44 @@ export function Header({config, askMode, planMode = false, width = 80, glyphMode
 function ToolGlyph({state, glyphs}: {state: 'queued' | 'running' | 'ok' | 'error' | 'cancelled'; glyphs: UiGlyphs}) {
   const theme = useTheme();
   if (state === 'queued') return <Text color={theme.muted}>{glyphs.pending}</Text>;
-  if (state === 'running') return <Text color={theme.accent}>{glyphs.running}</Text>;
+  if (state === 'running') return glyphs.borderStyle === 'round' && !resolveTerminalAccessibility().reducedMotion
+    ? <Spinner type="dots" />
+    : <Text color={theme.accent}>{glyphs.running}</Text>;
   if (state === 'ok') return <Text color={theme.success}>{glyphs.success}</Text>;
   if (state === 'cancelled') return <Text color={theme.warning}>{glyphs.warning}</Text>;
   return <Text color={theme.error}>{glyphs.error}</Text>;
+}
+
+/** Insert one compact, presentation-only header before each contiguous tool run. */
+export function prepareTimelineItems(items: readonly TimelineItem[], expandedToolId?: string, showToolOutput = false): TimelineItem[] {
+  if (items.some((item) => item.kind === 'tool-group')) return [...items];
+  const prepared: TimelineItem[] = [];
+  for (let index = 0; index < items.length;) {
+    const item = items[index] as TimelineItem;
+    if (item.kind !== 'tool') {
+      prepared.push(item);
+      index += 1;
+      continue;
+    }
+    const tools: Extract<TimelineItem, {kind: 'tool'}>[] = [];
+    while (index < items.length && items[index]?.kind === 'tool') {
+      tools.push(items[index] as Extract<TimelineItem, {kind: 'tool'}>);
+      index += 1;
+    }
+    prepared.push({
+      id: `tool-group-${tools[0]?.id ?? index}`,
+      kind: 'tool-group',
+      total: tools.length,
+      running: tools.filter((tool) => tool.state === 'queued' || tool.state === 'running').length,
+      succeeded: tools.filter((tool) => tool.state === 'ok').length,
+      failed: tools.filter((tool) => tool.state === 'error').length,
+      cancelled: tools.filter((tool) => tool.state === 'cancelled').length,
+      expandable: tools.filter((tool) => Boolean(tool.output)).length,
+      expanded: showToolOutput || tools.some((tool) => tool.id === expandedToolId),
+    });
+    prepared.push(...tools.map((tool) => ({...tool, grouped: true})));
+  }
+  return prepared;
 }
 
 export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput = false, expandedToolId, compact = false}: {
@@ -273,13 +313,16 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
   if (!items.length) {
     return (
       <Box paddingLeft={2} marginBottom={1}>
-        <Text color={theme.muted}>Start with a request, @file, or /help.</Text>
+        <Text color={theme.muted}>No messages yet.</Text>
       </Box>
     );
   }
+  const preparedItems = items.some((item) => item.kind === 'tool-group' || (item.kind === 'tool' && item.grouped))
+    ? items
+    : prepareTimelineItems(items, expandedToolId, showToolOutput);
   return (
     <Box flexDirection="column" aria-role="list">
-      {items.map((item, index) => {
+      {preparedItems.map((item, index) => {
         if (item.kind === 'user') {
           return (
             <Box key={item.id} marginBottom={compact || item.clipped ? 0 : 1}>
@@ -314,13 +357,19 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
           );
         }
         if (item.kind === 'context') {
+          const contextDetail = [
+            sanitizeInlineTerminalText(item.engine),
+            `${item.hits} span${item.hits === 1 ? '' : 's'}`,
+            item.budgetTier ? `${item.budgetTier} retrieval` : '',
+            item.truncated ? 'clipped' : '',
+          ].filter(Boolean).join(` ${glyphs.separator} `);
           return (
             <Box key={item.id} flexDirection="column">
               <MetaRow
                 width={width}
                 glyph={glyphs.context}
                 label="context"
-                detail={`${sanitizeInlineTerminalText(item.engine)} ${glyphs.separator} ${item.hits} span${item.hits === 1 ? '' : 's'} ${glyphs.separator} ~${formatTokens(item.tokens)} context${item.truncated ? ` ${glyphs.separator} clipped` : ''}`}
+                detail={contextDetail}
                 labelColor={theme.accent}
               />
               {item.degradation ? (
@@ -341,13 +390,35 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
               key={item.id}
               width={width}
               glyph={glyphs.pending}
-              label={`prompt/${sanitizeInlineTerminalText(item.intent)}`}
-              detail={`~${formatTokens(item.tokens)} input ${glyphs.separator} /context for receipt`}
+              label={`model input/${sanitizeInlineTerminalText(item.intent)}`}
+              detail={`~${formatTokens(item.tokens)} estimated ${glyphs.separator} /context for details`}
             />
+          );
+        }
+        if (item.kind === 'tool-group') {
+          const resultParts = [
+            `${item.total} call${item.total === 1 ? '' : 's'}`,
+            item.running ? `${item.running} active` : '',
+            item.succeeded ? `${item.succeeded} done` : '',
+            item.failed ? `${item.failed} failed` : '',
+            item.cancelled ? `${item.cancelled} cancelled` : '',
+          ].filter(Boolean);
+          const control = item.expandable
+            ? `${glyphs.separator} Ctrl+O ${item.expanded ? 'collapse' : 'details'}`
+            : '';
+          const detail = `${resultParts.join(` ${glyphs.separator} `)} ${control}`.trim();
+          return (
+            <Box key={item.id} marginTop={compact || index === 0 ? 0 : 1}>
+              <Text bold color={item.failed ? theme.error : item.running ? theme.accent : theme.muted}>Tools</Text>
+              <Text color={theme.border}> {glyphs.separator} </Text>
+              <Text color={theme.muted} wrap="truncate">{truncateDisplay(detail, Math.max(1, safeWidth(width) - 8))}</Text>
+            </Box>
           );
         }
         if (item.kind === 'tool') {
           const rowWidth = safeWidth(width);
+          const branch = preparedItems[index + 1]?.kind === 'tool' ? glyphs.branch : glyphs.branchLast;
+          const branchWidth = displayWidth(branch) + 1;
           const detail = sanitizeInlineTerminalText(item.errorDetail || item.detail);
           const duration = item.durationMs !== undefined ? formatDuration(item.durationMs) : '';
           const detailText = [detail, duration].filter(Boolean).join('  ');
@@ -357,10 +428,10 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
             : undefined;
           const disclosure = item.output ? (expanded ? glyphs.expanded : glyphs.collapsed) : '';
           const disclosureWidth = disclosure ? displayWidth(disclosure) + 1 : 0;
-          const nameLimit = Math.max(1, Math.min(rowWidth - 2 - disclosureWidth, rowWidth < 64 ? rowWidth - 2 - disclosureWidth : 28));
+          const nameLimit = Math.max(1, Math.min(rowWidth - branchWidth - 2 - disclosureWidth, rowWidth < 64 ? rowWidth - branchWidth - 2 - disclosureWidth : 28));
           const name = truncateDisplay(sanitizeInlineTerminalText(item.name), nameLimit);
           const output = verbose ? (
-            <Box paddingLeft={2} flexDirection="column">
+            <Box paddingLeft={branchWidth + 2} flexDirection="column">
               <RichText value={verbose.text} glyphs={glyphs} />
               {verbose.truncated
                 ? <Text color={theme.muted}>{glyphs.pending} output clipped; use print mode for the full result</Text>
@@ -371,29 +442,31 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
             return (
               <Box key={item.id} flexDirection="column">
                 <Box>
+                  <Text color={theme.border}>{branch} </Text>
                   <ToolGlyph state={item.state} glyphs={glyphs} />
                   <Text color={theme.text}> {name}</Text>
                   {disclosure ? <Text color={theme.dim}> {disclosure}</Text> : null}
                 </Box>
-                {detailText ? <Text color={item.state === 'error' ? theme.error : theme.muted}>{`  ${truncateDisplay(detailText, Math.max(1, rowWidth - 2))}`}</Text> : null}
-                {item.meta ? <Text color={theme.dim}>{`  ${glyphs.branchLast} ${truncateDisplay(sanitizeInlineTerminalText(item.meta), Math.max(1, rowWidth - 4))}`}</Text> : null}
+                {detailText ? <Text color={item.state === 'error' ? theme.error : item.state === 'cancelled' ? theme.warning : theme.muted}>{`${' '.repeat(branchWidth + 2)}${truncateDisplay(detailText, Math.max(1, rowWidth - branchWidth - 2))}`}</Text> : null}
+                {item.meta ? <Text color={theme.dim}>{`${' '.repeat(branchWidth + 2)}${glyphs.branchLast} ${truncateDisplay(sanitizeInlineTerminalText(item.meta), Math.max(1, rowWidth - branchWidth - 4))}`}</Text> : null}
                 {output}
               </Box>
             );
           }
           const prefix = `${item.state === 'running' ? glyphs.running : item.state === 'ok' ? glyphs.success : glyphs.error} ${name}`;
           const suffix = duration ? `  ${duration}` : '';
-          const detailLimit = Math.max(1, rowWidth - displayWidth(prefix) - displayWidth(suffix) - disclosureWidth - 2);
+          const detailLimit = Math.max(1, rowWidth - branchWidth - displayWidth(prefix) - displayWidth(suffix) - disclosureWidth - 2);
           return (
             <Box key={item.id} flexDirection="column">
               <Box>
+                <Text color={theme.border}>{branch} </Text>
                 <ToolGlyph state={item.state} glyphs={glyphs} />
                 <Text color={theme.text}> {name}</Text>
-                {detail ? <Text color={item.state === 'error' ? theme.error : theme.muted}>  {truncateDisplay(detail, detailLimit)}</Text> : null}
+                {detail ? <Text color={item.state === 'error' ? theme.error : item.state === 'cancelled' ? theme.warning : theme.muted}>  {truncateDisplay(detail, detailLimit)}</Text> : null}
                 {suffix ? <Text color={theme.dim}>{suffix}</Text> : null}
                 {disclosure ? <Text color={theme.dim}> {disclosure}</Text> : null}
               </Box>
-              {item.meta ? <Text color={theme.dim}>{`  ${glyphs.branchLast} ${truncateDisplay(sanitizeInlineTerminalText(item.meta), Math.max(1, rowWidth - 4))}`}</Text> : null}
+              {item.meta ? <Text color={theme.dim}>{`${' '.repeat(branchWidth + 2)}${glyphs.branchLast} ${truncateDisplay(sanitizeInlineTerminalText(item.meta), Math.max(1, rowWidth - branchWidth - 4))}`}</Text> : null}
               {output}
             </Box>
           );
@@ -411,7 +484,7 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
           const taskDetail = agentSummary ? `${agentTask} ${glyphs.arrow} ${agentSummary}` : agentTask;
           const task = truncateDisplay(taskDetail, Math.max(1, rowWidth - 4));
           const duration = item.durationMs !== undefined ? formatDuration(item.durationMs) : '';
-          const branch = items[index + 1]?.kind === 'agent' ? glyphs.branch : glyphs.branchLast;
+          const branch = preparedItems[index + 1]?.kind === 'agent' ? glyphs.branch : glyphs.branchLast;
           const profileLimit = Math.max(1, Math.min(rowWidth - displayWidth(branch) - 3, rowWidth < 64 ? rowWidth - displayWidth(branch) - 3 : 24));
           const route = item.provider && item.model ? ` ${glyphs.separator} ${item.provider}/${item.model}` : '';
           const phase = item.phase && item.phase !== 'work' ? ` ${glyphs.separator} ${item.phase}` : '';
@@ -913,8 +986,10 @@ function permissionRisk(category: ToolCategory): string {
   return 'data may leave this machine or remote state may change';
 }
 
-export function PromptBar({busy, value, placeholder, width = 80, mode = 'chat', queueCount = 0, queuePreview, attachments = [], glyphMode = 'auto', showRule = true, children}: {
+export function PromptBar({busy, disabled = false, focused = true, value, placeholder, width = 80, mode = 'chat', queueCount = 0, queuePreview, attachments = [], glyphMode = 'auto', showRule = true, children}: {
   busy: boolean;
+  disabled?: boolean;
+  focused?: boolean;
   value: string;
   placeholder: string;
   width?: number;
@@ -929,10 +1004,11 @@ export function PromptBar({busy, value, placeholder, width = 80, mode = 'chat', 
   const theme = useTheme();
   const glyphs = resolveGlyphs(glyphMode);
   const shell = mode === 'shell';
-  // The rule is chrome, so it stays quiet at rest and only brightens when it
-  // carries a signal: shell mode is a different execution surface, and a
-  // non-empty draft means the composer owns the next action.
-  const borderColor = shell ? theme.warning : !busy && value ? theme.borderFocus : theme.border;
+  // Focus belongs to the label, not the full terminal-width rule. Keeping the
+  // rule neutral prevents the composer chrome from overpowering the request.
+  const labelColor = disabled
+    ? theme.dim
+    : shell ? theme.warning : focused ? theme.borderFocus : theme.muted;
   const rowWidth = safeWidth(width);
   const innerWidth = Math.max(1, rowWidth - 2);
   const safePlaceholder = sanitizeInlineTerminalText(placeholder);
@@ -943,7 +1019,9 @@ export function PromptBar({busy, value, placeholder, width = 80, mode = 'chat', 
       : innerWidth < 72
         ? `enter steer ${glyphs.separator} alt+enter queue ${glyphs.separator} esc stop`
         : `enter steer ${glyphs.separator} alt+enter queue ${glyphs.separator} /queue manage ${glyphs.separator} esc stop`;
-  const hint = busy
+  const hint = disabled
+    ? `input paused ${glyphs.separator} external editor active`
+    : busy
     ? busyHint
     : value
       ? `enter send ${glyphs.separator} ctrl+j newline`
@@ -952,9 +1030,21 @@ export function PromptBar({busy, value, placeholder, width = 80, mode = 'chat', 
   const safeQueuePreview = sanitizeInlineTerminalText(queuePreview ?? '');
   const queueLabel = `${glyphs.pending} ${queueCount} queued`;
   const queuePreviewWidth = Math.max(1, innerWidth - displayWidth(queueLabel) - 1);
+  const composerTitle = disabled ? 'Editor' : shell ? 'Shell' : busy ? 'Steer' : 'Request';
+  const composerState = disabled ? 'paused' : busy ? 'run active' : shell ? 'local command' : '';
   return (
-    <Box flexDirection="column" marginBottom={1}>
-      {showRule ? <Text color={borderColor}>{ruleLine(width, glyphs)}</Text> : null}
+    <Box flexDirection="column">
+      {showRule ? (
+        <ComposerRule
+          width={width}
+          title={composerTitle}
+          state={composerState}
+          color={theme.border}
+          titleColor={labelColor}
+          stateColor={disabled ? theme.warning : busy ? theme.accent : theme.muted}
+          glyphs={glyphs}
+        />
+      ) : null}
       {attachments.length ? (
         <Box paddingLeft={2}>
           <Text color={theme.accent}>{glyphs.context} </Text>
@@ -968,7 +1058,7 @@ export function PromptBar({busy, value, placeholder, width = 80, mode = 'chat', 
         </Box>
       ) : null}
       <Box aria-role="textbox">
-        <Text bold color={shell ? theme.warning : theme.accent}>{shell ? '! ' : `${glyphs.prompt} `}</Text>
+        <Text bold color={disabled ? theme.dim : shell ? theme.warning : theme.accent}>{shell ? '! ' : `${glyphs.prompt} `}</Text>
         {children}
       </Box>
       <Box paddingLeft={2}>
@@ -978,9 +1068,26 @@ export function PromptBar({busy, value, placeholder, width = 80, mode = 'chat', 
   );
 }
 
-function ruleLine(width: number, glyphs: UiGlyphs): string {
+function ComposerRule({width, title, state, color, titleColor, stateColor, glyphs}: {
+  width: number;
+  title: string;
+  state: string;
+  color: string;
+  titleColor: string;
+  stateColor: string;
+  glyphs: UiGlyphs;
+}) {
   const character = glyphs.borderStyle === 'classic' ? '-' : '─';
-  return character.repeat(Math.max(1, width));
+  const rowWidth = safeWidth(width);
+  const titleText = rowWidth >= 12 ? title : '';
+  const stateText = rowWidth >= 32 && state ? ` ${glyphs.separator} ${state}` : '';
+  return (
+    <Box width={rowWidth} height={1} overflowY="hidden">
+      <Text color={color}>{character} </Text>
+      {titleText ? <Text bold color={titleColor}>{titleText}</Text> : null}
+      {stateText ? <Text color={stateColor}>{stateText}</Text> : null}
+    </Box>
+  );
 }
 
 interface InlinePart {
@@ -1059,7 +1166,7 @@ export function Footer({busy, approval = false, changedFiles, width = 80, contex
   const changed = `${changedFiles} changed`;
   const statusPart: InlinePart = {text: status, color: approval ? theme.warning : busy ? theme.accent : theme.success};
   const pressurePart: InlinePart | undefined = contextPressure !== undefined && contextPressure >= 0.75 && rowWidth >= 40
-    ? {text: `prompt ${formatPercent(contextPressure)}`, color: contextPressure >= 0.9 ? theme.error : theme.warning}
+    ? {text: `context ${formatPercent(contextPressure)}`, color: contextPressure >= 0.9 ? theme.error : theme.warning}
     : undefined;
   // Read order follows urgency: live state, then anything demanding attention,
   // then pending work, and finally static reference detail. Only the leading
@@ -1314,14 +1421,14 @@ export function ContextInspector({status, working, summary, width, memory, conne
     const rowWidth = safeWidth(width);
     const padding = rowWidth >= 4 ? 2 : 0;
     const innerWidth = Math.max(1, rowWidth - padding);
-    const prompt = `~${formatTokens(status.promptTokens)}/${formatTokens(status.contextWindowTokens)} ${status.promptSource}`;
+    const modelInput = `~${formatTokens(status.promptTokens)}/${formatTokens(status.contextWindowTokens)} ${status.promptSource}`;
     const focus = sanitizeTerminalText(working?.focus || working?.goal || (hasCompactedContext ? 'handoff ready' : 'not established'))
       .replace(/\s+/g, ' ')
       .trim() || 'not established';
     return (
       <Box flexDirection="column" paddingLeft={padding}>
         <Text bold color={theme.textStrong}>
-          {truncateDisplay(`Context ${glyphs.separator} prompt ${formatPercent(status.pressure)} ${glyphs.separator} ${prompt}`, innerWidth)}
+          {truncateDisplay(`Context ${glyphs.separator} window ${formatPercent(status.pressure)} ${glyphs.separator} ${modelInput}`, innerWidth)}
         </Text>
         <Text color={working ? theme.text : theme.muted}>
           {truncateDisplay(`working ${focus}`, innerWidth)}
@@ -1330,7 +1437,7 @@ export function ContextInspector({status, working, summary, width, memory, conne
     );
   }
   const entries: ListEntry[] = [
-    {label: 'prompt', detail: `~${formatTokens(status.promptTokens)}/${formatTokens(status.contextWindowTokens)} tokens ${glyphs.separator} ${status.promptSource === 'none' ? 'not requested' : status.promptSource}`},
+    {label: 'model input', detail: `~${formatTokens(status.promptTokens)}/${formatTokens(status.contextWindowTokens)} tokens ${glyphs.separator} ${status.promptSource === 'none' ? 'not requested' : status.promptSource}`},
     {label: 'transcript', detail: `${status.messageCount} persisted messages ${glyphs.separator} ~${formatTokens(status.activeTokens)} tokens ${glyphs.separator} tools ~${formatTokens(status.toolTokens)}`},
     {label: 'short-term', detail: working ? `${working.focus || working.goal || 'ready'} ${glyphs.separator} ${relativeTime(working.lastUpdatedAt)}` : 'not established'},
     {label: 'summary', detail: hasCompactedContext ? `~${formatTokens(status.summaryTokens)} tokens ${glyphs.separator} ${status.compactedMessages} compacted${summary ? '' : ` ${glyphs.separator} facts`}` : 'not created'},
@@ -1366,7 +1473,7 @@ export function ContextInspector({status, working, summary, width, memory, conne
   const innerWidth = Math.max(1, rowWidth - 2);
   const pressureColor = status.pressure >= 0.9 ? theme.error : status.pressure >= 0.75 ? theme.warning : theme.accent;
   const segments: MeterSegment[] = [
-    {label: 'prompt', value: status.promptTokens, color: theme.accent},
+    {label: 'model input', value: status.promptTokens, color: theme.accent},
   ];
   const showMeter = rowWidth >= 32;
   const meterWidth = Math.max(8, Math.min(innerWidth - displayWidth(`Context ${formatPercent(status.pressure)} `), 48));
@@ -1374,7 +1481,7 @@ export function ContextInspector({status, working, summary, width, memory, conne
     <Box flexDirection="column" marginBottom={1} paddingLeft={2}>
       <Box>
         <Text bold color={theme.textStrong}>{`Context `}</Text>
-        <Text color={theme.dim}>{`${glyphs.separator} prompt `}</Text>
+        <Text color={theme.dim}>{`${glyphs.separator} window `}</Text>
         <Text bold color={pressureColor}>{formatPercent(status.pressure)}</Text>
         {showMeter ? <><Text> </Text><MeterBar segments={segments} total={status.contextWindowTokens} width={meterWidth} glyphs={glyphs} /></> : null}
       </Box>
@@ -1499,15 +1606,16 @@ function UpdateNotice({current, latest, command, highlights, width, glyphs}: {
 function RichText({value, glyphs}: {value: string; glyphs: UiGlyphs}) {
   const theme = useTheme();
   let inCode = false;
+  let codeLanguage = '';
   return <>{sanitizeTerminalText(value).split('\n').flatMap((line, index) => {
     const fence = line.trim().match(/^```+\s*([\w+#.-]*)/u);
     if (fence) {
       inCode = !inCode;
       // Only an opening fence with a language carries information; a bare fence
       // and every closing fence render nothing rather than a stray glyph.
-      const language = inCode ? fence[1] : '';
-      return language
-        ? [<Text key={index} color={theme.dim}>{`${glyphs.codeRail} ${language}`}</Text>]
+      codeLanguage = inCode ? fence[1] ?? '' : '';
+      return codeLanguage
+        ? [<Text key={index} color={theme.dim}>{`${glyphs.codeRail} ${codeLanguage}`}</Text>]
         : [];
     }
     if (inCode) {
@@ -1517,7 +1625,9 @@ function RichText({value, glyphs}: {value: string; glyphs: UiGlyphs}) {
       return [
         <Text key={index}>
           <Text color={theme.border}>{glyphs.codeRail} </Text>
-          <Text color={color}>{line || ' '}</Text>
+          {line.startsWith('+') || line.startsWith('-')
+            ? <Text color={color}>{line || ' '}</Text>
+            : <HighlightedCode value={line || ' '} language={codeLanguage} />}
         </Text>,
       ];
     }
@@ -1541,6 +1651,26 @@ function RichText({value, glyphs}: {value: string; glyphs: UiGlyphs}) {
       ];
     }
     return [<Text key={index} color={theme.text} wrap="wrap"><InlineMarkup value={line || ' '} /></Text>];
+  })}</>;
+}
+
+const codeKeywords = new Set([
+  'as', 'async', 'await', 'break', 'case', 'catch', 'class', 'const', 'continue',
+  'def', 'do', 'else', 'export', 'extends', 'false', 'finally', 'for', 'from',
+  'function', 'if', 'import', 'in', 'interface', 'let', 'new', 'None', 'null',
+  'return', 'switch', 'throw', 'true', 'try', 'type', 'undefined', 'while', 'yield',
+]);
+
+function HighlightedCode({value, language}: {value: string; language: string}) {
+  const theme = useTheme();
+  const commentPrefix = /^(?:py|python|sh|shell|bash|zsh)$/i.test(language) ? '#' : '//';
+  const tokens = value.split(/(`(?:\\.|[^`\\])*`|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/.*$|#.*$|\b\d+(?:\.\d+)?\b|\b[A-Za-z_$][\w$]*\b)/gu);
+  return <>{tokens.filter(Boolean).map((token, index) => {
+    if (token.startsWith(commentPrefix)) return <Text key={index} color={theme.dim}>{token}</Text>;
+    if (/^[`'"]/u.test(token)) return <Text key={index} color={theme.success}>{token}</Text>;
+    if (/^\d/u.test(token)) return <Text key={index} color={theme.warning}>{token}</Text>;
+    if (codeKeywords.has(token)) return <Text key={index} bold color={theme.accent}>{token}</Text>;
+    return <Text key={index} color={theme.code}>{token}</Text>;
   })}</>;
 }
 

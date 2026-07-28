@@ -72,6 +72,10 @@ export function updateTool(
 ): TimelineItem[] {
   const output = sanitizeTerminalText(result.content).slice(0, 100_000);
   const meta = toolMetaSummary(result.metadata);
+  const failure = result.metadata?.failure;
+  const cancelled = !result.ok && failure !== null && typeof failure === 'object' &&
+    (failure as {class?: unknown}).class === 'cancelled';
+  const state = result.ok ? 'ok' as const : cancelled ? 'cancelled' as const : 'error' as const;
   const found = items.some((item) => item.kind === 'tool' && item.id === result.toolCallId);
   if (!found) {
     return [...items, {
@@ -79,7 +83,7 @@ export function updateTool(
       kind: 'tool' as const,
       name: result.name,
       detail: result.ok ? '' : firstLine(result.content),
-      state: result.ok ? 'ok' as const : 'error' as const,
+      state,
       output,
       ...(meta ? {meta} : {}),
       ...(result.ok ? {} : {errorDetail: firstLine(result.content)}),
@@ -89,13 +93,26 @@ export function updateTool(
     if (item.kind !== 'tool' || item.id !== result.toolCallId) return item;
     return {
       ...item,
-      state: result.ok ? 'ok' as const : 'error' as const,
+      state,
       output,
       ...(meta ? {meta} : {}),
       ...(item.startedAt ? {durationMs: Date.now() - item.startedAt} : {}),
       ...(result.ok ? {} : {errorDetail: firstLine(result.content)}),
     };
   });
+}
+
+/** Settle any visible tool left active when the user interrupts its run. */
+export function cancelRunningTools(items: TimelineItem[], reason = 'Interrupted'): TimelineItem[] {
+  const now = Date.now();
+  return items.map((item) => item.kind === 'tool' && (item.state === 'queued' || item.state === 'running')
+    ? {
+      ...item,
+      state: 'cancelled' as const,
+      errorDetail: reason,
+      ...(item.startedAt ? {durationMs: now - item.startedAt} : {}),
+    }
+    : item);
 }
 
 export function updateAssistantDelta(items: TimelineItem[], id: string, content: string): TimelineItem[] {

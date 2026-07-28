@@ -134,14 +134,14 @@ function clipTimelineItemRange(
   }
   if (item.kind === 'tool' && item.output && (options.showToolOutput || options.expandedToolId === item.id)) {
     const detailRows = width < 64 && (item.errorDetail || item.detail) ? 1 : 0;
-    const baseRows = 1 + detailRows + (item.meta ? 1 : 0);
-    const rows = visualTextRows(item.output, Math.max(1, width - 2));
+    const baseRows = 1 + detailRows + (item.meta ? 1 : 0) + (item.grouped ? 0 : 1);
+    const rows = visualTextRows(item.output, Math.max(1, width - 5));
     const desiredEnd = Math.min(rows.length, Math.max(1, endRow - baseRows));
     const selected = rows.slice(
       Math.max(0, desiredEnd - Math.max(1, availableRows - baseRows)),
       desiredEnd,
     );
-    return {...item, output: markWindowedRows(selected, desiredEnd - selected.length, desiredEnd, rows.length, Math.max(1, width - 2))};
+    return {...item, output: markWindowedRows(selected, desiredEnd - selected.length, desiredEnd, rows.length, Math.max(1, width - 5))};
   }
   if (item.kind === 'list') {
     if (availableRows <= 1) return {id: item.id, kind: 'notice', text: truncateDisplay(item.title, width)};
@@ -297,8 +297,9 @@ function clipTimelineItem(item: TimelineItem, options: TimelineViewportOptions):
   }
   if (item.kind === 'tool' && item.output && (options.showToolOutput || options.expandedToolId === item.id)) {
     const detailRows = width < 64 && (item.errorDetail || item.detail) ? 1 : 0;
-    const outputRows = Math.max(1, options.rows - 1 - detailRows);
-    return {...item, output: tailText(item.output, Math.max(1, width - 2), outputRows)};
+    const baseRows = 1 + detailRows + (item.meta ? 1 : 0) + (item.grouped ? 0 : 1);
+    const outputRows = Math.max(1, options.rows - baseRows);
+    return {...item, output: tailText(item.output, Math.max(1, width - 5), outputRows)};
   }
   return item;
 }
@@ -343,6 +344,7 @@ export function estimateTimelineItemRows(
       (item.clipped ? 0 : gap);
   }
   if (item.kind === 'notice') return wrappedRows(item.text, Math.max(1, rowWidth - 2));
+  if (item.kind === 'tool-group') return 1 + (compact ? 0 : 1);
   if (item.kind === 'update') return (rowWidth < 48 ? 3 : 2) + (item.highlights?.length ?? 0);
   if (item.kind === 'tool') {
     const narrow = rowWidth < 64;
@@ -350,9 +352,9 @@ export function estimateTimelineItemRows(
     const detailRows = narrow && detail ? 1 : 0;
     const metaRows = item.meta ? 1 : 0;
     const outputRows = (showToolOutput || item.id === expandedToolId) && item.output
-      ? Math.min(compact ? 25 : 81, richTextRows(item.output, Math.max(1, rowWidth - 2)))
+      ? Math.min(compact ? 25 : 81, richTextRows(item.output, Math.max(1, rowWidth - 5)))
       : 0;
-    return 1 + detailRows + metaRows + outputRows;
+    return 1 + detailRows + metaRows + outputRows + (item.grouped ? 0 : 1);
   }
   if (item.kind === 'list') {
     const entryRows = item.entries.reduce((total, entry) => total + 1 + (entry.detail ? 1 : 0), 0);

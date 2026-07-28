@@ -1,6 +1,12 @@
 import {lstat, readdir, readFile} from 'node:fs/promises';
 import {basename, join, resolve} from 'node:path';
 import React, {createContext, useContext} from 'react';
+import {
+  defaultTheme as inkUiDefaultTheme,
+  extendTheme as extendInkUiTheme,
+  ThemeProvider as InkUiThemeProvider,
+  type Theme as InkUiTheme,
+} from '@inkjs/ui';
 import {compactDisplayPath} from './text.js';
 import {resolveHomeNamespace} from '../utils/namespace.js';
 
@@ -73,7 +79,7 @@ function defineTheme(seed: ThemeSeed): TerminalTheme {
     secondary: seed.muted,
     info: seed.accent,
     user: seed.textStrong,
-    assistant: seed.accent,
+    assistant: seed.text,
     tool: seed.text,
     memory: seed.muted,
     skill: seed.muted,
@@ -87,23 +93,24 @@ function defineTheme(seed: ThemeSeed): TerminalTheme {
 
 export const themes: Record<string, TerminalTheme> = {
   graphite: defineTheme({
-    // "Graphite Loom": vivid teal thread on deep graphite, tuned for dark terminals.
+    // Neutral graphite with one cool interaction accent. Status colors only
+    // appear when they carry meaning, so long transcripts stay readable.
     name: 'graphite',
-    code: '#8FD8FF',
-    accent: '#49F2D0',
-    text: '#DCE5F5',
+    code: '#A9C7E8',
+    accent: '#49DCC6',
+    text: '#DFE1E5',
     textStrong: '#FFFFFF',
-    muted: '#A9B8D0',
-    dim: '#7887A3',
-    border: '#526482',
-    success: '#63F28B',
-    warning: '#FFD15C',
-    error: '#FF768E',
-    selection: '#2B3A55',
+    muted: '#ADB3BC',
+    dim: '#80868F',
+    border: '#5C626B',
+    success: '#4DDB9A',
+    warning: '#E5B94D',
+    error: '#FF7587',
+    selection: '#2C3138',
     selectionText: '#FFFFFF',
-    pendingSurface: '#202C3E',
-    successSurface: '#1D3B2A',
-    errorSurface: '#45242E',
+    pendingSurface: '#25292F',
+    successSurface: '#25332A',
+    errorSurface: '#39272B',
   }),
   cinder: defineTheme({
     name: 'cinder',
@@ -250,7 +257,27 @@ export const palette = {
 const ThemeContext = createContext<TerminalTheme>(defaultTheme);
 
 export function ThemeProvider({theme, children}: {theme: TerminalTheme; children: React.ReactNode}) {
-  return React.createElement(ThemeContext.Provider, {value: theme}, children);
+  const inkUiTheme = React.useMemo(() => createInkUiTheme(theme), [theme]);
+  return React.createElement(
+    ThemeContext.Provider,
+    {value: theme},
+    React.createElement(InkUiThemeProvider, {theme: inkUiTheme, children}),
+  );
+}
+
+/** Keep third-party Ink controls inside Skein's restrained semantic palette. */
+function createInkUiTheme(theme: TerminalTheme): InkUiTheme {
+  return extendInkUiTheme(inkUiDefaultTheme, {
+    components: {
+      Spinner: {
+        styles: {
+          container: () => ({gap: 0}),
+          frame: () => ({color: theme.accent}),
+          label: () => ({color: theme.text}),
+        },
+      },
+    },
+  });
 }
 
 export function useTheme(): TerminalTheme {

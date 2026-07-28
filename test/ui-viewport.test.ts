@@ -104,7 +104,7 @@ describe('timeline viewport budgeting', () => {
     expect(estimateTimelineItemRows(
       {id: 'tool', kind: 'tool', name: 'shell', detail: 'test', state: 'ok', output: 'a\nb\nc'},
       {width: 80, rows: 20, compact: true, showToolOutput: true},
-    )).toBe(4);
+    )).toBe(5);
   });
 
   it('budgets and clips update metadata within short viewports', () => {
