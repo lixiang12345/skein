@@ -4,7 +4,9 @@ import type {ContextEngine} from '../context/context-engine.js';
 import type {IndexPreparationResult, IndexProgress} from '../context/local-index.js';
 import {PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
 import type {MosaicConfig} from '../types.js';
-import {compactDisplayPath, displayWidth, sanitizeTerminalText, truncateDisplay} from './text.js';
+import {SPINNER_FRAMES} from './components.js';
+import {GOOSE_LINES, GOOSE_WIDTH, LOGO_LINES, LOGO_WIDTH, logoRowColors} from './logo.js';
+import {compactDisplayPath, displayWidth, padDisplay, sanitizeTerminalText, truncateDisplay} from './text.js';
 import {resolveKittyKeyboardConfig, resolveTerminalAccessibility} from './terminal-capabilities.js';
 import {resolveThemeWithColor, ThemeProvider, useTheme} from './theme.js';
 
@@ -57,9 +59,17 @@ export function WorkspacePreparationView({
   const horizontalPadding = safeWidth >= 24 && !constrained ? 2 : 0;
   const innerWidth = Math.max(1, safeWidth - horizontalPadding * 2);
   const ascii = resolveTerminalAccessibility().ascii;
-  const spinner = (ascii ? ['.', 'o', 'O', 'o'] : ['◜', '◠', '◝', '◞', '◡', '◟'])[frame % (ascii ? 4 : 6)] as string;
+  // The same one-cell winding-thread cadence the session's tool rows and
+  // footer use, so the loading surface and the transcript share one motion
+  // language.
+  const spinner = (ascii ? ['.', 'o', 'O', 'o'] : [...SPINNER_FRAMES])[frame % (ascii ? 4 : SPINNER_FRAMES.length)] as string;
   const separator = ascii ? '|' : '·';
   const brand = ascii ? '*' : PRODUCT_MARK;
+  // The block wordmark mounts here first and persists on the session banner,
+  // so preparation clearing itself reads as the steps settling, not a reset.
+  const showLogo = !ascii && !compact && !constrained && innerWidth >= LOGO_WIDTH && height >= 20;
+  const showGoose = showLogo && innerWidth >= LOGO_WIDTH + 1 + GOOSE_WIDTH;
+  const logoColors = logoRowColors(theme);
   const phase = readiness ? 'ready' : error ? 'error' : progress.phase;
   const phaseLabel = preparationLabel(phase, progress, readiness, compact);
   const detail = preparationDetail(phase, progress, readiness, error);
@@ -69,11 +79,23 @@ export function WorkspacePreparationView({
 
   return (
     <Box flexDirection="column" paddingX={horizontalPadding}>
-      <Box>
-        <Text bold color={theme.accent} aria-label={PRODUCT_NAME}>{brand}  {PRODUCT_NAME.toUpperCase()}</Text>
-        {!compact && !constrained ? <Text color={theme.dim}>  {separator}  LOCAL CONTEXT</Text> : null}
-      </Box>
-      {!constrained ? <Text color={theme.muted}>{truncateDisplay('Ground the workspace before the first request.', innerWidth)}</Text> : null}
+      {showLogo ? (
+        <>
+          {LOGO_LINES.map((line, index) => (
+            <Box key={`logo-${index}`} height={1} overflowY="hidden">
+              <Text color={logoColors[index] || theme.accent} aria-hidden>{line}</Text>
+              {showGoose ? <Text color={theme.accent} aria-hidden>{` ${GOOSE_LINES[index]}`}</Text> : null}
+            </Box>
+          ))}
+          <Text color={theme.dim} aria-label={PRODUCT_NAME}>{`context-first coding agent  ${separator}  LOCAL CONTEXT`}</Text>
+        </>
+      ) : (
+        <Box>
+          <Text bold color={theme.accent} aria-label={PRODUCT_NAME}>{brand}  {PRODUCT_NAME.toUpperCase()}</Text>
+          {!compact && !constrained ? <Text color={theme.dim}>  {separator}  LOCAL CONTEXT</Text> : null}
+        </Box>
+      )}
+      {!constrained && !showLogo ? <Text color={theme.muted}>{truncateDisplay('Ground the workspace before the first request.', innerWidth)}</Text> : null}
       {!constrained && !compact ? <Text color={theme.dim}>{truncateDisplay(`${modelLine}  ${separator}  ${workspaceLine}`, innerWidth)}</Text> : !constrained ? (
         <>
           <Text color={theme.dim}>{truncateDisplay(modelLine, innerWidth)}</Text>
@@ -91,7 +113,7 @@ export function WorkspacePreparationView({
               {step.glyph}{' '}
             </Text>
             <Text bold={step.state === 'active'} color={step.state === 'pending' ? theme.dim : theme.textStrong}>
-              {truncateDisplay(step.label, compact ? 8 : 10)}
+              {padDisplay(truncateDisplay(step.label, compact ? 8 : 10), compact ? 8 : 10)}
             </Text>
             <Text color={step.state === 'active' ? theme.muted : theme.dim}>
               {'  '}{truncateDisplay(step.detail, Math.max(1, innerWidth - displayWidth(step.glyph) - (compact ? 12 : 14)))}

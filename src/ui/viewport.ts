@@ -1,5 +1,6 @@
 import type {TimelineItem} from './components.js';
 import {
+  bannerContentRows,
   clarificationHint,
   clarificationOptionLabel,
   contextClippedReceiptText,
@@ -481,7 +482,7 @@ export function estimateTimelineItemRows(
   if (item.kind === 'prompt') return 0;
   // Every receipt row is now single-line at any width: the detail is dropped
   // rather than wrapped, so a narrow terminal cannot double the height.
-  if (item.kind === 'skill' || item.kind === 'memory' || item.kind === 'compaction') return 1;
+  if (item.kind === 'skill' || item.kind === 'memory' || item.kind === 'compaction' || item.kind === 'turn') return 1;
   if (item.kind === 'agent-message' || item.kind === 'workflow') return 1;
   if (item.kind === 'agent') return 1;
   if (item.kind === 'clarification') {
@@ -499,7 +500,11 @@ export function estimateTimelineItemRows(
     }, 0);
     return wrappedRows(item.pending.question, contentWidth) + optionRows + 1 + 1;
   }
-  if (item.kind === 'banner') return 2;
+  // The fresh-session banner never wraps: `bannerLayout` emits single-line
+  // rows only, so its height is exact at any width. The trailing gap is fixed
+  // (the banner keeps its breathing room even in compact mode, matching the
+  // renderer's unconditional margin).
+  if (item.kind === 'banner') return bannerContentRows(item, rowWidth) + 1;
   return 1;
 }
 

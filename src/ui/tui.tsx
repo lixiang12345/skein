@@ -174,6 +174,17 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     status: setupProblem ? 'blocked' : workspaceReadiness?.files === 0 ? 'empty' : 'ready',
     version: packageJson.version,
     ...(workspaceReadiness?.files ? {files: workspaceReadiness.files} : {}),
+    ...(workspaceReadiness ? {
+      chunks: workspaceReadiness.chunks,
+      rebuilt: workspaceReadiness.rebuilt,
+      reused: workspaceReadiness.reused,
+      durationMs: workspaceReadiness.durationMs,
+    } : {}),
+    workspace: config.workspaceRoots[0] ?? process.cwd(),
+    model: config.activeConnection && config.activeConnection.source !== 'legacy'
+      ? `@${config.activeConnection.id}/${config.model.model}`
+      : `${config.model.provider}/${config.model.model}`,
+    trust: permissionPosture(config),
     ...(resumeHint ? {resume: resumeHint} : {}),
   }, setupProblem));
   const [tasks, setTasks] = useState<SessionTask[]>(initialSession.tasks.map((task) => ({...task})));
@@ -213,6 +224,13 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const mentionRequest = useRef(0);
   const exitArmedAt = useRef(0);
   const previousTimelineMetrics = useRef<{rows: number; width: number}>({rows: 0, width: contentWidth});
+  // Live run telemetry: run-wide elapsed time plus token flow measured against
+  // the session ledger at run start, and per-model-call deltas for the quiet
+  // turn receipts. Values come only from `usage` events — never model text.
+  const runStartedAt = useRef(0);
+  const runUsageBaseline = useRef({input: initialSession.usage.inputTokens, output: initialSession.usage.outputTokens});
+  const usageSnapshot = useRef({input: initialSession.usage.inputTokens, output: initialSession.usage.outputTokens});
+  const turnMeter = useRef({turn: 1, startedAt: Date.now()});
 
   const workflows = useMemo(() => extensions?.listWorkflows() ?? [], [extensions]);
   const [customCommands, setCustomCommands] = useState<CustomCommand[]>([]);
@@ -424,7 +442,8 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const onEvent = useCallback((event: AgentEvent) => {
     switch (event.type) {
       case 'thinking':
-        setActivity({label: event.turn > 1 ? 'Reviewing the latest tool result' : 'Thinking', startedAt: Date.now(), turn: event.turn});
+        turnMeter.current = {turn: event.turn, startedAt: Date.now()};
+        setActivity({label: event.turn > 1 ? 'Reviewing the latest tool result' : 'Spinning', startedAt: Date.now(), turn: event.turn});
         break;
       case 'context':
         refreshSession();
@@ -443,14 +462,14 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
             ...(event.packed.degradation ? {degradation: event.packed.degradation} : {}),
           });
         }
-        setActivity({label: 'Assembling relevant context', startedAt: Date.now()});
+        setActivity({label: 'Gathering threads', startedAt: Date.now()});
         break;
       case 'prompt':
-        setActivity({label: 'Preparing model request', startedAt: Date.now()});
+        setActivity({label: 'Spinning', startedAt: Date.now()});
         break;
       case 'assistant_delta':
         setTimeline((items) => updateAssistantDelta(items, event.id, event.content));
-        setActivity({label: 'Writing response', startedAt: Date.now()});
+        setActivity({label: 'Weaving the reply', startedAt: Date.now()});
         break;
       case 'assistant':
         if (event.content.trim()) {
@@ -575,9 +594,22 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       case 'intent':
         refreshSession();
         break;
-      case 'usage':
+      case 'usage': {
+        // One quiet receipt per model interaction: the delta against the last
+        // cumulative ledger snapshot is exactly what this call consumed.
+        const inputDelta = Math.max(0, event.inputTokens - usageSnapshot.current.input);
+        const outputDelta = Math.max(0, event.outputTokens - usageSnapshot.current.output);
+        usageSnapshot.current = {input: event.inputTokens, output: event.outputTokens};
+        if (inputDelta || outputDelta) {
+          append({
+            id: nextId(), kind: 'turn', turn: turnMeter.current.turn, model: config.model.model,
+            durationMs: Date.now() - turnMeter.current.startedAt,
+            inputTokens: inputDelta, outputTokens: outputDelta,
+          });
+        }
         refreshSession();
         break;
+      }
       case 'error':
         lastEventError.current = event.error.message;
         setTimeline(endStreamingAssistants);
@@ -1601,6 +1633,9 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
       }
       processing.current = true;
       setBusy(true);
+      runStartedAt.current = Date.now();
+      turnMeter.current = {turn: 1, startedAt: Date.now()};
+      runUsageBaseline.current = {...usageSnapshot.current};
       append({id: nextId(), kind: 'user', text: trimmed});
       const abortController = new AbortController();
       controller.current = abortController;
@@ -1659,6 +1694,9 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     processing.current = true;
     stopRequested.current = false;
     setBusy(true);
+    runStartedAt.current = Date.now();
+    turnMeter.current = {turn: 1, startedAt: Date.now()};
+    runUsageBaseline.current = {...usageSnapshot.current};
     let current: QueueItem | undefined = item;
     try {
       while (current) {
@@ -2224,7 +2262,16 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
             {...(session.contextSources?.length ? {sources: session.contextSources} : {})}
           />
         ) : null}
-        <ActivityLine {...(showActivity && activity ? {activity} : {})} frame={frame} width={contentWidth} />
+        <ActivityLine
+          {...(showActivity && activity ? {activity} : {})}
+          frame={frame}
+          width={contentWidth}
+          {...(busy && runStartedAt.current ? {run: {
+            startedAt: runStartedAt.current,
+            inputTokens: Math.max(0, session.usage.inputTokens - runUsageBaseline.current.input),
+            outputTokens: Math.max(0, session.usage.outputTokens - runUsageBaseline.current.output),
+          }} : {})}
+        />
         {!permission ? <>
           <CommandPalette
             suggestions={paletteSuggestions}
@@ -2329,6 +2376,13 @@ function initialTimeline(session: Session, banner: BannerInfo, setupProblem?: st
     items.push({
       id: nextId(), kind: 'banner', engine: banner.engine, status: banner.status, version: banner.version,
       ...(banner.files !== undefined ? {files: banner.files} : {}),
+      ...(banner.chunks !== undefined ? {chunks: banner.chunks} : {}),
+      ...(banner.rebuilt !== undefined ? {rebuilt: banner.rebuilt} : {}),
+      ...(banner.reused !== undefined ? {reused: banner.reused} : {}),
+      ...(banner.durationMs !== undefined ? {durationMs: banner.durationMs} : {}),
+      ...(banner.workspace ? {workspace: banner.workspace} : {}),
+      ...(banner.model ? {model: banner.model} : {}),
+      ...(banner.trust ? {trust: banner.trust} : {}),
       ...(banner.resume ? {resume: banner.resume} : {}),
     });
   }
@@ -2355,6 +2409,13 @@ interface BannerInfo {
   status: 'ready' | 'empty' | 'blocked';
   version: string;
   files?: number;
+  chunks?: number;
+  rebuilt?: boolean;
+  reused?: number;
+  durationMs?: number;
+  workspace?: string;
+  model?: string;
+  trust?: string;
   resume?: {title: string; updatedAt: string};
 }
 

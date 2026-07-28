@@ -21,11 +21,31 @@ function renderBanner(width: number, extras: Record<string, unknown> = {}): stri
 }
 
 describe('fresh-session banner', () => {
-  it('shows real index size on wide terminals only', () => {
-    const wide = renderBanner(80, {files: 279});
-    expect(wide).toContain('local context · 279 files');
-    const narrow = renderBanner(48, {files: 279});
-    expect(narrow).not.toContain('279 files');
+  it('opens wide sessions on the block wordmark with a persistent readiness receipt', () => {
+    const wide = renderBanner(80, {files: 279, chunks: 1204, rebuilt: false, workspace: '/tmp/demo', model: 'openai/gpt-test', trust: 'guarded'});
+    expect(wide).toContain('███');
+    expect(wide).toContain('context-first coding agent · v0.3.47');
+    expect(wide).toContain('local context · 279 files · 1,204 chunks · reused');
+    expect(wide).toContain('workspace');
+    expect(wide).toContain('openai/gpt-test');
+    expect(wide).toContain('guarded permissions');
+    expect(wide).toContain('try "explain this codebase"');
+  });
+
+  it('reports a rebuilt index with its build duration', () => {
+    const wide = renderBanner(80, {files: 28, chunks: 71, rebuilt: true, durationMs: 42});
+    expect(wide).toContain('28 files · 71 chunks · indexed in 42ms');
+  });
+
+  it('drops to the text wordmark before the logo can overflow narrow terminals', () => {
+    const narrow = renderBanner(40, {files: 279});
+    expect(narrow).not.toContain('█');
+    expect(narrow).toContain('SKEIN');
+    expect(narrow).toContain('279 files');
+    const tiny = renderBanner(24);
+    expect(tiny).toContain('ready');
+    expect(tiny).not.toContain('SKEIN');
+    expect(stripAnsi(tiny).trimEnd().split('\n')).toHaveLength(1);
   });
 
   it('keeps prior-session content out of the resting frame', () => {
@@ -36,12 +56,26 @@ describe('fresh-session banner', () => {
     expect(wide).not.toContain('skein --continue');
   });
 
-  it('hides the resume pointer on narrow terminals and keeps one-line banners', () => {
-    const resume = {title: 'fix webhook retry', updatedAt: new Date().toISOString()};
-    const narrow = renderBanner(40, {resume});
-    expect(narrow).not.toContain('last session');
-    expect(estimateTimelineItemRows({id: 'b', kind: 'banner', engine: 'local', status: 'ready', version: '0'}, {width: 80, rows: 24})).toBe(2);
-    expect(estimateTimelineItemRows({id: 'b', kind: 'banner', engine: 'local', status: 'ready', version: '0', resume}, {width: 80, rows: 24})).toBe(2);
-    expect(estimateTimelineItemRows({id: 'b', kind: 'banner', engine: 'local', status: 'ready', version: '0', resume}, {width: 40, rows: 24})).toBe(2);
+  it('estimates the exact banner height the renderer produces', () => {
+    const base = {id: 'b', kind: 'banner', engine: 'local', status: 'ready', version: '0'} as const;
+    for (const [width, extras] of [
+      [80, {}],
+      [80, {files: 279, chunks: 1204, workspace: '/tmp/demo', model: 'openai/gpt-test', trust: 'guarded'}],
+      [48, {files: 279}],
+      [40, {files: 279}],
+      [24, {}],
+    ] as const) {
+      const item = {...base, ...extras};
+      const rendered = stripAnsi(renderToString(
+        <ThemeProvider theme={theme}><Timeline width={width} items={[item]} /></ThemeProvider>,
+        {columns: width},
+      ));
+      // The trailing transcript gap is the one blank row trimEnd removes.
+      const renderedRows = rendered.replace(/\n$/, '').trimEnd().split('\n').length + 1;
+      expect(
+        estimateTimelineItemRows(item, {width, rows: 40}),
+        `estimate drifted from render at ${width} columns`,
+      ).toBe(renderedRows);
+    }
   });
 });

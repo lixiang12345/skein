@@ -1,6 +1,5 @@
-import React from 'react';
+import React, {useEffect, useState} from 'react';
 import {Box, Text} from 'ink';
-import {Spinner} from '@inkjs/ui';
 import {basename} from 'node:path';
 import type {AgentPhase, ContextBudgetTier, ContextDegradation, ContextSource, MosaicConfig, PendingInput, PromptTokenBreakdown, RouteCostReceipt, SessionTask, ToolCall, ToolCategory, WorkingMemory} from '../types.js';
 import {PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
@@ -15,7 +14,8 @@ import {
   terminalEllipsis,
   truncateDisplay,
 } from './text.js';
-import {formatPercent, formatTokens, useTheme} from './theme.js';
+import {elapsed, formatPercent, formatTokens, useTheme} from './theme.js';
+import {LOGO_HEIGHT, LOGO_LINES, LOGO_WIDTH, logoRowColors, GOOSE_LINES, GOOSE_WIDTH} from './logo.js';
 import {resolveTerminalAccessibility} from './terminal-capabilities.js';
 
 export type TimelineItem =
@@ -30,11 +30,12 @@ export type TimelineItem =
   | {id: string; kind: 'agent-message'; from: string; to: string; text: string}
   | {id: string; kind: 'workflow'; name: string; step: string; status: SessionTask['status']}
   | {id: string; kind: 'compaction'; messages: number; tokens: number}
+  | {id: string; kind: 'turn'; turn: number; model: string; durationMs: number; inputTokens: number; outputTokens: number}
   | {id: string; kind: 'clarification'; pending: PendingInput}
   | {id: string; kind: 'list'; title: string; entries: ListEntry[]}
   | {id: string; kind: 'context-inspector'; status: ContextInspectorStatus; working?: WorkingMemory; summary?: string; sources?: ContextSource[]}
   | {id: string; kind: 'theme'; name: string}
-  | {id: string; kind: 'banner'; engine: string; status: 'ready' | 'empty' | 'blocked'; version: string; files?: number; resume?: {title: string; updatedAt: string}}
+  | {id: string; kind: 'banner'; engine: string; status: 'ready' | 'empty' | 'blocked'; version: string; files?: number; chunks?: number; rebuilt?: boolean; reused?: number; durationMs?: number; workspace?: string; model?: string; trust?: string; resume?: {title: string; updatedAt: string}}
   | {id: string; kind: 'notice'; text: string; tone?: 'info' | 'error' | 'success' | 'warning'; wrapWidth?: number}
   | {id: string; kind: 'update'; current: string; latest: string; command: string; highlights?: string[]};
 
@@ -248,11 +249,27 @@ export function Header({config, askMode, planMode = false, width = 80, glyphMode
   );
 }
 
+/**
+ * The one animated glyph the whole surface shares: a thread winding into a
+ * ball. Frames are one cell by contract so they fit the shared gutter.
+ */
+export const SPINNER_FRAMES: readonly string[] = ['◌', '◍', '◎', '◉', '◎', '◍'];
+
+function WindingSpinner() {
+  const theme = useTheme();
+  const [frame, setFrame] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setFrame((value) => (value + 1) % SPINNER_FRAMES.length), 110);
+    return () => clearInterval(timer);
+  }, []);
+  return <Text color={theme.accent}>{SPINNER_FRAMES[frame]}</Text>;
+}
+
 function ToolGlyph({state, glyphs}: {state: 'queued' | 'running' | 'ok' | 'error' | 'cancelled'; glyphs: UiGlyphs}) {
   const theme = useTheme();
   if (state === 'queued') return <Text color={theme.muted}>{glyphs.pending}</Text>;
   if (state === 'running') return glyphs.borderStyle === 'round' && !resolveTerminalAccessibility().reducedMotion
-    ? <Spinner type="dots" />
+    ? <WindingSpinner />
     : <Text color={theme.accent}>{glyphs.running}</Text>;
   if (state === 'ok') return <Text color={theme.success}>{glyphs.success}</Text>;
   if (state === 'cancelled') return <Text color={theme.warning}>{glyphs.warning}</Text>;
@@ -476,6 +493,20 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
             />
           );
         }
+        if (item.kind === 'turn') {
+          // One quiet receipt per model interaction: the same content-free
+          // evidence language as the other meta rows — duration and token
+          // flow, never prompt text.
+          return (
+            <MetaRow
+              key={item.id}
+              width={rowWidth}
+              glyph={glyphs.context}
+              label={`turn ${item.turn}`}
+              detail={`${sanitizeInlineTerminalText(item.model)} ${glyphs.separator} ${formatDuration(item.durationMs)} ${glyphs.separator} ${glyphs.up}${formatTokens(item.inputTokens)} ${glyphs.down}${formatTokens(item.outputTokens)} tok`}
+            />
+          );
+        }
         if (item.kind === 'clarification') {
           const chinese = CJK_PATTERN.test(item.pending.question);
           // A pending question is the one place the transcript may spend extra
@@ -524,7 +555,24 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
           return <ContextInspector key={item.id} status={item.status} working={item.working} summary={item.summary} width={rowWidth} compact={compact} glyphMode={glyphMode} />;
         }
         if (item.kind === 'theme') return <ThemePreview key={item.id} name={item.name} width={rowWidth} glyphs={glyphs} />;
-        if (item.kind === 'banner') return <Banner key={item.id} engine={item.engine} status={item.status} version={item.version} width={rowWidth} glyphs={glyphs} {...(item.files !== undefined ? {files: item.files} : {})} />;
+        if (item.kind === 'banner') {
+          return <Banner
+            key={item.id}
+            engine={item.engine}
+            status={item.status}
+            version={item.version}
+            width={rowWidth}
+            glyphs={glyphs}
+            {...(item.files !== undefined ? {files: item.files} : {})}
+            {...(item.chunks !== undefined ? {chunks: item.chunks} : {})}
+            {...(item.rebuilt !== undefined ? {rebuilt: item.rebuilt} : {})}
+            {...(item.reused !== undefined ? {reused: item.reused} : {})}
+            {...(item.durationMs !== undefined ? {durationMs: item.durationMs} : {})}
+            {...(item.workspace ? {workspace: item.workspace} : {})}
+            {...(item.model ? {model: item.model} : {})}
+            {...(item.trust ? {trust: item.trust} : {})}
+          />;
+        }
         if (item.kind === 'update') {
           return <UpdateNotice key={item.id} current={item.current} latest={item.latest} command={item.command} width={rowWidth} glyphs={glyphs} {...(item.highlights ? {highlights: item.highlights} : {})} />;
         }
@@ -1258,10 +1306,10 @@ function InlineRow({parts, width, separator, separatorColor}: {
   );
 }
 
-export function Footer({busy, approval = false, changedFiles, width = 80, contextPressure, queueCount = 0, activeAgents = 0, frame, glyphMode = 'auto', mode = 'BUILD', route, identityVisible = false}: {
+export function Footer({busy, approval = false, tokens = 0, changedFiles, width = 80, contextPressure, queueCount = 0, activeAgents = 0, frame, glyphMode = 'auto', mode = 'BUILD', route, identityVisible = false}: {
   busy: boolean;
   approval?: boolean;
-  tokens: number;
+  tokens?: number;
   maxTokens: number;
   changedFiles: number;
   width?: number;
@@ -1307,6 +1355,7 @@ export function Footer({busy, approval = false, changedFiles, width = 80, contex
     ...(queueCount ? [{text: `q${queueCount}`, color: theme.muted, optional: true}] : []),
     ...(!identityVisible && rowWidth >= 28 ? [{text: sanitizeInlineTerminalText(mode), color: theme.muted}] : []),
     ...(!identityVisible && rowWidth >= 64 && route ? [{text: sanitizeInlineTerminalText(route), color: theme.dim, optional: true}] : []),
+    ...(rowWidth >= 72 && tokens > 0 ? [{text: `${formatTokens(tokens)} tok`, color: theme.dim, optional: true}] : []),
     ...(rowWidth >= 72 ? [{text: '/help', color: theme.dim, optional: true}] : []),
   ];
   return (
@@ -1416,26 +1465,42 @@ export function CommandPalette({
   );
 }
 
-export function ActivityLine({activity, frame, width = 80}: {activity?: ActivityState; frame: string; width?: number}) {
+export function ActivityLine({activity, frame, width = 80, run}: {
+  activity?: ActivityState;
+  frame: string;
+  width?: number;
+  /** Run-wide telemetry: start time plus token flow since the run began. */
+  run?: {startedAt: number; inputTokens: number; outputTokens: number};
+}) {
   const theme = useTheme();
   if (!activity) return null;
+  const glyphs = resolveGlyphs();
   const rowWidth = safeWidth(width);
   const contentWidth = Math.max(1, rowWidth - GUTTER);
-  const turn = activity.turn ? `turn ${activity.turn}` : '';
-  const turnWidth = rowWidth >= 48 && turn ? displayWidth(turn) + 2 : 0;
+  // Everything after the label is reference telemetry, most disposable last:
+  // the turn, the run clock, the token flow, then the interrupt hint.
+  const detail = [
+    activity.turn ? `turn ${activity.turn}` : '',
+    run ? elapsed(run.startedAt) : '',
+    run && (run.inputTokens > 0 || run.outputTokens > 0)
+      ? `${glyphs.up}${formatTokens(run.inputTokens)} ${glyphs.down}${formatTokens(run.outputTokens)} tok`
+      : '',
+    rowWidth >= 84 ? 'esc interrupts' : '',
+  ].filter(Boolean).join(` ${glyphs.separator} `);
+  const detailWidth = rowWidth >= 48 && detail ? displayWidth(detail) + 2 : 0;
   // A spinner frame is one cell by contract; bound it to the gutter so a longer
   // value cannot push the label out of the shared content column.
   const safeFrame = truncateDisplay(sanitizeInlineTerminalText(frame), GUTTER, '');
-  const label = truncateDisplay(sanitizeInlineTerminalText(activity.label), Math.max(1, contentWidth - turnWidth));
+  const label = truncateDisplay(sanitizeInlineTerminalText(activity.label), Math.max(1, contentWidth - detailWidth));
   return (
     // The spinner lives in the shared gutter so the live row lines up with the
     // receipts above it instead of starting two columns further in.
     <Box marginBottom={1} flexDirection="column">
       <Row glyph={<Text color={theme.accent}>{safeFrame}</Text>}>
         <Text color={theme.text}>{label}</Text>
-        {rowWidth >= 48 && turn ? <Text color={theme.dim}>{`  ${turn}`}</Text> : null}
+        {rowWidth >= 48 && detail ? <Text color={theme.dim}>{`  ${detail}`}</Text> : null}
       </Row>
-      {rowWidth < 48 && turn ? <Box paddingLeft={GUTTER}><Text color={theme.dim}>{truncateDisplay(turn, contentWidth)}</Text></Box> : null}
+      {rowWidth < 48 && detail ? <Box paddingLeft={GUTTER}><Text color={theme.dim}>{truncateDisplay(detail, contentWidth)}</Text></Box> : null}
     </Box>
   );
 }
@@ -1708,37 +1773,196 @@ function ThemePreview({name, width, glyphs}: {name: string; width: number; glyph
   );
 }
 
-function Banner({engine, status, version, width, glyphs, files}: {
+type BannerItem = Extract<TimelineItem, {kind: 'banner'}>;
+
+interface BannerReceipt {
+  tone: 'success' | 'warning' | 'meta' | 'quiet';
+  label: string;
+  detail: string;
+}
+
+interface BannerLayout {
+  /** Render the block wordmark; falls back to the text wordmark elsewhere. */
+  logo: boolean;
+  /** `undefined` only in the single-line variant. */
+  tagline?: string;
+  receipts: BannerReceipt[];
+  hint?: string;
+  /** Single-line fallback for very narrow terminals. */
+  line?: string;
+  /** Content rows excluding the trailing transcript gap. */
+  rows: number;
+}
+
+const BANNER_TAGLINE = 'context-first coding agent';
+const BANNER_LABEL_COLUMN = 11;
+
+function formatBannerDuration(durationMs: number): string {
+  if (durationMs < 1_000) return `${Math.max(1, Math.round(durationMs))}ms`;
+  return `${(durationMs / 1_000).toFixed(durationMs < 10_000 ? 1 : 0)}s`;
+}
+
+/**
+ * The one layout model both the renderer and the viewport estimator consume.
+ * Every branch below produces single-line rows only — the banner never wraps,
+ * so `rows` is exact at any width and the scroll anchor cannot drift.
+ */
+export function bannerLayout(item: BannerItem, width: number, glyphs: UiGlyphs): BannerLayout {
+  const rowWidth = safeWidth(width);
+  const separator = ` ${glyphs.separator} `;
+  const unicode = glyphs.borderStyle === 'round';
+  if (rowWidth < 30) {
+    const line = `${item.status === 'ready' ? 'ready' : item.status === 'empty' ? 'empty' : 'setup'}${separator}v${item.version}`;
+    return {logo: false, receipts: [], line, rows: 1};
+  }
+
+  const wide = rowWidth >= LOGO_WIDTH + GUTTER + 6;
+  const indexDetail = item.status === 'ready'
+    ? item.files !== undefined
+      ? [
+        'local context',
+        `${item.files.toLocaleString('en-US')} files`,
+        ...(item.chunks !== undefined ? [`${item.chunks.toLocaleString('en-US')} chunks`] : []),
+        item.rebuilt
+          ? `indexed${item.durationMs !== undefined ? ` in ${formatBannerDuration(item.durationMs)}` : ''}`
+          : 'reused',
+      ].join(separator)
+      : `local context verified`
+    : item.status === 'empty'
+      ? 'empty workspace — no source files indexed yet'
+      : 'setup required — follow the notice below';
+  const receipts: BannerReceipt[] = [{
+    tone: item.status === 'ready' ? 'success' : 'warning',
+    label: item.status === 'blocked' ? 'setup' : 'index',
+    detail: indexDetail,
+  }];
+  if (wide) {
+    if (item.workspace) {
+      receipts.push({tone: 'meta', label: 'workspace', detail: compactDisplayPath(sanitizeTerminalText(item.workspace), Math.max(8, rowWidth - GUTTER - BANNER_LABEL_COLUMN))});
+    }
+    if (item.model) receipts.push({tone: 'meta', label: 'model', detail: sanitizeTerminalText(item.model)});
+    if (item.trust) {
+      receipts.push({tone: 'quiet', label: 'trust', detail: `${sanitizeTerminalText(item.trust)} permissions${separator}nothing leaves this machine`});
+    }
+  }
+  const hint = wide
+    ? `try "explain this codebase"${separator}@path attaches context${separator}/ commands`
+    : `/ commands${separator}@ attach`;
+  const logo = unicode && wide;
+  const tagline = wide
+    ? `${BANNER_TAGLINE}${separator}v${item.version}`
+    : `v${item.version}`;
+  // Logo layout spends a blank row before the receipts and before the hint so
+  // the mark, the evidence, and the invitation read as three settled groups.
+  const rows = logo
+    ? LOGO_HEIGHT + 1 + 1 + receipts.length + 1 + 1
+    : 1 + receipts.length + 1;
+  return {logo, tagline, receipts, hint, rows};
+}
+
+/** Exact content height of a banner at `width`; the viewport adds the trailing gap. */
+export function bannerContentRows(item: BannerItem, width: number, glyphs: UiGlyphs = resolveGlyphs()): number {
+  return bannerLayout(item, width, glyphs).rows;
+}
+
+function BannerReceiptRow({receipt, width, glyphs}: {receipt: BannerReceipt; width: number; glyphs: UiGlyphs}) {
+  const theme = useTheme();
+  const glyph = receipt.tone === 'success'
+    ? glyphs.success
+    : receipt.tone === 'warning'
+      ? glyphs.warning
+      : receipt.tone === 'meta'
+        ? glyphs.context
+        : glyphs.bullet;
+  const color = receipt.tone === 'success' ? theme.success : receipt.tone === 'warning' ? theme.warning : receipt.tone === 'meta' ? theme.muted : theme.dim;
+  const detailWidth = Math.max(1, width - GUTTER - BANNER_LABEL_COLUMN);
+  return (
+    <Box height={1} overflowY="hidden">
+      <Box width={GUTTER}><Text color={color}>{glyph}</Text></Box>
+      <Text color={receipt.tone === 'quiet' ? theme.dim : theme.muted}>{padDisplay(receipt.label, BANNER_LABEL_COLUMN)}</Text>
+      <Text color={receipt.tone === 'warning' ? theme.warning : receipt.tone === 'quiet' ? theme.dim : theme.text} wrap="truncate">
+        {truncateDisplay(receipt.detail, detailWidth)}
+      </Text>
+    </Box>
+  );
+}
+
+function Banner({engine, status, version, width, glyphs, files, chunks, rebuilt, reused, durationMs, workspace, model, trust}: {
   engine: string;
   status: 'ready' | 'empty' | 'blocked';
   version: string;
   width: number;
   glyphs: UiGlyphs;
   files?: number;
+  chunks?: number;
+  rebuilt?: boolean;
+  reused?: number;
+  durationMs?: number;
+  workspace?: string;
+  model?: string;
+  trust?: string;
 }) {
   const theme = useTheme();
   const rowWidth = safeWidth(width);
-  // The readiness line is a receipt like any other, so its glyph shares the
-  // transcript gutter with context/tool/notice rows instead of sitting inboard.
   const contentWidth = Math.max(1, rowWidth - GUTTER);
-  const safeEngine = sanitizeInlineTerminalText(engine);
-  const glyph = status === 'ready' ? glyphs.success : glyphs.warning;
-  const label = status === 'ready' ? 'Workspace ready' : status === 'empty' ? 'Empty workspace' : 'Setup required';
-  const color = status === 'ready' ? theme.success : theme.warning;
-  const indexed = files !== undefined && files > 0 && rowWidth >= 64
-    ? ` ${glyphs.separator} ${files.toLocaleString('en-US')} files`
-    : '';
-  const detail = rowWidth >= 48
-    ? `${status === 'ready' ? `${safeEngine} context${indexed}` : status === 'empty' ? 'empty workspace' : 'setup required'} ${glyphs.separator} v${version}`
-    : rowWidth >= 28
-      ? `${status === 'ready' ? 'local context' : status === 'empty' ? 'empty workspace' : 'setup required'} ${glyphs.separator} v${version}`
-      : `${status === 'ready' ? 'ready' : status === 'empty' ? 'empty' : 'setup'} ${glyphs.separator} v${version}`;
-  const spokenDetail = `${label}.${status === 'ready' ? ` ${safeEngine} context.${files !== undefined && files > 0 ? ` ${files.toLocaleString('en-US')} files.` : ''}` : ''} Version v${version}.`;
+  const item: BannerItem = {
+    id: 'banner', kind: 'banner', engine, status, version,
+    ...(files !== undefined ? {files} : {}),
+    ...(chunks !== undefined ? {chunks} : {}),
+    ...(rebuilt !== undefined ? {rebuilt} : {}),
+    ...(reused !== undefined ? {reused} : {}),
+    ...(durationMs !== undefined ? {durationMs} : {}),
+    ...(workspace ? {workspace} : {}),
+    ...(model ? {model} : {}),
+    ...(trust ? {trust} : {}),
+  };
+  const layout = bannerLayout(item, rowWidth, glyphs);
+  const spokenDetail = `${PRODUCT_NAME} version ${version}. ${layout.receipts.map((receipt) => `${receipt.label}: ${receipt.detail}.`).join(' ') || `${status}.`}`;
+
+  if (layout.line) {
+    const glyph = status === 'ready' ? glyphs.success : glyphs.warning;
+    const color = status === 'ready' ? theme.success : theme.warning;
+    return (
+      <Box marginBottom={1} height={1} overflowY="hidden" aria-label={spokenDetail}>
+        <Box width={GUTTER}><Text bold color={color}>{glyph}</Text></Box>
+        <Text color={status === 'ready' ? theme.text : theme.warning}>{truncateDisplay(layout.line, contentWidth)}</Text>
+      </Box>
+    );
+  }
+
+  const logoColors = logoRowColors(theme);
+  // The full flight lockup needs the goose's tow-thread columns; narrower
+  // frames keep the letters alone rather than clipping the animal mid-wing.
+  const goose = layout.logo && rowWidth >= GUTTER + LOGO_WIDTH + 1 + GOOSE_WIDTH + 2;
   return (
     <Box marginBottom={1} flexDirection="column" aria-label={spokenDetail}>
+      {layout.logo ? (
+        <>
+          {LOGO_LINES.map((line, index) => (
+            <Box key={`logo-${index}`} height={1} overflowY="hidden" paddingLeft={GUTTER}>
+              <Text color={logoColors[index] || theme.accent} aria-hidden>{line}</Text>
+              {goose ? <Text color={theme.accent} aria-hidden>{` ${GOOSE_LINES[index]}`}</Text> : null}
+            </Box>
+          ))}
+          <Box height={1} overflowY="hidden" paddingLeft={GUTTER}>
+            <Text color={theme.dim}>{truncateDisplay(layout.tagline ?? '', contentWidth)}</Text>
+          </Box>
+          <Text> </Text>
+        </>
+      ) : (
+        <Box height={1} overflowY="hidden">
+          <Box width={GUTTER}><Text color={theme.accent} aria-hidden>{glyphs.brand}</Text></Box>
+          <Text bold color={theme.accent}>{PRODUCT_NAME.toUpperCase()}</Text>
+          <Text color={theme.dim}>{truncateDisplay(`  ${layout.tagline ?? ''}`, Math.max(1, contentWidth - displayWidth(PRODUCT_NAME)))}</Text>
+        </Box>
+      )}
+      {layout.receipts.map((receipt) => (
+        <BannerReceiptRow key={receipt.label} receipt={receipt} width={rowWidth} glyphs={glyphs} />
+      ))}
+      {layout.logo ? <Text> </Text> : null}
       <Box height={1} overflowY="hidden">
-        <Box width={GUTTER}><Text bold color={color}>{glyph}</Text></Box>
-        <Text color={status === 'ready' ? theme.text : theme.warning}>{truncateDisplay(detail, contentWidth)}</Text>
+        <Box width={GUTTER}><Text color={theme.accent}>{glyphs.prompt}</Text></Box>
+        <Text color={theme.dim}>{truncateDisplay(layout.hint ?? '', contentWidth)}</Text>
       </Box>
     </Box>
   );

@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.63",
+  "version": "0.3.64",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -24,6 +24,9 @@
   },
   "skein": {
     "releaseNotes": [
+      "The startup identity is now a fused flight lockup: the Skein Goose climbs ahead of the block SKEIN wordmark, towing it by the ⌁ context thread, with a per-row theme colour ramp on the letters and the solid accent on the animal, in both the preparation screen and the persistent session banner; ASCII, narrow, constrained-height, and screen-reader terminals keep the deterministic text wordmark",
+      "Workspace preparation results persist as banner receipts (index size and chunks, build duration, workspace, model route, trust posture) instead of vanishing when the loading surface clears, and every model interaction settles into a quiet turn receipt carrying the model, duration, and separated input/output token flow",
+      "Live runs show weaving-metaphor phase words (Gathering threads, Spinning, Weaving the reply) beside a run clock, streaming token counters, and an esc hint; the footer gains a dim session token total on wide terminals, and the one-cell winding-thread spinner is now the single motion glyph across preparation, tool rows, the activity line, and the footer",
       "The transcript now reads from a single left edge: every row shares one two-column status gutter, replacing the competing prompt, indent, and tool-tree edges, and tool calls become a width-derived aligned column that stays one row on narrow terminals instead of expanding to two",
       "A tool that simply succeeded is silent: only running, failed, and cancelled calls claim a status glyph, and the redundant per-run tool group header is gone, so one real failure no longer carries the same visual weight as four successes",
       "Terminal colour is now a single-meaning contract: accent marks only live or interactive elements, success only terminal completion evidence, warning only decisions and degradation, error only failure, and code literals get their own neutral tone instead of borrowing the success and warning colours for syntax highlighting",

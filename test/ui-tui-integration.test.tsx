@@ -16,7 +16,7 @@ import {displayWidth} from '../src/ui/text.js';
 import type {AgentEvent, ChatMessage, ContextHit, Session} from '../src/types.js';
 
 describe('SkeinApp completion flows', () => {
-  it('keeps a fresh-session composer next to one factual readiness line', async () => {
+  it('opens fresh sessions on the branded banner with the readiness receipt above the composer', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skein-fresh-session-ui-'));
     const session = testSession(root);
     const {runner} = mockRunner(root, session);
@@ -26,13 +26,16 @@ describe('SkeinApp completion flows', () => {
       const frame = harness.lastFrame();
       const lines = frame.split('\n');
       const nonEmptyLines = lines.filter((line) => line.trim());
+      const logoRow = nonEmptyLines.findIndex((line) => line.includes('███'));
       const summaryRow = nonEmptyLines.findIndex((line) => line.includes('local context'));
       const composerRow = nonEmptyLines.findIndex((line) => line.includes('Type a request'));
-      expect(summaryRow).toBeGreaterThanOrEqual(0);
+      // Wordmark, then the persistent readiness receipt, then the composer.
+      expect(logoRow).toBeGreaterThanOrEqual(0);
+      expect(summaryRow).toBeGreaterThan(logoRow);
       expect(composerRow).toBeGreaterThan(summaryRow);
-      expect(composerRow - summaryRow).toBeLessThanOrEqual(3);
-      expect(composerRow).toBeLessThan(8);
-      expect(lines.length).toBeLessThan(12);
+      expect(composerRow - summaryRow).toBeLessThanOrEqual(8);
+      expect(composerRow).toBeLessThan(16);
+      expect(lines.length).toBeLessThan(24);
       expect(frame.match(/SKEIN/gu)).toHaveLength(1);
       expect(frame).not.toContain('context runs automatically');
     } finally {
@@ -95,9 +98,9 @@ describe('SkeinApp completion flows', () => {
       expect(frame).not.toContain('EXTENSIONS');
 
       harness.stdin.write('/status\r');
-      // The fresh banner itself now shows the indexed file count, so wait on
-      // the chunk count, which only the /status panel renders.
-      await vi.waitFor(() => expect(harness.output()).toContain('71 chunks'));
+      // The fresh banner itself now shows files and chunks, so wait on the
+      // tool count, which only the /status panel renders.
+      await vi.waitFor(() => expect(harness.output()).toContain('9 tools'));
       const output = stripAnsi(harness.output());
       expect(output).toContain('28 files');
       expect(output).toContain('Status');

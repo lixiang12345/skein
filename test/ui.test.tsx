@@ -881,7 +881,7 @@ describe('terminal presentation', () => {
     expect(output).not.toMatch(/[┌┐└┘╭╮╰╯│]/u);
   });
 
-  it.each([20, 40, 80])('keeps the fresh-session summary compact at %i columns', (columns) => {
+  it.each([20, 40])('keeps the fresh-session summary compact at %i columns', (columns) => {
     const output = renderToString(<Timeline width={columns} items={[{
       id: 'banner',
       kind: 'banner',
@@ -890,14 +890,33 @@ describe('terminal presentation', () => {
       version: '0.3.5',
     }]} />, {columns});
 
-    expect(output).toContain(columns < 28 ? 'ready' : 'local context');
+    expect(output).toContain(columns < 30 ? 'ready' : 'local context');
     expect(output).toContain('v0.3.5');
-    expect(output.trimEnd().split('\n')).toHaveLength(1);
+    expect(output.trimEnd().split('\n')).toHaveLength(columns < 30 ? 1 : 3);
     expect(output).not.toContain('S K E I N');
     expect(output).not.toContain('cwd ');
     expect(output).not.toMatch(/[┌┐└┘╭╮╰╯│█]/u);
     for (const line of output.split('\n')) {
       expect(displayWidth(line), `${columns}-column session summary overflowed: ${JSON.stringify(line)}`).toBeLessThanOrEqual(columns);
+    }
+  });
+
+  it('opens wide fresh sessions on the block wordmark without boxed chrome', () => {
+    const output = renderToString(<Timeline width={80} items={[{
+      id: 'banner',
+      kind: 'banner',
+      engine: 'local',
+      status: 'ready',
+      version: '0.3.5',
+    }]} />, {columns: 80});
+
+    expect(output).toContain('███');
+    expect(output).toContain('context-first coding agent · v0.3.5');
+    expect(output).toContain('local context');
+    expect(output).not.toContain('cwd ');
+    expect(output).not.toMatch(/[┌┐└┘╭╮╰╯]/u);
+    for (const line of output.split('\n')) {
+      expect(displayWidth(line), `80-column banner overflowed: ${JSON.stringify(line)}`).toBeLessThanOrEqual(80);
     }
   });
 
@@ -915,7 +934,10 @@ describe('terminal presentation', () => {
 
     expect(output).toContain(expected);
     expect(output).toContain('v0.3.40');
-    expect(output.trimEnd().split('\n')).toHaveLength(1);
+    // ASCII terminals keep the text wordmark: no block art, no boxes.
+    expect(output).not.toContain('█');
+    expect(output).toContain('SKEIN');
+    expect(output.trimEnd().split('\n')).toHaveLength(3);
     expect(output).not.toContain('WORKSPACE');
     expect(output).not.toContain('S K E I N');
   });
