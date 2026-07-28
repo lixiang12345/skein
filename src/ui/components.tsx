@@ -21,9 +21,8 @@ import {resolveTerminalAccessibility} from './terminal-capabilities.js';
 export type TimelineItem =
   | {id: string; kind: 'user'; text: string; clipped?: boolean}
   | {id: string; kind: 'assistant'; text: string; streaming?: boolean; clipped?: boolean}
-  | {id: string; kind: 'context'; engine: string; hits: number; tokens: number; budgetTier?: ContextBudgetTier; budgetTokens?: number; budgetReason?: string; degradation?: ContextDegradation; truncated?: boolean; spans?: ContextSpan[]}
+  | {id: string; kind: 'context'; engine: string; hits: number; tokens: number; budgetTier?: ContextBudgetTier; degradation?: ContextDegradation; truncated?: boolean}
   | {id: string; kind: 'prompt'; intent: string; sections: string[]; tokens: number; breakdown?: PromptTokenBreakdown}
-  | {id: string; kind: 'tool-group'; total: number; running: number; succeeded: number; failed: number; cancelled: number; expandable: number; expanded: boolean}
   | {id: string; kind: 'tool'; name: string; detail: string; state: 'queued' | 'running' | 'ok' | 'error' | 'cancelled'; grouped?: boolean; startedAt?: number; durationMs?: number; errorDetail?: string; output?: string; meta?: string}
   | {id: string; kind: 'skill'; name: string; description: string}
   | {id: string; kind: 'memory'; count: number; scope: string}
@@ -43,14 +42,6 @@ export interface ListEntry {
   label: string;
   detail?: string;
   tone?: 'normal' | 'success' | 'warning' | 'error';
-}
-
-export interface ContextSpan {
-  path: string;
-  startLine: number;
-  endLine: number;
-  score: number;
-  symbol?: string;
 }
 
 export interface ContextInspectorStatus {
@@ -268,36 +259,61 @@ function ToolGlyph({state, glyphs}: {state: 'queued' | 'running' | 'ok' | 'error
   return <Text color={theme.error}>{glyphs.error}</Text>;
 }
 
-/** Insert one compact, presentation-only header before each contiguous tool run. */
-export function prepareTimelineItems(items: readonly TimelineItem[], expandedToolId?: string, showToolOutput = false): TimelineItem[] {
-  if (items.some((item) => item.kind === 'tool-group')) return [...items];
-  const prepared: TimelineItem[] = [];
-  for (let index = 0; index < items.length;) {
-    const item = items[index] as TimelineItem;
-    if (item.kind !== 'tool') {
-      prepared.push(item);
-      index += 1;
-      continue;
-    }
-    const tools: Extract<TimelineItem, {kind: 'tool'}>[] = [];
-    while (index < items.length && items[index]?.kind === 'tool') {
-      tools.push(items[index] as Extract<TimelineItem, {kind: 'tool'}>);
-      index += 1;
-    }
-    prepared.push({
-      id: `tool-group-${tools[0]?.id ?? index}`,
-      kind: 'tool-group',
-      total: tools.length,
-      running: tools.filter((tool) => tool.state === 'queued' || tool.state === 'running').length,
-      succeeded: tools.filter((tool) => tool.state === 'ok').length,
-      failed: tools.filter((tool) => tool.state === 'error').length,
-      cancelled: tools.filter((tool) => tool.state === 'cancelled').length,
-      expandable: tools.filter((tool) => Boolean(tool.output)).length,
-      expanded: showToolOutput || tools.some((tool) => tool.id === expandedToolId),
-    });
-    prepared.push(...tools.map((tool) => ({...tool, grouped: true})));
-  }
-  return prepared;
+/**
+ * The single left edge every transcript row shares: two columns of gutter for a
+ * status glyph, then content. A row claims the gutter only when it needs
+ * attention — a settled success is silent, because a column of green ticks
+ * makes the one real failure weigh exactly as much as the four that worked.
+ *
+ * Every `estimateTimelineItemRows` branch assumes this shape, so content here
+ * must never wrap outside the width it is given.
+ */
+const GUTTER = 2;
+
+/** Han ideographs — used only to pick the language of a built-in hint line. */
+const CJK_PATTERN = /[㐀-鿿]/u;
+
+function Row({glyph, children}: {glyph?: React.ReactNode; children: React.ReactNode}) {
+  // The gutter is exactly `GUTTER` cells and never grows: a spinner frame or
+  // theme glyph wider than that is clipped, because letting it wrap would push
+  // the content column down a row and break the shared left edge.
+  return (
+    <Box>
+      <Box width={GUTTER} height={1} overflow="hidden">{glyph ?? null}</Box>
+      {children}
+    </Box>
+  );
+}
+
+/**
+ * Gutter content for a tool row. `ok` and `queued` return nothing: routine
+ * progress is carried by the row appearing at all, and by its duration.
+ */
+function toolGutter(
+  state: 'queued' | 'running' | 'ok' | 'error' | 'cancelled',
+  glyphs: UiGlyphs,
+): React.ReactNode {
+  if (state === 'running') return <ToolGlyph state={state} glyphs={glyphs} />;
+  if (state === 'error' || state === 'cancelled') return <ToolGlyph state={state} glyphs={glyphs} />;
+  return null;
+}
+
+/**
+ * Width of the tool name column. Derived from the terminal width alone, never
+ * from the names currently on screen: a column that grew when a long tool name
+ * streamed in would reflow every row above it.
+ */
+function toolNameColumn(width: number): number {
+  if (width >= 72) return 14;
+  if (width >= 64) return 12;
+  return 0;
+}
+
+/** Mark every tool except the last of a contiguous run so the run shares one trailing gap. */
+export function prepareTimelineItems(items: readonly TimelineItem[], _expandedToolId?: string, _showToolOutput = false): TimelineItem[] {
+  return items.map((item, index) => item.kind === 'tool'
+    ? {...item, grouped: items[index + 1]?.kind === 'tool'}
+    : item);
 }
 
 export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput = false, expandedToolId, compact = false}: {
@@ -312,30 +328,34 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
   const glyphs = resolveGlyphs(glyphMode);
   if (!items.length) {
     return (
-      <Box paddingLeft={2} marginBottom={1}>
+      <Box paddingLeft={GUTTER} marginBottom={1}>
         <Text color={theme.muted}>No messages yet.</Text>
       </Box>
     );
   }
-  const preparedItems = items.some((item) => item.kind === 'tool-group' || (item.kind === 'tool' && item.grouped))
+  const preparedItems = items.some((item) => item.kind === 'tool' && item.grouped !== undefined)
     ? items
-    : prepareTimelineItems(items, expandedToolId, showToolOutput);
+    : prepareTimelineItems(items);
+  const rowWidth = safeWidth(width);
+  const contentWidth = Math.max(1, rowWidth - GUTTER);
   return (
     <Box flexDirection="column" aria-role="list">
-      {preparedItems.map((item, index) => {
+      {preparedItems.map((item) => {
         if (item.kind === 'user') {
+          // The request is the one row that claims the accent gutter: it is the
+          // anchor a reader scrolls to when looking for "where did this start".
           return (
             <Box key={item.id} marginBottom={compact || item.clipped ? 0 : 1}>
-              <Box width={2}><Text bold color={theme.accent}>{glyphs.prompt}</Text></Box>
-              <Text bold color={theme.textStrong} wrap="wrap">{sanitizeTerminalText(item.text)}</Text>
+              <Box width={GUTTER}><Text bold color={theme.accent}>{glyphs.prompt}</Text></Box>
+              <Box width={contentWidth}>
+                <Text bold color={theme.textStrong} wrap="wrap">{sanitizeTerminalText(item.text)}</Text>
+              </Box>
             </Box>
           );
         }
         if (item.kind === 'assistant') {
-          // The reply is the surface, so it carries no nameplate: the `›` prefix
-          // on user turns is the only role marker needed, and repeating a brand
-          // label every turn spends a row on something already known. The
-          // spoken label moves to the container so assistive output is intact.
+          // The reply is the surface, so it carries no nameplate and no gutter
+          // glyph: the `›` on the request above is the only role marker needed.
           //
           // Each block owns only the gap below it. A leading gap here would read
           // better against the receipt stack, but Ink does not collapse margins
@@ -345,7 +365,7 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
             <Box
               key={item.id}
               flexDirection="column"
-              paddingLeft={2}
+              paddingLeft={GUTTER}
               marginBottom={compact || item.clipped ? 0 : 1}
               aria-label={`${PRODUCT_NAME}${item.streaming ? ' streaming' : ''}`}
             >
@@ -357,172 +377,99 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
           );
         }
         if (item.kind === 'context') {
-          const contextDetail = [
-            sanitizeInlineTerminalText(item.engine),
-            `${item.hits} span${item.hits === 1 ? '' : 's'}`,
-            item.budgetTier ? `${item.budgetTier} retrieval` : '',
-            item.truncated ? 'clipped' : '',
-          ].filter(Boolean).join(` ${glyphs.separator} `);
+          // A retrieval that simply worked is not news. Only a degraded or
+          // clipped run earns a row, and it earns the warning gutter because it
+          // changes how much the reader should trust the answer.
+          //
+          // These two rows wrap rather than truncate: a degradation carries the
+          // remediation command, and a receipt that hides the fix is worse than
+          // one that costs a second line in a state this rare.
+          if (!item.degradation && !item.truncated) return null;
           return (
             <Box key={item.id} flexDirection="column">
-              <MetaRow
-                width={width}
-                glyph={glyphs.context}
-                label="context"
-                detail={contextDetail}
-                labelColor={theme.accent}
-              />
-              {item.degradation ? (
-                <MetaRow
-                  width={width}
+              {item.truncated && !item.degradation ? (
+                <WrappedReceipt
+                  width={rowWidth}
                   glyph={glyphs.warning}
-                  label={contextDegradationLabel(item.degradation.code)}
-                  detail={contextDegradationDetail(item.degradation)}
-                  labelColor={theme.warning}
+                  text={contextClippedReceiptText(item.engine, item.hits, glyphs.separator)}
+                />
+              ) : null}
+              {item.degradation ? (
+                <WrappedReceipt
+                  width={rowWidth}
+                  glyph={glyphs.warning}
+                  text={contextDegradedReceiptText(item.degradation)}
                 />
               ) : null}
             </Box>
           );
         }
         if (item.kind === 'prompt') {
+          // Per-turn model-input estimates are accounting, not conversation.
+          // `/context` and the structured event stream keep the full ledger.
+          return null;
+        }
+        if (item.kind === 'tool') {
           return (
-            <MetaRow
+            <ToolRow
               key={item.id}
-              width={width}
-              glyph={glyphs.pending}
-              label={`model input/${sanitizeInlineTerminalText(item.intent)}`}
-              detail={`~${formatTokens(item.tokens)} estimated ${glyphs.separator} /context for details`}
+              item={item}
+              width={rowWidth}
+              glyphs={glyphs}
+              compact={compact}
+              expanded={Boolean(item.output) && (showToolOutput || expandedToolId === item.id)}
             />
           );
         }
-        if (item.kind === 'tool-group') {
-          const resultParts = [
-            `${item.total} call${item.total === 1 ? '' : 's'}`,
-            item.running ? `${item.running} active` : '',
-            item.succeeded ? `${item.succeeded} done` : '',
-            item.failed ? `${item.failed} failed` : '',
-            item.cancelled ? `${item.cancelled} cancelled` : '',
-          ].filter(Boolean);
-          const control = item.expandable
-            ? `${glyphs.separator} Ctrl+O ${item.expanded ? 'collapse' : 'details'}`
-            : '';
-          const detail = `${resultParts.join(` ${glyphs.separator} `)} ${control}`.trim();
-          return (
-            <Box key={item.id} marginTop={compact || index === 0 ? 0 : 1}>
-              <Text bold color={item.failed ? theme.error : item.running ? theme.accent : theme.muted}>Tools</Text>
-              <Text color={theme.border}> {glyphs.separator} </Text>
-              <Text color={theme.muted} wrap="truncate">{truncateDisplay(detail, Math.max(1, safeWidth(width) - 8))}</Text>
-            </Box>
-          );
-        }
-        if (item.kind === 'tool') {
-          const rowWidth = safeWidth(width);
-          const branch = preparedItems[index + 1]?.kind === 'tool' ? glyphs.branch : glyphs.branchLast;
-          const branchWidth = displayWidth(branch) + 1;
-          const detail = sanitizeInlineTerminalText(item.errorDetail || item.detail);
-          const duration = item.durationMs !== undefined ? formatDuration(item.durationMs) : '';
-          const detailText = [detail, duration].filter(Boolean).join('  ');
-          const expanded = Boolean(item.output) && (showToolOutput || expandedToolId === item.id);
-          const verbose = expanded && item.output
-            ? limitTerminalText(item.output, compact ? 24 : 80)
-            : undefined;
-          const disclosure = item.output ? (expanded ? glyphs.expanded : glyphs.collapsed) : '';
-          const disclosureWidth = disclosure ? displayWidth(disclosure) + 1 : 0;
-          const nameLimit = Math.max(1, Math.min(rowWidth - branchWidth - 2 - disclosureWidth, rowWidth < 64 ? rowWidth - branchWidth - 2 - disclosureWidth : 28));
-          const name = truncateDisplay(sanitizeInlineTerminalText(item.name), nameLimit);
-          const output = verbose ? (
-            <Box paddingLeft={branchWidth + 2} flexDirection="column">
-              <RichText value={verbose.text} glyphs={glyphs} />
-              {verbose.truncated
-                ? <Text color={theme.muted}>{glyphs.pending} output clipped; use print mode for the full result</Text>
-                : null}
-            </Box>
-          ) : null;
-          if (rowWidth < 64) {
-            return (
-              <Box key={item.id} flexDirection="column">
-                <Box>
-                  <Text color={theme.border}>{branch} </Text>
-                  <ToolGlyph state={item.state} glyphs={glyphs} />
-                  <Text color={theme.text}> {name}</Text>
-                  {disclosure ? <Text color={theme.dim}> {disclosure}</Text> : null}
-                </Box>
-                {detailText ? <Text color={item.state === 'error' ? theme.error : item.state === 'cancelled' ? theme.warning : theme.muted}>{`${' '.repeat(branchWidth + 2)}${truncateDisplay(detailText, Math.max(1, rowWidth - branchWidth - 2))}`}</Text> : null}
-                {item.meta ? <Text color={theme.dim}>{`${' '.repeat(branchWidth + 2)}${glyphs.branchLast} ${truncateDisplay(sanitizeInlineTerminalText(item.meta), Math.max(1, rowWidth - branchWidth - 4))}`}</Text> : null}
-                {output}
-              </Box>
-            );
-          }
-          const prefix = `${item.state === 'running' ? glyphs.running : item.state === 'ok' ? glyphs.success : glyphs.error} ${name}`;
-          const suffix = duration ? `  ${duration}` : '';
-          const detailLimit = Math.max(1, rowWidth - branchWidth - displayWidth(prefix) - displayWidth(suffix) - disclosureWidth - 2);
-          return (
-            <Box key={item.id} flexDirection="column">
-              <Box>
-                <Text color={theme.border}>{branch} </Text>
-                <ToolGlyph state={item.state} glyphs={glyphs} />
-                <Text color={theme.text}> {name}</Text>
-                {detail ? <Text color={item.state === 'error' ? theme.error : item.state === 'cancelled' ? theme.warning : theme.muted}>  {truncateDisplay(detail, detailLimit)}</Text> : null}
-                {suffix ? <Text color={theme.dim}>{suffix}</Text> : null}
-                {disclosure ? <Text color={theme.dim}> {disclosure}</Text> : null}
-              </Box>
-              {item.meta ? <Text color={theme.dim}>{`${' '.repeat(branchWidth + 2)}${glyphs.branchLast} ${truncateDisplay(sanitizeInlineTerminalText(item.meta), Math.max(1, rowWidth - branchWidth - 4))}`}</Text> : null}
-              {output}
-            </Box>
-          );
-        }
         if (item.kind === 'skill') {
-          return <MetaRow key={item.id} width={width} glyph={glyphs.skill} label={`skill/${item.name}`} detail={item.description} />;
+          return <MetaRow key={item.id} width={rowWidth} glyph={glyphs.skill} label={`skill/${item.name}`} detail={item.description} />;
         }
         if (item.kind === 'memory') {
-          return <MetaRow key={item.id} width={width} glyph={glyphs.memory} label="memory" detail={`${item.count} relevant ${glyphs.separator} ${item.scope}`} />;
+          return <MetaRow key={item.id} width={rowWidth} glyph={glyphs.memory} label="memory" detail={`${item.count} relevant ${glyphs.separator} ${item.scope}`} />;
         }
         if (item.kind === 'agent') {
-          const rowWidth = safeWidth(width);
+          // Agents follow the tool contract for the gutter — only a live or
+          // failed teammate marks it — but the profile flows rather than sitting
+          // in the tool name column: it is the row's subject and must stay whole.
           const agentTask = sanitizeInlineTerminalText(item.task);
           const agentSummary = item.summary ? sanitizeInlineTerminalText(item.summary) : undefined;
-          const taskDetail = agentSummary ? `${agentTask} ${glyphs.arrow} ${agentSummary}` : agentTask;
-          const task = truncateDisplay(taskDetail, Math.max(1, rowWidth - 4));
+          const phase = item.phase && item.phase !== 'work' ? `${glyphs.separator} ${item.phase}` : '';
+          const route = item.provider && item.model ? `${item.provider}/${item.model}` : '';
           const duration = item.durationMs !== undefined ? formatDuration(item.durationMs) : '';
-          const branch = preparedItems[index + 1]?.kind === 'agent' ? glyphs.branch : glyphs.branchLast;
-          const profileLimit = Math.max(1, Math.min(rowWidth - displayWidth(branch) - 3, rowWidth < 64 ? rowWidth - displayWidth(branch) - 3 : 24));
-          const route = item.provider && item.model ? ` ${glyphs.separator} ${item.provider}/${item.model}` : '';
-          const phase = item.phase && item.phase !== 'work' ? ` ${glyphs.separator} ${item.phase}` : '';
-          const profile = truncateDisplay(`agent/${sanitizeInlineTerminalText(item.profile)}${phase}`, profileLimit);
-          const routedTask = `${route}${route ? '  ' : ''}${task}`;
-          if (rowWidth < 64) {
-            return (
-              <Box key={item.id} flexDirection="column">
-                <Box><Text color={theme.dim}>{branch} </Text><ToolGlyph state={item.state} glyphs={glyphs} /><Text color={theme.text}> {profile}</Text></Box>
-                <Text color={theme.dim}>{`    ${truncateDisplay([route.trim(), task, duration].filter(Boolean).join('  '), Math.max(1, rowWidth - 4))}`}</Text>
-              </Box>
-            );
-          }
+          const detail = [route, phase, agentSummary ? `${agentTask} ${glyphs.arrow} ${agentSummary}` : agentTask]
+            .filter(Boolean).join(' ');
           return (
-            <Box key={item.id}>
-              <Text color={theme.dim}>{branch} </Text><ToolGlyph state={item.state} glyphs={glyphs} />
-              <Text color={theme.text}> {profile}</Text>
-              <Text color={theme.dim}>  {truncateDisplay(routedTask, Math.max(1, rowWidth - displayWidth(profile) - displayWidth(branch) - 5 - (duration ? displayWidth(duration) + 2 : 0)))}</Text>
-              {duration ? <Text color={theme.dim}>  {duration}</Text> : null}
-            </Box>
+            <AlignedRow
+              key={item.id}
+              width={rowWidth}
+              column={0}
+              gutter={toolGutter(item.state, glyphs)}
+              name={`agent/${sanitizeInlineTerminalText(item.profile)}`}
+              nameColor={theme.text}
+              detail={detail}
+              detailColor={item.state === 'error' ? theme.error : item.state === 'cancelled' ? theme.warning : theme.muted}
+              trailing={duration}
+            />
           );
         }
         if (item.kind === 'agent-message') {
           const from = sanitizeInlineTerminalText(item.from);
           const to = sanitizeInlineTerminalText(item.to);
           const text = sanitizeInlineTerminalText(item.text);
-          return <MetaRow key={item.id} width={width} glyph={glyphs.agent} label={`${from} ${glyphs.arrow} ${to}`} detail={text} labelColor={theme.accent} />;
+          return <MetaRow key={item.id} width={rowWidth} glyph={glyphs.agent} label={`${from} ${glyphs.arrow} ${to}`} detail={text} />;
         }
         if (item.kind === 'workflow') {
-          const color = item.status === 'completed' ? theme.success : item.status === 'in_progress' ? theme.accent : theme.muted;
+          // Only a live step claims the accent gutter; a finished one is settled
+          // evidence and reads like the tool rows above it.
           const glyph = item.status === 'completed' ? glyphs.success : item.status === 'in_progress' ? glyphs.prompt : glyphs.pending;
-          return <MetaRow key={item.id} width={width} glyph={glyph} label={`workflow/${item.name}`} detail={item.step} labelColor={color} />;
+          const glyphColor = item.status === 'completed' ? theme.success : item.status === 'in_progress' ? theme.accent : theme.dim;
+          return <MetaRow key={item.id} width={rowWidth} glyph={glyph} glyphColor={glyphColor} label={`workflow/${item.name}`} detail={item.step} />;
         }
         if (item.kind === 'compaction') {
           return (
             <MetaRow
               key={item.id}
-              width={width}
+              width={rowWidth}
               glyph={glyphs.compaction}
               label="context compacted"
               detail={`${item.messages} messages ${glyphs.arrow} ${formatTokens(item.tokens)} tokens`}
@@ -530,47 +477,59 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
           );
         }
         if (item.kind === 'clarification') {
-          const rowWidth = safeWidth(width);
-          const chinese = /[\u3400-\u9fff]/u.test(item.pending.question);
+          const chinese = CJK_PATTERN.test(item.pending.question);
+          // A pending question is the one place the transcript may spend extra
+          // rows: the reader cannot answer an option whose consequence was
+          // truncated away. `viewport` scores this with the same wrapping.
           return (
-            <Box key={item.id} flexDirection="column" paddingLeft={2} marginBottom={1}>
-              <Text bold color={theme.warning}>{sanitizeTerminalText(item.pending.question)}</Text>
+            <Box key={item.id} flexDirection="column" marginBottom={1}>
+              <Row glyph={<Text color={theme.warning}>{glyphs.warning}</Text>}>
+                <Box width={contentWidth}>
+                  <Text bold color={theme.warning} wrap="wrap">{sanitizeTerminalText(item.pending.question)}</Text>
+                </Box>
+              </Row>
               {item.pending.options.map((option, optionIndex) => {
-                const label = `${optionIndex + 1}. ${sanitizeInlineTerminalText(option.label)}${option.recommended ? (chinese ? '（推荐）' : ' (recommended)') : ''}`;
+                const label = clarificationOptionLabel(option, optionIndex, chinese);
                 const impact = sanitizeInlineTerminalText(option.impact);
                 if (rowWidth < 48) {
                   return (
-                    <Box key={option.id} flexDirection="column">
-                      <Text color={option.recommended ? theme.textStrong : theme.muted}>
-                        {truncateDisplay(label, Math.max(1, rowWidth - 2))}
+                    <Box key={option.id} flexDirection="column" paddingLeft={GUTTER}>
+                      <Text color={option.recommended ? theme.textStrong : theme.text}>
+                        {truncateDisplay(label, contentWidth)}
                       </Text>
-                      <Text color={theme.dim}>
-                        {truncateDisplay(`${glyphs.branchLast} ${impact}`, Math.max(1, (rowWidth - 2) * 2))}
-                      </Text>
+                      <Box width={contentWidth}>
+                        <Text color={theme.dim} wrap="wrap">{impact}</Text>
+                      </Box>
                     </Box>
                   );
                 }
                 return (
-                  <Text key={option.id} color={option.recommended ? theme.textStrong : theme.muted}>
-                    {truncateDisplay(`${label} ${glyphs.separator} ${impact}`, Math.max(1, rowWidth - 2))}
-                  </Text>
+                  <Box key={option.id} paddingLeft={GUTTER} width={rowWidth}>
+                    <Box width={contentWidth}>
+                      <Text color={option.recommended ? theme.textStrong : theme.text} wrap="wrap">
+                        {`${label} ${glyphs.separator} ${impact}`}
+                      </Text>
+                    </Box>
+                  </Box>
                 );
               })}
-              <Text color={theme.dim}>{chinese
-                ? '回复编号、选项名称，或简短说明你的决定。'
-                : 'Reply with a number, option label, or a short custom decision.'}</Text>
+              <Box paddingLeft={GUTTER}>
+                <Text color={theme.dim}>{truncateDisplay(clarificationHint(chinese), contentWidth)}</Text>
+              </Box>
             </Box>
           );
         }
-        if (item.kind === 'list') return <ListPanel key={item.id} title={item.title} entries={item.entries} width={width} glyphMode={glyphMode} />;
+        if (item.kind === 'list') return <ListPanel key={item.id} title={item.title} entries={item.entries} width={rowWidth} glyphMode={glyphMode} />;
         if (item.kind === 'context-inspector') {
-          return <ContextInspector key={item.id} status={item.status} working={item.working} summary={item.summary} width={width} compact={compact} glyphMode={glyphMode} />;
+          return <ContextInspector key={item.id} status={item.status} working={item.working} summary={item.summary} width={rowWidth} compact={compact} glyphMode={glyphMode} />;
         }
-        if (item.kind === 'theme') return <ThemePreview key={item.id} name={item.name} width={width} glyphs={glyphs} />;
-        if (item.kind === 'banner') return <Banner key={item.id} engine={item.engine} status={item.status} version={item.version} width={width} glyphs={glyphs} {...(item.files !== undefined ? {files: item.files} : {})} />;
+        if (item.kind === 'theme') return <ThemePreview key={item.id} name={item.name} width={rowWidth} glyphs={glyphs} />;
+        if (item.kind === 'banner') return <Banner key={item.id} engine={item.engine} status={item.status} version={item.version} width={rowWidth} glyphs={glyphs} {...(item.files !== undefined ? {files: item.files} : {})} />;
         if (item.kind === 'update') {
-          return <UpdateNotice key={item.id} current={item.current} latest={item.latest} command={item.command} width={width} glyphs={glyphs} {...(item.highlights ? {highlights: item.highlights} : {})} />;
+          return <UpdateNotice key={item.id} current={item.current} latest={item.latest} command={item.command} width={rowWidth} glyphs={glyphs} {...(item.highlights ? {highlights: item.highlights} : {})} />;
         }
+        // A notice is the one receipt allowed to be loud: each is either the
+        // evidence that closed a run or something the reader has to act on.
         const color = item.tone === 'error'
           ? theme.error
           : item.tone === 'warning'
@@ -586,9 +545,9 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
             ? glyphs.success
             : glyphs.info;
         return (
-          <Box key={item.id} width={safeWidth(width)}>
-            <Box width={2}><Text color={color}>{noticeGlyph}</Text></Box>
-            <Box width={Math.max(1, safeWidth(item.wrapWidth ?? width) - 2)}>
+          <Box key={item.id} width={rowWidth}>
+            <Box width={GUTTER}><Text color={color}>{noticeGlyph}</Text></Box>
+            <Box width={Math.max(1, safeWidth(item.wrapWidth ?? rowWidth) - GUTTER)}>
               <Text color={color} wrap="wrap">{sanitizeTerminalText(item.text)}</Text>
             </Box>
           </Box>
@@ -778,41 +737,214 @@ export function TeamWorkbench({items, tasks, width = 80, glyphMode = 'auto', vie
   );
 }
 
-function MetaRow({glyph, label, detail, labelColor, width = 80}: {
+/**
+ * A receipt row: glyph in the shared gutter, a label, and dim detail. Receipts
+ * are scannable evidence rather than prose, so the label and detail both sit a
+ * step below body text and the eye can skip the block and land on the reply.
+ *
+ * Narrow terminals keep this to one row and drop the detail rather than
+ * stacking a second line, so a run of receipts cannot double in height the
+ * moment the window shrinks.
+ */
+function MetaRow({glyph, label, detail, glyphColor, width = 80}: {
   glyph: string;
   label: string;
   detail: string;
-  labelColor?: string;
+  glyphColor?: string;
   width?: number;
 }) {
   const theme = useTheme();
   const rowWidth = safeWidth(width);
-  const labelText = `${sanitizeInlineTerminalText(glyph)} ${sanitizeInlineTerminalText(label)}`;
+  const contentWidth = Math.max(1, rowWidth - GUTTER);
+  const labelText = sanitizeInlineTerminalText(label);
   const detailText = sanitizeInlineTerminalText(detail);
-  // Receipts are scannable evidence, not prose: both halves sit a step below
-  // body text so the eye can skip the whole row and land on the reply.
-  const detailColor = theme.dim;
-  if (rowWidth < 64) {
-    return (
-      <Box flexDirection="column">
-        <Text color={labelColor ?? theme.dim}>{truncateDisplay(labelText, rowWidth)}</Text>
-        {detailText ? <Text color={detailColor}>{`  ${truncateDisplay(detailText, Math.max(1, rowWidth - 2))}`}</Text> : null}
-      </Box>
-    );
-  }
-  const detailLimit = Math.max(1, rowWidth - displayWidth(labelText) - 2);
+  const detailLimit = Math.max(0, contentWidth - displayWidth(labelText) - 2);
+  const showDetail = Boolean(detailText) && detailLimit >= 8;
   return (
-    <Box>
-      <Text color={labelColor ?? theme.dim}>{labelText}</Text>
-      {detailText ? <Text color={detailColor}>  {truncateDisplay(detailText, detailLimit)}</Text> : null}
+    <Row glyph={<Text color={glyphColor ?? theme.dim}>{sanitizeInlineTerminalText(glyph)}</Text>}>
+      <Text color={theme.muted}>{truncateDisplay(labelText, contentWidth)}</Text>
+      {showDetail ? <Text color={theme.dim}>{`  ${truncateDisplay(detailText, detailLimit)}`}</Text> : null}
+    </Row>
+  );
+}
+
+/**
+ * The alignment contract shared by tool and agent rows: gutter, a name padded
+ * to a width-derived column, then detail, then a right-hand trailing field.
+ *
+ * The name column comes from the terminal width alone — never from the names
+ * currently on screen — so a long name arriving mid-run cannot reflow the rows
+ * above it. Below the threshold where a real column would leave no usable room
+ * for detail, the column collapses to zero and the row degrades to a single
+ * space-separated line rather than wrapping onto a second row.
+ */
+function AlignedRow({width, gutter, name, nameColor, detail, detailColor, trailing, disclosure, column: columnOverride}: {
+  width: number;
+  gutter?: React.ReactNode;
+  name: string;
+  nameColor: string;
+  detail: string;
+  detailColor: string;
+  trailing?: string;
+  disclosure?: string;
+  /**
+   * Explicit name-column width. `0` means "flow": the name takes only the space
+   * it needs. Agents pass 0 because a profile like `agent/security-reviewer` is
+   * far longer than any tool name, and forcing it into the tool column would
+   * truncate the one word identifying who did the work.
+   */
+  column?: number;
+}) {
+  const theme = useTheme();
+  const rowWidth = safeWidth(width);
+  const contentWidth = Math.max(1, rowWidth - GUTTER);
+  const column = columnOverride ?? toolNameColumn(rowWidth);
+  const trailingText = trailing ? sanitizeInlineTerminalText(trailing) : '';
+  const disclosureText = disclosure ? sanitizeInlineTerminalText(disclosure) : '';
+  const trailingWidth = trailingText ? displayWidth(trailingText) + 2 : 0;
+  const disclosureWidth = disclosureText ? displayWidth(disclosureText) + 1 : 0;
+  // The trailing field and disclosure marker are reserved before the name and
+  // detail get their budget, so a long path can never push the duration off the
+  // row. On a terminal too narrow to hold both, the name wins and they drop:
+  // a row that wrapped would break the shared gutter for everything below it.
+  const showTrailing = trailingWidth > 0 && contentWidth - trailingWidth - disclosureWidth >= 6;
+  const showDisclosure = disclosureWidth > 0 && contentWidth - disclosureWidth >= 6;
+  const reserved = (showTrailing ? trailingWidth : 0) + (showDisclosure ? disclosureWidth : 0);
+  const available = Math.max(1, contentWidth - reserved);
+  const nameLimit = column ? Math.min(column - 1, available) : Math.min(displayWidth(name), available);
+  const nameText = truncateDisplay(sanitizeInlineTerminalText(name), Math.max(1, nameLimit));
+  const nameCell = column && displayWidth(nameText) < available
+    ? padDisplay(nameText, Math.min(column, available))
+    : `${nameText}${displayWidth(nameText) < available ? ' ' : ''}`;
+  const detailLimit = Math.max(0, available - displayWidth(nameCell));
+  const detailText = detail ? truncateDisplay(sanitizeInlineTerminalText(detail), detailLimit) : '';
+  const showDetail = Boolean(detailText) && detailLimit > 0;
+  // Pad to the exact content width so the trailing field lands on the same
+  // column in every row and short rows overwrite longer previous repaints.
+  const pad = Math.max(0, available - displayWidth(nameCell) - (showDetail ? displayWidth(detailText) : 0));
+  return (
+    <Row glyph={gutter}>
+      <Text color={nameColor}>{nameCell}</Text>
+      {showDetail ? <Text color={detailColor}>{detailText}</Text> : null}
+      {pad > 0 ? <Text>{' '.repeat(pad)}</Text> : null}
+      {showTrailing ? <Text color={theme.dim}>{`  ${trailingText}`}</Text> : null}
+      {showDisclosure ? <Text color={theme.dim}>{` ${disclosureText}`}</Text> : null}
+    </Row>
+  );
+}
+
+/**
+ * One tool call. Collapsed it is a single aligned row; expanded it adds its
+ * bounded output indented to the content column. `viewport.estimateTimelineItemRows`
+ * mirrors this row count exactly — changing the shape here means changing it there.
+ */
+function ToolRow({item, width, glyphs, compact, expanded}: {
+  item: Extract<TimelineItem, {kind: 'tool'}>;
+  width: number;
+  glyphs: UiGlyphs;
+  compact: boolean;
+  expanded: boolean;
+}) {
+  const theme = useTheme();
+  const rowWidth = safeWidth(width);
+  const contentWidth = Math.max(1, rowWidth - GUTTER);
+  const detail = item.errorDetail || item.detail;
+  const duration = item.durationMs !== undefined ? formatDuration(item.durationMs) : '';
+  const verbose = expanded && item.output ? limitTerminalText(item.output, compact ? 24 : 80) : undefined;
+  const disclosure = item.output ? (expanded ? glyphs.expanded : glyphs.collapsed) : '';
+  return (
+    <Box flexDirection="column" marginBottom={compact || item.grouped ? 0 : 1}>
+      <AlignedRow
+        width={rowWidth}
+        gutter={toolGutter(item.state, glyphs)}
+        name={item.name}
+        nameColor={item.state === 'error' ? theme.error : theme.text}
+        detail={detail}
+        detailColor={item.state === 'error' ? theme.error : item.state === 'cancelled' ? theme.warning : theme.muted}
+        trailing={duration}
+        disclosure={disclosure}
+      />
+      {item.meta ? (
+        // The checkpoint line belongs to the row above it, so it starts at the
+        // detail column rather than at the content column, where it would read
+        // as a separate receipt.
+        <Box paddingLeft={GUTTER + toolNameColumn(rowWidth)}>
+          <Text color={theme.dim}>
+            {truncateDisplay(sanitizeInlineTerminalText(item.meta), Math.max(1, contentWidth - toolNameColumn(rowWidth)))}
+          </Text>
+        </Box>
+      ) : null}
+      {verbose ? (
+        <Box paddingLeft={GUTTER + 2} flexDirection="column">
+          <RichText value={verbose.text} glyphs={glyphs} />
+          {verbose.truncated
+            ? <Text color={theme.muted}>{glyphs.pending} output clipped; use print mode for the full result</Text>
+            : null}
+        </Box>
+      ) : null}
     </Box>
   );
+}
+
+/**
+ * Text of a clarification option and its trailing hint. Exported so `viewport`
+ * can score their wrapped height from exactly the strings the renderer uses.
+ */
+export function clarificationOptionLabel(
+  option: {label: string; recommended?: boolean},
+  index: number,
+  chinese: boolean,
+): string {
+  return `${index + 1}. ${sanitizeInlineTerminalText(option.label)}${option.recommended ? (chinese ? '（推荐）' : ' (recommended)') : ''}`;
+}
+
+export function clarificationHint(chinese: boolean): string {
+  return chinese
+    ? '回复编号、选项名称，或简短说明你的决定。'
+    : 'Reply with a number, option label, or a short custom decision.';
+}
+
+export function isChineseText(value: string): boolean {
+  return CJK_PATTERN.test(value);
 }
 
 function contextDegradationLabel(code: string): string {
   if (code === 'local-retrieval-failed') return 'context/unavailable';
   const reason = code.replace(/^local-/u, '') || 'degraded';
   return `fallback/${reason}`;
+}
+
+/**
+ * Text of the two context receipts. Exported so `viewport` can score their
+ * wrapped height from the same string the renderer uses. Callers pass the
+ * active glyph set's separator so an ASCII, dumb, or screen-reader terminal
+ * never receives a Unicode middot.
+ */
+export function contextClippedReceiptText(engine: string, hits: number, separator: string): string {
+  return `context clipped  ${sanitizeInlineTerminalText(engine)} ${separator} ${hits} span${hits === 1 ? '' : 's'} kept`;
+}
+
+export function contextDegradedReceiptText(degradation: ContextDegradation): string {
+  return sanitizeInlineTerminalText(
+    `${contextDegradationLabel(degradation.code)}  ${contextDegradationDetail(degradation)}`);
+}
+
+/**
+ * A warning receipt that must stay legible: it wraps to the content column
+ * instead of truncating, because these rows carry the reason and the remedy.
+ * `viewport` scores it with the same `wrappedRows` calculation as a notice.
+ */
+function WrappedReceipt({width, glyph, text}: {width: number; glyph: string; text: string}) {
+  const theme = useTheme();
+  const rowWidth = safeWidth(width);
+  return (
+    <Box width={rowWidth}>
+      <Box width={GUTTER}><Text color={theme.warning}>{sanitizeInlineTerminalText(glyph)}</Text></Box>
+      <Box width={Math.max(1, rowWidth - GUTTER)}>
+        <Text color={theme.warning} wrap="wrap">{sanitizeInlineTerminalText(text)}</Text>
+      </Box>
+    </Box>
+  );
 }
 
 function contextDegradationDetail(degradation: ContextDegradation): string {
@@ -833,12 +965,12 @@ export function TaskRail({tasks, width = 80, glyphMode = 'auto', maxItems}: {
   const glyphs = resolveGlyphs(glyphMode);
   if (!tasks.length) return null;
   const rowWidth = safeWidth(width);
-  const innerWidth = Math.max(1, rowWidth - 2);
+  const contentWidth = Math.max(1, rowWidth - GUTTER);
   const done = tasks.filter((task) => task.status === 'completed').length;
   const active = tasks.filter((task) => task.status === 'in_progress').length;
   const visibleLimit = Math.max(1, maxItems ?? (width < 48 ? 5 : 12));
   const showMeter = rowWidth >= 40;
-  const meterWidth = Math.max(8, Math.min(innerWidth - displayWidth(`Plan  ${done}/${tasks.length} `), 32));
+  const meterWidth = Math.max(8, Math.min(contentWidth - displayWidth(`Plan  ${done}/${tasks.length} `), 32));
   const meterSegments: MeterSegment[] = [
     {label: 'done', value: done, color: theme.success},
     {label: 'active', value: active, color: theme.accent},
@@ -847,13 +979,15 @@ export function TaskRail({tasks, width = 80, glyphMode = 'auto', maxItems}: {
     // The rail is a panel, not a transcript entry, so it keeps a blank row above
     // as well as below; without it the meter collides with the last reply line.
     // `tui.taskRows` counts both gaps.
-    <Box flexDirection="column" marginTop={1} marginBottom={1} paddingLeft={2}>
-      <Box>
+    <Box flexDirection="column" marginTop={1} marginBottom={1}>
+      <Box paddingLeft={GUTTER}>
         <Text bold color={theme.textStrong}>Plan</Text>
         <Text color={theme.dim}>  {done}/{tasks.length}</Text>
         {showMeter ? <><Text> </Text><MeterBar segments={meterSegments} total={tasks.length} width={meterWidth} glyphs={glyphs} /></> : null}
       </Box>
       {tasks.slice(0, visibleLimit).map((task) => {
+        // The step glyphs share the transcript gutter, so a plan reads as part
+        // of the same column as the receipts above it.
         const glyph = task.status === 'completed'
           ? glyphs.success
           : task.status === 'in_progress'
@@ -866,16 +1000,15 @@ export function TaskRail({tasks, width = 80, glyphMode = 'auto', maxItems}: {
             : theme.dim;
         const title = sanitizeInlineTerminalText(task.title);
         return (
-          <Box key={task.id}>
-            <Text color={glyphColor}>{glyph}</Text>
+          <Row key={task.id} glyph={<Text color={glyphColor}>{glyph}</Text>}>
             <Text color={task.status === 'completed' ? theme.muted : theme.text} strikethrough={task.status === 'completed'}>
-              {' '}{truncateDisplay(title, Math.max(1, innerWidth - 2))}
+              {truncateDisplay(title, contentWidth)}
             </Text>
-          </Box>
+          </Row>
         );
       })}
       {tasks.length > visibleLimit
-        ? <Text color={theme.dim}>  {glyphs.pending} {tasks.length - visibleLimit} more</Text>
+        ? <Box paddingLeft={GUTTER}><Text color={theme.dim}>{truncateDisplay(`${tasks.length - visibleLimit} more`, contentWidth)}</Text></Box>
         : null}
     </Box>
   );
@@ -1004,88 +1137,73 @@ export function PromptBar({busy, disabled = false, focused = true, value, placeh
   const theme = useTheme();
   const glyphs = resolveGlyphs(glyphMode);
   const shell = mode === 'shell';
-  // Focus belongs to the label, not the full terminal-width rule. Keeping the
-  // rule neutral prevents the composer chrome from overpowering the request.
-  const labelColor = disabled
-    ? theme.dim
-    : shell ? theme.warning : focused ? theme.borderFocus : theme.muted;
   const rowWidth = safeWidth(width);
-  const innerWidth = Math.max(1, rowWidth - 2);
+  const contentWidth = Math.max(1, rowWidth - GUTTER);
   const safePlaceholder = sanitizeInlineTerminalText(placeholder);
-  const busyHint = innerWidth < 24
+  const busyHint = contentWidth < 24
     ? `steer ${glyphs.separator} esc stop`
-    : innerWidth < 44
+    : contentWidth < 44
       ? `enter steer ${glyphs.separator} esc stop`
-      : innerWidth < 72
+      : contentWidth < 72
         ? `enter steer ${glyphs.separator} alt+enter queue ${glyphs.separator} esc stop`
         : `enter steer ${glyphs.separator} alt+enter queue ${glyphs.separator} /queue manage ${glyphs.separator} esc stop`;
+  // The composer's mode lives in the prompt glyph and this one hint row. A
+  // labelled rule said the same thing a third time, in the loudest position.
   const hint = disabled
     ? `input paused ${glyphs.separator} external editor active`
+    : shell
+      ? `local command ${glyphs.separator} enter run ${glyphs.separator} esc cancel`
     : busy
-    ? busyHint
+      ? busyHint
     : value
       ? `enter send ${glyphs.separator} ctrl+j newline`
       : safePlaceholder;
-  const hintText = `${hint}${queueCount ? ` ${glyphs.separator} ${width < 44 ? `q${queueCount}` : `${queueCount} follow-up${queueCount === 1 ? '' : 's'}`}` : ''}`;
+  const hintText = `${hint}${queueCount ? ` ${glyphs.separator} ${contentWidth < 44 ? `q${queueCount}` : `${queueCount} follow-up${queueCount === 1 ? '' : 's'}`}` : ''}`;
   const safeQueuePreview = sanitizeInlineTerminalText(queuePreview ?? '');
-  const queueLabel = `${glyphs.pending} ${queueCount} queued`;
-  const queuePreviewWidth = Math.max(1, innerWidth - displayWidth(queueLabel) - 1);
-  const composerTitle = disabled ? 'Editor' : shell ? 'Shell' : busy ? 'Steer' : 'Request';
-  const composerState = disabled ? 'paused' : busy ? 'run active' : shell ? 'local command' : '';
+  const queueLabel = `${queueCount} queued`;
+  const queuePreviewWidth = Math.max(1, contentWidth - displayWidth(queueLabel) - 2);
   return (
     <Box flexDirection="column">
-      {showRule ? (
-        <ComposerRule
-          width={width}
-          title={composerTitle}
-          state={composerState}
-          color={theme.border}
-          titleColor={labelColor}
-          stateColor={disabled ? theme.warning : busy ? theme.accent : theme.muted}
-          glyphs={glyphs}
-        />
-      ) : null}
+      {showRule ? <ComposerRule width={rowWidth} color={theme.border} glyphs={glyphs} /> : null}
       {attachments.length ? (
-        <Box paddingLeft={2}>
-          <Text color={theme.accent}>{glyphs.context} </Text>
-          <Text color={theme.muted}>{truncateDisplay(attachments.map((path) => `@${compactDisplayPath(sanitizeInlineTerminalText(path), 28)}`).join('  '), Math.max(1, safeWidth(width) - 4))}</Text>
-        </Box>
+        <Row glyph={<Text color={theme.accent}>{glyphs.context}</Text>}>
+          <Text color={theme.muted}>{truncateDisplay(attachments.map((path) => `@${compactDisplayPath(sanitizeInlineTerminalText(path), 28)}`).join('  '), contentWidth)}</Text>
+        </Row>
       ) : null}
       {queueCount && safeQueuePreview ? (
-        <Box paddingLeft={2}>
+        <Row glyph={<Text color={theme.dim}>{glyphs.pending}</Text>}>
           <Text color={theme.muted}>{queueLabel} </Text>
           <Text color={theme.text}>{truncateDisplay(safeQueuePreview, queuePreviewWidth)}</Text>
-        </Box>
+        </Row>
       ) : null}
       <Box aria-role="textbox">
-        <Text bold color={disabled ? theme.dim : shell ? theme.warning : theme.accent}>{shell ? '! ' : `${glyphs.prompt} `}</Text>
+        <Box width={GUTTER}>
+          <Text bold color={disabled || !focused ? theme.dim : shell ? theme.warning : theme.accent}>{shell ? '!' : glyphs.prompt}</Text>
+        </Box>
         {children}
       </Box>
-      <Box paddingLeft={2}>
-        <Text color={theme.muted}>{truncateDisplay(hintText, innerWidth)}</Text>
+      <Box paddingLeft={GUTTER}>
+        <Text color={theme.muted}>{truncateDisplay(hintText, contentWidth)}</Text>
       </Box>
     </Box>
   );
 }
 
-function ComposerRule({width, title, state, color, titleColor, stateColor, glyphs}: {
+/**
+ * The boundary between the transcript and the composer: one neutral full-width
+ * rule. It carries no label — the prompt glyph and hint row already state the
+ * mode, and a titled rule made the loudest element in the frame repeat them.
+ */
+function ComposerRule({width, color, glyphs}: {
   width: number;
-  title: string;
-  state: string;
   color: string;
-  titleColor: string;
-  stateColor: string;
   glyphs: UiGlyphs;
 }) {
   const character = glyphs.borderStyle === 'classic' ? '-' : '─';
   const rowWidth = safeWidth(width);
-  const titleText = rowWidth >= 12 ? title : '';
-  const stateText = rowWidth >= 32 && state ? ` ${glyphs.separator} ${state}` : '';
   return (
     <Box width={rowWidth} height={1} overflowY="hidden">
-      <Text color={color}>{character} </Text>
-      {titleText ? <Text bold color={titleColor}>{titleText}</Text> : null}
-      {stateText ? <Text color={stateColor}>{stateText}</Text> : null}
+      <Text color={color}>{character.repeat(rowWidth)}</Text>
     </Box>
   );
 }
@@ -1140,7 +1258,7 @@ function InlineRow({parts, width, separator, separatorColor}: {
   );
 }
 
-export function Footer({busy, approval = false, changedFiles, width = 80, contextPressure, queueCount = 0, activeAgents = 0, frame, glyphMode = 'auto', mode = 'BUILD', route}: {
+export function Footer({busy, approval = false, changedFiles, width = 80, contextPressure, queueCount = 0, activeAgents = 0, frame, glyphMode = 'auto', mode = 'BUILD', route, identityVisible = false}: {
   busy: boolean;
   approval?: boolean;
   tokens: number;
@@ -1155,16 +1273,25 @@ export function Footer({busy, approval = false, changedFiles, width = 80, contex
   glyphMode?: GlyphMode;
   mode?: string;
   route?: string;
+  /**
+   * True while the identity header is on screen. The header already states the
+   * mode and route, so the footer drops both rather than printing them twice in
+   * the same frame.
+   */
+  identityVisible?: boolean;
 }) {
   const theme = useTheme();
   const glyphs = resolveGlyphs(glyphMode);
   const rowWidth = safeWidth(width);
-  const safeFrame = sanitizeInlineTerminalText(frame ?? '');
-  const status = approval
-    ? `${glyphs.warning} approval required`
-    : `${busy ? (safeFrame || glyphs.running) : glyphs.activity} ${busy ? 'working' : 'ready'}`;
-  const changed = `${changedFiles} changed`;
-  const statusPart: InlinePart = {text: status, color: approval ? theme.warning : busy ? theme.accent : theme.success};
+  const contentWidth = Math.max(1, rowWidth - GUTTER);
+  // A spinner frame is one cell by contract; bound it to the gutter so a longer
+  // value cannot displace the status label.
+  const safeFrame = truncateDisplay(sanitizeInlineTerminalText(frame ?? ''), GUTTER, '');
+  // The status glyph sits in the shared gutter, so the footer starts on the same
+  // left edge as every transcript row instead of half a column inboard.
+  const statusGlyph = approval ? glyphs.warning : busy ? (safeFrame || glyphs.running) : glyphs.activity;
+  const statusColor = approval ? theme.warning : busy ? theme.accent : theme.success;
+  const statusLabel = approval ? 'approval required' : busy ? 'working' : 'ready';
   const pressurePart: InlinePart | undefined = contextPressure !== undefined && contextPressure >= 0.75 && rowWidth >= 40
     ? {text: `context ${formatPercent(contextPressure)}`, color: contextPressure >= 0.9 ? theme.error : theme.warning}
     : undefined;
@@ -1173,16 +1300,20 @@ export function Footer({busy, approval = false, changedFiles, width = 80, contex
   // status and genuine signals carry colour; mode, route, and `/help` are
   // reference material and stay dim so the row has one focal point.
   const mainParts: InlinePart[] = [
-    statusPart,
+    {text: statusLabel, color: statusColor},
     ...(pressurePart ? [pressurePart] : []),
-    ...(rowWidth >= 40 && changedFiles ? [{text: changed, color: theme.text, optional: true}] : []),
+    ...(rowWidth >= 40 && changedFiles ? [{text: `${changedFiles} changed`, color: theme.text, optional: true}] : []),
     ...(activeAgents ? [{text: `${glyphs.agent}${activeAgents}`, color: theme.accent, optional: true}] : []),
     ...(queueCount ? [{text: `q${queueCount}`, color: theme.muted, optional: true}] : []),
-    ...(rowWidth >= 28 ? [{text: sanitizeInlineTerminalText(mode), color: theme.muted}] : []),
-    ...(rowWidth >= 64 && route ? [{text: sanitizeInlineTerminalText(route), color: theme.dim, optional: true}] : []),
+    ...(!identityVisible && rowWidth >= 28 ? [{text: sanitizeInlineTerminalText(mode), color: theme.muted}] : []),
+    ...(!identityVisible && rowWidth >= 64 && route ? [{text: sanitizeInlineTerminalText(route), color: theme.dim, optional: true}] : []),
     ...(rowWidth >= 72 ? [{text: '/help', color: theme.dim, optional: true}] : []),
   ];
-  return <InlineRow parts={mainParts} width={rowWidth} separator={`  ${glyphs.separator}  `} separatorColor={theme.border} />;
+  return (
+    <Row glyph={<Text color={statusColor}>{statusGlyph}</Text>}>
+      <InlineRow parts={mainParts} width={contentWidth} separator={`  ${glyphs.separator}  `} separatorColor={theme.border} />
+    </Row>
+  );
 }
 
 export function CommandHints({input, selectedIndex = 0}: {input: string; selectedIndex?: number}) {
@@ -1230,7 +1361,7 @@ export function CommandPalette({
   const glyphs = resolveGlyphs(glyphMode);
   if (!suggestions.length && !title && !emptyText) return null;
   const rowWidth = safeWidth(width);
-  const innerWidth = Math.max(1, rowWidth - 2);
+  const innerWidth = Math.max(1, rowWidth - GUTTER);
   const pageSize = rowWidth < 28 ? 3 : rowWidth < 48 ? 4 : 6;
   const selectedIndex = Math.max(0, Math.min(selected, suggestions.length - 1));
   const start = Math.max(0, Math.min(selectedIndex - pageSize + 1, suggestions.length - pageSize));
@@ -1245,28 +1376,31 @@ export function CommandPalette({
   const hint = truncateDisplay(sanitizeInlineTerminalText(hintOverride ?? defaultHint), innerWidth);
   const activeSuggestion = suggestions[selectedIndex];
   return (
-    <Box flexDirection="column" paddingLeft={2} marginBottom={1}>
+    <Box flexDirection="column" marginBottom={1}>
       {titleText ? (
-        <Box>
+        <Box paddingLeft={GUTTER}>
           <Text bold color={theme.textStrong}>{truncateDisplay(titleText, innerWidth)}</Text>
         </Box>
       ) : null}
-      {!visible.length && empty ? <Text color={theme.muted}>{truncateDisplay(empty, innerWidth)}</Text> : null}
+      {!visible.length && empty ? <Box paddingLeft={GUTTER}><Text color={theme.muted}>{truncateDisplay(empty, innerWidth)}</Text></Box> : null}
       {visible.map((suggestion, index) => {
         const absoluteIndex = start + index;
         const active = absoluteIndex === selectedIndex;
-        const marker = active ? glyphs.prompt : ' ';
+        // The selection marker shares the transcript gutter, and only the active
+        // row carries the accent — selection is the one live thing in the panel.
         const labelLimit = rowWidth >= 64
-          ? Math.min(24, Math.max(1, innerWidth - displayWidth(marker) - 1))
-          : Math.max(1, innerWidth - displayWidth(marker) - 1);
-        const label = truncateDisplay(sanitizeInlineTerminalText(suggestion.label), labelLimit);
+          ? Math.min(24, innerWidth)
+          : innerWidth;
+        const label = truncateDisplay(sanitizeInlineTerminalText(suggestion.label), Math.max(1, labelLimit));
         const description = sanitizeInlineTerminalText(suggestion.description);
-        const descriptionLimit = Math.max(0, innerWidth - displayWidth(marker) - displayWidth(label) - 3);
+        const descriptionLimit = Math.max(0, innerWidth - displayWidth(label) - 2);
         return (
           <Box key={`${suggestion.value}-${absoluteIndex}`} backgroundColor={active ? theme.selection : undefined}>
-            <Text bold color={active ? theme.accent : theme.selection}>{marker}</Text>
+            <Box width={GUTTER}>
+              {active ? <Text bold color={theme.accent}>{glyphs.prompt}</Text> : null}
+            </Box>
             <Text bold={active} color={active ? theme.selectionText : theme.muted}>
-              {' '}{label}
+              {label}
             </Text>
             {rowWidth >= 64 && descriptionLimit >= 4
               ? <Text color={theme.muted}>  {truncateDisplay(description, descriptionLimit)}</Text>
@@ -1275,9 +1409,9 @@ export function CommandPalette({
         );
       })}
       {rowWidth < 64 && activeSuggestion?.description
-        ? <Text color={theme.muted}>{`  ${truncateDisplay(sanitizeInlineTerminalText(activeSuggestion.description), Math.max(1, innerWidth - 2))}`}</Text>
+        ? <Box paddingLeft={GUTTER}><Text color={theme.muted}>{truncateDisplay(sanitizeInlineTerminalText(activeSuggestion.description), innerWidth)}</Text></Box>
         : null}
-      <Text color={theme.muted}>{truncateDisplay(hint, innerWidth)}</Text>
+      <Box paddingLeft={GUTTER}><Text color={theme.muted}>{truncateDisplay(hint, innerWidth)}</Text></Box>
     </Box>
   );
 }
@@ -1286,20 +1420,22 @@ export function ActivityLine({activity, frame, width = 80}: {activity?: Activity
   const theme = useTheme();
   if (!activity) return null;
   const rowWidth = safeWidth(width);
-  const padding = rowWidth >= 4 ? 2 : 0;
-  const innerWidth = Math.max(1, rowWidth - padding);
+  const contentWidth = Math.max(1, rowWidth - GUTTER);
   const turn = activity.turn ? `turn ${activity.turn}` : '';
   const turnWidth = rowWidth >= 48 && turn ? displayWidth(turn) + 2 : 0;
-  const safeFrame = sanitizeInlineTerminalText(frame);
-  const label = truncateDisplay(sanitizeInlineTerminalText(activity.label), Math.max(1, innerWidth - displayWidth(safeFrame) - 1 - turnWidth));
+  // A spinner frame is one cell by contract; bound it to the gutter so a longer
+  // value cannot push the label out of the shared content column.
+  const safeFrame = truncateDisplay(sanitizeInlineTerminalText(frame), GUTTER, '');
+  const label = truncateDisplay(sanitizeInlineTerminalText(activity.label), Math.max(1, contentWidth - turnWidth));
   return (
-    <Box marginBottom={1} paddingLeft={padding} flexDirection="column">
-      <Box>
-        <Text color={theme.accent}>{truncateDisplay(safeFrame, innerWidth)}</Text>
-        <Text color={theme.text}>{` ${label}`}</Text>
+    // The spinner lives in the shared gutter so the live row lines up with the
+    // receipts above it instead of starting two columns further in.
+    <Box marginBottom={1} flexDirection="column">
+      <Row glyph={<Text color={theme.accent}>{safeFrame}</Text>}>
+        <Text color={theme.text}>{label}</Text>
         {rowWidth >= 48 && turn ? <Text color={theme.dim}>{`  ${turn}`}</Text> : null}
-      </Box>
-      {rowWidth < 48 && turn ? <Text color={theme.dim}>{truncateDisplay(turn, innerWidth)}</Text> : null}
+      </Row>
+      {rowWidth < 48 && turn ? <Box paddingLeft={GUTTER}><Text color={theme.dim}>{truncateDisplay(turn, contentWidth)}</Text></Box> : null}
     </Box>
   );
 }
@@ -1315,29 +1451,33 @@ export function ListPanel({title, entries, width = 80, glyphMode = 'auto', hideT
   const theme = useTheme();
   const glyphs = resolveGlyphs(glyphMode);
   const rowWidth = safeWidth(width);
-  const innerWidth = Math.max(1, rowWidth - 2);
+  const innerWidth = Math.max(1, rowWidth - GUTTER);
   const titleText = sanitizeInlineTerminalText(title);
+  const bullet = <Text color={theme.dim}>{glyphs.bullet}</Text>;
   return (
-    <Box flexDirection="column" marginBottom={1} paddingLeft={2}>
-      {hideTitle ? null : <Text bold color={theme.textStrong}>{truncateDisplay(titleText, innerWidth)}</Text>}
+    <Box flexDirection="column" marginBottom={1}>
+      {hideTitle ? null : <Box paddingLeft={GUTTER}><Text bold color={theme.textStrong}>{truncateDisplay(titleText, innerWidth)}</Text></Box>}
       {header ?? null}
       {entries.length ? entries.map((entry, index) => {
+        // Tone is the only colour a list row may claim, and only when the entry
+        // genuinely carries that state; ordinary rows stay body text.
         const color = entry.tone === 'success' ? theme.success
           : entry.tone === 'warning' ? theme.warning
             : entry.tone === 'error' ? theme.error : theme.text;
         const entryLabel = sanitizeInlineTerminalText(entry.label);
         const entryDetail = entry.detail ? sanitizeInlineTerminalText(entry.detail) : undefined;
         const labelLimit = entryDetail ? Math.max(1, Math.min(28, innerWidth - 4)) : innerWidth;
-        const label = truncateDisplay(`${glyphs.bullet} ${entryLabel}`, labelLimit);
+        const label = truncateDisplay(entryLabel, labelLimit);
         // Pad each row to a stable inner width so incremental terminal
         // repaints overwrite trailing cells; short rows must not leave ghost
         // characters from a previously longer row at the same position.
         if (rowWidth < 52 && entryDetail) {
-          const detailText = `  ${truncateDisplay(entryDetail, Math.max(1, innerWidth - 2))}`;
           return (
             <Box key={`${entry.label}-${index}`} flexDirection="column">
-              <Text color={color}>{padDisplay(label, innerWidth)}</Text>
-              <Text color={theme.muted}>{padDisplay(detailText, innerWidth)}</Text>
+              <Row glyph={bullet}><Text color={color}>{padDisplay(label, innerWidth)}</Text></Row>
+              <Box paddingLeft={GUTTER}>
+                <Text color={theme.muted}>{padDisplay(truncateDisplay(entryDetail, innerWidth), innerWidth)}</Text>
+              </Box>
             </Box>
           );
         }
@@ -1345,13 +1485,13 @@ export function ListPanel({title, entries, width = 80, glyphMode = 'auto', hideT
         const detailText = entryDetail ? truncateDisplay(entryDetail, detailLimit) : '';
         const trailing = Math.max(0, innerWidth - displayWidth(label) - (entryDetail ? 2 + displayWidth(detailText) : 0));
         return (
-          <Box key={`${entry.label}-${index}`}>
+          <Row key={`${entry.label}-${index}`} glyph={bullet}>
             <Text color={color}>{label}</Text>
             {entryDetail ? <Text color={theme.muted}>{`  ${detailText}`}</Text> : null}
             {trailing > 0 ? <Text>{' '.repeat(trailing)}</Text> : null}
-          </Box>
+          </Row>
         );
-      }) : <Text color={theme.dim}>{padDisplay(`${glyphs.bullet} none`, innerWidth)}</Text>}
+      }) : <Row glyph={bullet}><Text color={theme.dim}>{padDisplay('none', innerWidth)}</Text></Row>}
     </Box>
   );
 }
@@ -1402,6 +1542,75 @@ export function MeterBar({segments, total, width, glyphs}: {
   );
 }
 
+export interface ContextInspectorContent {
+  status: ContextInspectorStatus;
+  working?: WorkingMemory | undefined;
+  summary?: string | undefined;
+  memory?: string | undefined;
+  connections?: string | undefined;
+  sources?: ContextSource[] | undefined;
+  compact?: boolean;
+  /** Separator from the active glyph set, so ASCII terminals stay ASCII. */
+  separator: string;
+}
+
+/**
+ * Build the inspector's evidence rows. Exported so `viewport` scores exactly
+ * what the renderer will draw instead of guessing at a row count.
+ */
+export function contextInspectorEntries({
+  status, working, summary, memory, connections, sources, compact = false, separator,
+}: ContextInspectorContent): ListEntry[] {
+  const hasCompactedContext = status.compactedMessages > 0 || Boolean(summary);
+  const entries: ListEntry[] = [
+    {label: 'model input', detail: `~${formatTokens(status.promptTokens)}/${formatTokens(status.contextWindowTokens)} tokens ${separator} ${status.promptSource === 'none' ? 'not requested' : status.promptSource}`},
+    {label: 'transcript', detail: `${status.messageCount} persisted messages ${separator} ~${formatTokens(status.activeTokens)} tokens ${separator} tools ~${formatTokens(status.toolTokens)}`},
+    {label: 'short-term', detail: working ? `${working.focus || working.goal || 'ready'} ${separator} ${relativeTime(working.lastUpdatedAt)}` : 'not established'},
+    {label: 'summary', detail: hasCompactedContext ? `~${formatTokens(status.summaryTokens)} tokens ${separator} ${status.compactedMessages} compacted${summary ? '' : ` ${separator} facts`}` : 'not created'},
+    {label: 'long-term', detail: memory ?? `retrieved by relevance ${separator} untrusted context`},
+  ];
+  if (status.epochIndex !== undefined && status.epochCount !== undefined &&
+    status.epochTokens !== undefined && status.epochBudget !== undefined &&
+    status.lifetimeTokens !== undefined && status.lifetimeBudget !== undefined) {
+    entries.splice(1, 0, {
+      label: 'epoch',
+      detail: `#${status.epochIndex} ${formatTokens(status.epochTokens)}/${formatTokens(status.epochBudget)} ${separator} lifetime ${formatTokens(status.lifetimeTokens)}/${formatTokens(status.lifetimeBudget)}`,
+    });
+  }
+  if (!compact && working?.constraints.length) entries.push({label: `constraints ${working.constraints.length}`, detail: working.constraints.slice(0, 2).join(` ${separator} `)});
+  if (!compact && working?.decisions.length) entries.push({label: `decisions ${working.decisions.length}`, detail: working.decisions.slice(0, 2).join(` ${separator} `)});
+  if (!compact && working?.openQuestions.length) entries.push({label: `open ${working.openQuestions.length}`, detail: working.openQuestions.slice(0, 2).join(` ${separator} `), tone: 'warning'});
+  if (!compact && working?.relevantFiles.length) entries.push({label: 'relevant files', detail: working.relevantFiles.map((file) => compactDisplayPath(sanitizeInlineTerminalText(file), 28)).join(` ${separator} `)});
+  if (sources?.length) {
+    const pinned = sources.filter((source) => source.state === 'pinned');
+    const muted = sources.filter((source) => source.state === 'muted');
+    const pinnedTokens = pinned.reduce((sum, source) => sum + source.tokens, 0);
+    const names = pinned.map((source) => compactDisplayPath(sanitizeInlineTerminalText(source.path), 28)).join(` ${separator} `);
+    entries.push({
+      label: `pinned ${pinned.length}${muted.length ? ` ${separator} ${muted.length} muted` : ''}`,
+      detail: pinned.length
+        ? `~${formatTokens(pinnedTokens)} tokens ${separator} survives compaction ${separator} ${names}`
+        : `${muted.length} muted ${separator} 0 tokens`,
+      tone: 'success',
+    });
+  }
+  if (connections) entries.push({label: 'connections', detail: connections});
+  return entries;
+}
+
+/**
+ * Rendered height of a `ListPanel`, including its trailing gap. A narrow
+ * terminal stacks each entry's detail onto its own row, so the count depends on
+ * the width; `viewport` needs the same answer the renderer produces.
+ */
+export function listPanelRows(entries: readonly ListEntry[], width: number, hideTitle = false): number {
+  const stacked = safeWidth(width) < 52;
+  const entryRows = entries.length
+    ? entries.reduce((rows, entry) => rows + (stacked && entry.detail ? 2 : 1), 0)
+    : 1;
+  return (hideTitle ? 0 : 1) + entryRows + 1;
+}
+
 export function ContextInspector({status, working, summary, width, memory, connections, sources, compact = false, minimal = false, glyphMode = 'auto'}: {
   status: ContextInspectorStatus;
   working: WorkingMemory | undefined;
@@ -1419,14 +1628,13 @@ export function ContextInspector({status, working, summary, width, memory, conne
   const hasCompactedContext = status.compactedMessages > 0 || Boolean(summary);
   if (minimal) {
     const rowWidth = safeWidth(width);
-    const padding = rowWidth >= 4 ? 2 : 0;
-    const innerWidth = Math.max(1, rowWidth - padding);
+    const innerWidth = Math.max(1, rowWidth - GUTTER);
     const modelInput = `~${formatTokens(status.promptTokens)}/${formatTokens(status.contextWindowTokens)} ${status.promptSource}`;
     const focus = sanitizeTerminalText(working?.focus || working?.goal || (hasCompactedContext ? 'handoff ready' : 'not established'))
       .replace(/\s+/g, ' ')
       .trim() || 'not established';
     return (
-      <Box flexDirection="column" paddingLeft={padding}>
+      <Box flexDirection="column" paddingLeft={GUTTER}>
         <Text bold color={theme.textStrong}>
           {truncateDisplay(`Context ${glyphs.separator} window ${formatPercent(status.pressure)} ${glyphs.separator} ${modelInput}`, innerWidth)}
         </Text>
@@ -1436,72 +1644,66 @@ export function ContextInspector({status, working, summary, width, memory, conne
       </Box>
     );
   }
-  const entries: ListEntry[] = [
-    {label: 'model input', detail: `~${formatTokens(status.promptTokens)}/${formatTokens(status.contextWindowTokens)} tokens ${glyphs.separator} ${status.promptSource === 'none' ? 'not requested' : status.promptSource}`},
-    {label: 'transcript', detail: `${status.messageCount} persisted messages ${glyphs.separator} ~${formatTokens(status.activeTokens)} tokens ${glyphs.separator} tools ~${formatTokens(status.toolTokens)}`},
-    {label: 'short-term', detail: working ? `${working.focus || working.goal || 'ready'} ${glyphs.separator} ${relativeTime(working.lastUpdatedAt)}` : 'not established'},
-    {label: 'summary', detail: hasCompactedContext ? `~${formatTokens(status.summaryTokens)} tokens ${glyphs.separator} ${status.compactedMessages} compacted${summary ? '' : ` ${glyphs.separator} facts`}` : 'not created'},
-    {label: 'long-term', detail: memory ?? `retrieved by relevance ${glyphs.separator} untrusted context`},
-  ];
-  if (status.epochIndex !== undefined && status.epochCount !== undefined &&
-    status.epochTokens !== undefined && status.epochBudget !== undefined &&
-    status.lifetimeTokens !== undefined && status.lifetimeBudget !== undefined) {
-    entries.splice(1, 0, {
-      label: 'epoch',
-      detail: `#${status.epochIndex} ${formatTokens(status.epochTokens)}/${formatTokens(status.epochBudget)} ${glyphs.separator} lifetime ${formatTokens(status.lifetimeTokens)}/${formatTokens(status.lifetimeBudget)}`,
-    });
-  }
-  if (!compact && working?.constraints.length) entries.push({label: `constraints ${working.constraints.length}`, detail: working.constraints.slice(0, 2).join(` ${glyphs.separator} `)});
-  if (!compact && working?.decisions.length) entries.push({label: `decisions ${working.decisions.length}`, detail: working.decisions.slice(0, 2).join(` ${glyphs.separator} `)});
-  if (!compact && working?.openQuestions.length) entries.push({label: `open ${working.openQuestions.length}`, detail: working.openQuestions.slice(0, 2).join(` ${glyphs.separator} `), tone: 'warning'});
-  if (!compact && working?.relevantFiles.length) entries.push({label: 'relevant files', detail: working.relevantFiles.map((file) => compactDisplayPath(sanitizeInlineTerminalText(file), 28)).join(` ${glyphs.separator} `)});
-  if (sources?.length) {
-    const pinned = sources.filter((source) => source.state === 'pinned');
-    const muted = sources.filter((source) => source.state === 'muted');
-    const pinnedTokens = pinned.reduce((sum, source) => sum + source.tokens, 0);
-    const names = pinned.map((source) => compactDisplayPath(sanitizeInlineTerminalText(source.path), 28)).join(` ${glyphs.separator} `);
-    entries.push({
-      label: `pinned ${pinned.length}${muted.length ? ` ${glyphs.separator} ${muted.length} muted` : ''}`,
-      detail: pinned.length
-        ? `~${formatTokens(pinnedTokens)} tokens ${glyphs.separator} survives compaction ${glyphs.separator} ${names}`
-        : `${muted.length} muted ${glyphs.separator} 0 tokens`,
-      tone: 'success',
-    });
-  }
-  if (connections) entries.push({label: 'connections', detail: connections});
+  const entries = contextInspectorEntries({
+    status,
+    working,
+    summary,
+    memory,
+    connections,
+    sources,
+    compact,
+    separator: glyphs.separator,
+  });
   const rowWidth = safeWidth(width);
-  const innerWidth = Math.max(1, rowWidth - 2);
+  const innerWidth = Math.max(1, rowWidth - GUTTER);
   const pressureColor = status.pressure >= 0.9 ? theme.error : status.pressure >= 0.75 ? theme.warning : theme.accent;
   const segments: MeterSegment[] = [
     {label: 'model input', value: status.promptTokens, color: theme.accent},
   ];
-  const showMeter = rowWidth >= 32;
-  const meterWidth = Math.max(8, Math.min(innerWidth - displayWidth(`Context ${formatPercent(status.pressure)} `), 48));
+  // The meter only appears when the heading leaves genuine room for it. Ink
+  // shrinks flex children rather than dropping them, so an over-wide meter used
+  // to squeeze the heading into `Contex· windo31%`.
+  const headingWidth = displayWidth(`Context ${glyphs.separator} window ${formatPercent(status.pressure)} `);
+  const meterRoom = innerWidth - headingWidth;
+  const showMeter = meterRoom >= 8;
+  const meterWidth = Math.max(8, Math.min(meterRoom, 48));
   return (
-    <Box flexDirection="column" marginBottom={1} paddingLeft={2}>
-      <Box>
+    // The trailing gap belongs to the evidence list, which already owns one;
+    // adding a second here left a stray blank row under the panel.
+    <Box flexDirection="column">
+      <Box paddingLeft={GUTTER} height={1} overflow="hidden">
         <Text bold color={theme.textStrong}>{`Context `}</Text>
         <Text color={theme.dim}>{`${glyphs.separator} window `}</Text>
         <Text bold color={pressureColor}>{formatPercent(status.pressure)}</Text>
         {showMeter ? <><Text> </Text><MeterBar segments={segments} total={status.contextWindowTokens} width={meterWidth} glyphs={glyphs} /></> : null}
       </Box>
-      <ListPanel title="" hideTitle entries={entries} width={Math.max(1, rowWidth - 2)} glyphMode={glyphMode} />
+      {/* The list keeps the full width so its bullets land in the shared gutter
+          and every label aligns with the heading above. */}
+      <ListPanel title="" hideTitle entries={entries} width={rowWidth} glyphMode={glyphMode} />
     </Box>
   );
 }
 
 function ThemePreview({name, width, glyphs}: {name: string; width: number; glyphs: UiGlyphs}) {
   const theme = useTheme();
-  const innerWidth = Math.max(1, safeWidth(width) - 2);
+  const innerWidth = Math.max(1, safeWidth(width) - GUTTER);
+  const colored = Boolean(theme.accent || theme.success || theme.warning || theme.error);
+  // The swatch strip is one row at every width: without colour it degrades to a
+  // truncated name list rather than wrapping into a second, unaccounted row.
   return (
-    <Box marginBottom={1} paddingLeft={2} flexDirection="column">
+    <Box marginBottom={1} paddingLeft={GUTTER} flexDirection="column">
       <Text bold color={theme.textStrong}>{truncateDisplay(`Theme ${sanitizeInlineTerminalText(name)}`, innerWidth)}</Text>
-      {theme.accent || theme.success || theme.warning || theme.error ? (
-        <Box>
+      {colored ? (
+        <Box height={1} overflow="hidden">
           <Text color={theme.border}>{glyphs.swatch}</Text><Text color={theme.accent}> {glyphs.swatch}</Text>
           <Text color={theme.success}> {glyphs.swatch}</Text><Text color={theme.warning}> {glyphs.swatch}</Text><Text color={theme.error}> {glyphs.swatch}</Text>
         </Box>
-      ) : <Text>text {glyphs.separator} accent {glyphs.separator} success {glyphs.separator} warning {glyphs.separator} error</Text>}
+      ) : (
+        <Text>{truncateDisplay(
+          `text ${glyphs.separator} accent ${glyphs.separator} success ${glyphs.separator} warning ${glyphs.separator} error`,
+          innerWidth,
+        )}</Text>
+      )}
     </Box>
   );
 }
@@ -1517,8 +1719,8 @@ function Banner({engine, status, version, width, glyphs, files}: {
   const theme = useTheme();
   const rowWidth = safeWidth(width);
   // The readiness line is a receipt like any other, so its glyph shares the
-  // column-0 gutter with context/tool/notice rows instead of sitting inboard.
-  const innerWidth = rowWidth;
+  // transcript gutter with context/tool/notice rows instead of sitting inboard.
+  const contentWidth = Math.max(1, rowWidth - GUTTER);
   const safeEngine = sanitizeInlineTerminalText(engine);
   const glyph = status === 'ready' ? glyphs.success : glyphs.warning;
   const label = status === 'ready' ? 'Workspace ready' : status === 'empty' ? 'Empty workspace' : 'Setup required';
@@ -1535,12 +1737,13 @@ function Banner({engine, status, version, width, glyphs, files}: {
   return (
     <Box marginBottom={1} flexDirection="column" aria-label={spokenDetail}>
       <Box height={1} overflowY="hidden">
-        <Text bold color={color}>{glyph} </Text>
-        <Text color={status === 'ready' ? theme.text : theme.warning}>{truncateDisplay(detail, Math.max(1, innerWidth - 2))}</Text>
+        <Box width={GUTTER}><Text bold color={color}>{glyph}</Text></Box>
+        <Text color={status === 'ready' ? theme.text : theme.warning}>{truncateDisplay(detail, contentWidth)}</Text>
       </Box>
     </Box>
   );
 }
+
 function UpdateNotice({current, latest, command, highlights, width, glyphs}: {
   current: string;
   latest: string;
@@ -1551,47 +1754,45 @@ function UpdateNotice({current, latest, command, highlights, width, glyphs}: {
 }) {
   const theme = useTheme();
   const availableWidth = safeWidth(width);
+  const contentWidth = Math.max(1, availableWidth - GUTTER);
   const compact = availableWidth < 48;
   // Narrow terminals prioritise the actual version delta. The long explanatory
   // copy and command must never push both version numbers beyond the viewport.
   const parts = compact ? [
-    {text: `${glyphs.up} `, color: theme.accent, bold: true},
     {text: `v${current}`, color: theme.dim, bold: false},
     {text: ` ${glyphs.arrow} `, color: theme.muted, bold: false},
-    {text: `v${latest}`, color: theme.success, bold: true},
+    {text: `v${latest}`, color: theme.accent, bold: true},
   ] : [
-    {text: glyphs.up, color: theme.accent, bold: true},
-    {text: ' a new version is available  ', color: theme.text, bold: false},
+    {text: 'a new version is available  ', color: theme.text, bold: false},
     {text: `v${current}`, color: theme.dim, bold: false},
     {text: ` ${glyphs.arrow} `, color: theme.muted, bold: false},
-    {text: `v${latest}`, color: theme.success, bold: true},
+    // The new version is the actionable value, so it takes the accent. `success`
+    // is reserved for evidence that something finished, and nothing has yet.
+    {text: `v${latest}`, color: theme.accent, bold: true},
     {text: `   ${command}`, color: theme.dim, bold: false},
   ];
   const raw = parts.map((part) => part.text).join('');
-  const rendered = truncateDisplay(raw, availableWidth);
+  const rendered = truncateDisplay(raw, contentWidth);
   // When the line fits, render the multi-colour spans; if truncation kicked in
   // we fall back to a single dim line so no span is left dangling mid-word.
   const truncated = rendered !== raw;
   // Highlights are already sanitised and bounded (≤4 short lines) upstream; each
-  // reads as a dim bullet under the version delta and is truncated to the width
-  // so a long entry can never wrap into the transcript.
-  const bulletPrefix = `  ${glyphs.separator} `;
-  const bulletWidth = Math.max(0, safeWidth(width) - displayWidth(bulletPrefix));
-  const bullets = bulletWidth > 0
-    ? (highlights ?? []).map((line) => truncateDisplay(sanitizeInlineTerminalText(line), bulletWidth))
-    : [];
+  // reads as a dim continuation line under the version delta and is truncated to
+  // the width so a long entry can never wrap into the transcript.
+  const bullets = (highlights ?? []).map((line) =>
+    truncateDisplay(sanitizeInlineTerminalText(line), contentWidth));
   return (
     <Box marginBottom={1} flexDirection="column">
-      <Box>
+      <Row glyph={<Text bold color={theme.accent}>{glyphs.up}</Text>}>
         {truncated
           ? <Text color={theme.muted}>{rendered}</Text>
           : parts.map((part, index) => (
             <Text key={index} color={part.color} bold={part.bold}>{part.text}</Text>
           ))}
-      </Box>
-      {compact ? <Text color={theme.dim}>{truncateDisplay(`  run ${command}`, availableWidth)}</Text> : null}
+      </Row>
+      {compact ? <Box paddingLeft={GUTTER}><Text color={theme.dim}>{truncateDisplay(`run ${command}`, contentWidth)}</Text></Box> : null}
       {bullets.map((line, index) => (
-        <Text key={index} color={theme.dim}>{`${bulletPrefix}${line}`}</Text>
+        <Box key={index} paddingLeft={GUTTER}><Text color={theme.dim}>{line}</Text></Box>
       ))}
     </Box>
   );
@@ -1638,7 +1839,7 @@ function RichText({value, glyphs}: {value: string; glyphs: UiGlyphs}) {
       const marker = bullet[2] === '-' || bullet[2] === '*' ? glyphs.listBullet : bullet[2] as string;
       return [
         <Text key={index} wrap="wrap">
-          {bullet[1]}<Text color={theme.accent}>{marker} </Text><InlineMarkup value={bullet[3] as string} />
+          {bullet[1]}<Text color={theme.dim}>{marker} </Text><InlineMarkup value={bullet[3] as string} />
         </Text>,
       ];
     }
@@ -1661,14 +1862,65 @@ const codeKeywords = new Set([
   'return', 'switch', 'throw', 'true', 'try', 'type', 'undefined', 'while', 'yield',
 ]);
 
+/**
+ * The exact visible text `RichText` will render for one source line, or `null`
+ * when the line renders nothing at all (a bare or closing fence).
+ *
+ * Exported for `viewport.richTextRows`, which has to wrap the same string at the
+ * same width to score an item's height. Composing the prefix into the string
+ * matters: Ink wraps a whole `<Text>` including its rail or bullet marker, so
+ * scoring the content alone against a reduced width disagrees with the render
+ * whenever a line wraps.
+ *
+ * `state` carries the fence tracking across calls, since a line's meaning
+ * depends on whether a fence is open.
+ */
+export interface RichTextScanState {
+  inCode: boolean;
+}
+
+export function richTextLine(line: string, state: RichTextScanState, codeRail = '│', listBullet = '•'): string | null {
+  const fence = line.trim().match(/^```+\s*([\w+#.-]*)/u);
+  if (fence) {
+    state.inCode = !state.inCode;
+    const language = state.inCode ? fence[1] ?? '' : '';
+    return language ? `${codeRail} ${language}` : null;
+  }
+  if (state.inCode) return `${codeRail} ${line || ' '}`;
+  const heading = line.match(/^#{1,4}\s+(.+)$/);
+  if (heading) return inlineMarkupText(heading[1] as string);
+  const bullet = line.match(/^(\s*)([-*]|\d+\.)\s+(.+)$/);
+  if (bullet) {
+    const marker = bullet[2] === '-' || bullet[2] === '*' ? listBullet : bullet[2] as string;
+    return `${bullet[1]}${marker} ${inlineMarkupText(bullet[3] as string)}`;
+  }
+  if (line.startsWith('> ')) return `${codeRail} ${inlineMarkupText(line.slice(2))}`;
+  return inlineMarkupText(line || ' ') || ' ';
+}
+
+/** Visible text of an inline-markup span: the `` ` `` and `**` delimiters are chrome. */
+function inlineMarkupText(value: string): string {
+  return value.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*)/g).filter(Boolean).map((part) => {
+    if (part.startsWith('`') && part.endsWith('`')) return part.slice(1, -1);
+    if (part.startsWith('**') && part.endsWith('**')) return part.slice(2, -2);
+    return part;
+  }).join('');
+}
+
+/**
+ * Deliberately restrained highlighting. An earlier version painted strings with
+ * `success` and numbers with `warning`, so every code block competed with the
+ * real status rows for the same two colours. Literals now use a neutral step
+ * below `code`, and only keywords take the accent.
+ */
 function HighlightedCode({value, language}: {value: string; language: string}) {
   const theme = useTheme();
   const commentPrefix = /^(?:py|python|sh|shell|bash|zsh)$/i.test(language) ? '#' : '//';
   const tokens = value.split(/(`(?:\\.|[^`\\])*`|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/.*$|#.*$|\b\d+(?:\.\d+)?\b|\b[A-Za-z_$][\w$]*\b)/gu);
   return <>{tokens.filter(Boolean).map((token, index) => {
     if (token.startsWith(commentPrefix)) return <Text key={index} color={theme.dim}>{token}</Text>;
-    if (/^[`'"]/u.test(token)) return <Text key={index} color={theme.success}>{token}</Text>;
-    if (/^\d/u.test(token)) return <Text key={index} color={theme.warning}>{token}</Text>;
+    if (/^[`'"]/u.test(token)) return <Text key={index} color={theme.codeLiteral}>{token}</Text>;
+    if (/^\d/u.test(token)) return <Text key={index} color={theme.codeLiteral}>{token}</Text>;
     if (codeKeywords.has(token)) return <Text key={index} bold color={theme.accent}>{token}</Text>;
     return <Text key={index} color={theme.code}>{token}</Text>;
   })}</>;

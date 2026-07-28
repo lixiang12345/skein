@@ -428,7 +428,10 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
         break;
       case 'context':
         refreshSession();
-        if (event.packed.hits.length || event.packed.degradation) {
+        // Only a degraded or clipped retrieval reaches the transcript. A routine
+        // hit count is accounting, not conversation, and `/context` plus the
+        // structured event stream keep the full ledger either way.
+        if (event.packed.degradation || event.packed.truncated) {
           append({
             id: nextId(),
             kind: 'context',
@@ -436,16 +439,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
             hits: event.packed.hits.length,
             tokens: event.packed.estimatedTokens,
             ...(event.packed.budgetTier ? {budgetTier: event.packed.budgetTier} : {}),
-            ...(event.packed.budgetTokens !== undefined ? {budgetTokens: event.packed.budgetTokens} : {}),
-            ...(event.packed.budgetReason ? {budgetReason: event.packed.budgetReason} : {}),
             truncated: event.packed.truncated,
-            spans: event.packed.hits.slice(0, 5).map((hit) => ({
-              path: relative(runner.workspace.primaryRoot, hit.path) || hit.path,
-              startLine: hit.startLine,
-              endLine: hit.endLine,
-              score: hit.score,
-              ...(hit.symbol ? {symbol: hit.symbol} : {}),
-            })),
             ...(event.packed.degradation ? {degradation: event.packed.degradation} : {}),
           });
         }
@@ -2292,6 +2286,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
             frame={frame}
             glyphMode={glyphMode}
             mode={interactionMode.toUpperCase()}
+            identityVisible={showHeader}
             route={config.activeConnection && config.activeConnection.source !== 'legacy'
               ? `@${config.activeConnection.id}/${config.model.model}`
               : `${config.model.provider}/${config.model.model}`}

@@ -91,6 +91,13 @@ describe('timeline viewport budgeting', () => {
       {id: 'cjk', kind: 'user', text: '界'.repeat(10)},
       {width: 12, rows: 20, compact: true},
     )).toBe(2);
+    // Ink word-wraps, so a row estimate has to word-wrap too: `wide narrow`
+    // cannot fit in 8 columns, and the break leaves the first row short. A
+    // ceil(width / columns) estimate would score this as one row.
+    expect(estimateTimelineItemRows(
+      {id: 'wrap', kind: 'user', text: 'wide narrow'},
+      {width: 10, rows: 20, compact: true},
+    )).toBe(2);
     // A settled reply is content from its first row: the brand nameplate is
     // gone, so only an active stream spends a row on chrome.
     expect(estimateTimelineItemRows(
@@ -104,7 +111,9 @@ describe('timeline viewport budgeting', () => {
     expect(estimateTimelineItemRows(
       {id: 'tool', kind: 'tool', name: 'shell', detail: 'test', state: 'ok', output: 'a\nb\nc'},
       {width: 80, rows: 20, compact: true, showToolOutput: true},
-    )).toBe(5);
+    // One aligned row plus three output rows. A narrow terminal no longer adds
+    // a second detail row, so the tool row itself is always exactly one.
+    )).toBe(4);
   });
 
   it('budgets and clips update metadata within short viewports', () => {
@@ -124,5 +133,41 @@ describe('timeline viewport budgeting', () => {
     const oneRow = fitTimelineToRows([update], {width: 40, rows: 1});
     expect(oneRow[0]).toMatchObject({kind: 'notice', text: expect.stringContaining('Update available')});
     expect(estimateTimelineItemRows(oneRow[0] as TimelineItem, {width: 40, rows: 1})).toBe(1);
+  });
+
+  it('never exceeds the row budget, even for items with a fixed minimum height', () => {
+    // A banner is one row plus its trailing gap and a tool row is one row plus
+    // its gap, so neither shrinks to a single row by clipping content alone. A
+    // one-row viewport still has to fit, or the composer is pushed off screen.
+    const items: TimelineItem[] = [
+      {id: 'banner', kind: 'banner', engine: 'local', status: 'ready', version: '0.3.62'},
+      {id: 'tool', kind: 'tool', name: 'shell', detail: 'npm test', state: 'error', errorDetail: 'exit 1'},
+    ];
+    for (const item of items) {
+      for (const rows of [1, 2]) {
+        const options = {width: 80, rows};
+        const visible = fitTimelineToRows([item], options);
+        expect(visible).toHaveLength(1);
+        expect(
+          estimateTimelineItemRows(visible[0] as TimelineItem, options),
+          `${item.kind} exceeded a ${rows}-row budget`,
+        ).toBeLessThanOrEqual(rows);
+      }
+    }
+  });
+
+  it('keeps a scrolled window inside the budget when it starts mid-item', () => {
+    const items: TimelineItem[] = [
+      {id: 'long', kind: 'assistant', text: Array.from({length: 12}, (_, index) => `line ${index}`).join('\n')},
+      {id: 'banner', kind: 'banner', engine: 'local', status: 'ready', version: '0.3.62'},
+    ];
+    for (const rows of [1, 2, 3]) {
+      for (const scrollOffsetRows of [1, 4]) {
+        const options = {width: 80, rows, scrollOffsetRows};
+        const total = fitTimelineToRows(items, options)
+          .reduce((sum, item) => sum + estimateTimelineItemRows(item, options), 0);
+        expect(total, `rows=${rows} offset=${scrollOffsetRows} overflowed`).toBeLessThanOrEqual(rows);
+      }
+    }
   });
 });

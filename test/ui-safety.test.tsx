@@ -91,10 +91,16 @@ describe('terminal display safety', () => {
       'task-title-clean', 'permission-tool-clean', 'command-clean', 'cwd-clean',
       'palette-title-clean', 'suggestion-label-clean', 'suggestion-description-clean',
       'list-title-clean', 'list-label-clean', 'list-detail-clean', 'activity-label-clean',
-      'frame-clean', 'footer-frame-clean', 'footer-route-clean',
+      'footer-route-clean',
     ]) {
       expect(output).toContain(value);
     }
+    // Spinner frames are one cell by contract and render inside the fixed status
+    // gutter, so an over-long frame is clipped rather than wrapped: letting it
+    // wrap would push the label out of the shared content column. The clip runs
+    // after sanitization, so control sequences are still stripped first.
+    expect(output).not.toContain('frame-clean');
+    expect(output).not.toContain('footer-frame-clean');
     expect(output).not.toMatch(/[\u001B\u0007\u007F]/u);
   });
 

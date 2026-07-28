@@ -1,4 +1,5 @@
 import React from 'react';
+import chalk from 'chalk';
 import {renderToString, Text} from 'ink';
 import stripAnsi from 'strip-ansi';
 import {describe, expect, it} from 'vitest';
@@ -164,9 +165,14 @@ describe('terminal presentation', () => {
       </>,
     );
     expect(output).toContain('SKEIN');
-    expect(output).toContain('◇ context');
+    // Retrieval that worked stays out of the transcript; only the degradation
+    // earns a row, and it says what went wrong rather than counting spans.
+    expect(output).toContain('context/unavailable');
     expect(output).toContain('Local retrieval unavailable');
-    expect(output).toContain('✓ read_file');
+    expect(output).not.toContain('3 spans');
+    // A tool that succeeded is a quiet aligned row with no status glyph.
+    expect(output).toContain('read_file');
+    expect(output).not.toContain('✓ read_file');
     expect(output).toContain('Fix the queue');
     expect(output).toContain('Run tests');
   });
@@ -325,7 +331,7 @@ describe('terminal presentation', () => {
     expect(sanitizeTerminalText('\u001B[2Jclear\u0007')).toBe('clear');
   });
 
-  it('groups tool activity with complete loading and terminal states', () => {
+  it('renders every tool state on one quiet aligned row, marking only what needs attention', () => {
     const items = prepareTimelineItems([
       {id: 'queued', kind: 'tool', name: 'queued_tool', detail: 'waiting', state: 'queued'},
       {id: 'running', kind: 'tool', name: 'running_tool', detail: 'working', state: 'running'},
@@ -334,14 +340,27 @@ describe('terminal presentation', () => {
       {id: 'cancelled', kind: 'tool', name: 'search', detail: 'workspace', state: 'cancelled', errorDetail: 'Interrupted'},
     ], undefined, false);
     const output = renderToString(<Timeline items={items} width={80} glyphMode="ascii" />, {columns: 80});
+    const rows = output.split('\n').filter((line) => line.trim());
 
-    expect(items.filter((item) => item.kind === 'tool-group')).toHaveLength(1);
-    expect(output).toContain('Tools');
-    expect(output).toContain('2 active');
-    expect(output).toContain('1 done');
-    expect(output).toContain('1 failed');
-    expect(output).toContain('1 cancelled');
-    expect(output).toContain('Ctrl+O details');
+    // Every call is one row: no group header, and no second detail line.
+    expect(rows).toHaveLength(5);
+    expect(output).not.toContain('Tools');
+    expect(output).not.toContain('5 calls');
+    for (const [name, detail] of [
+      ['queued_tool', 'waiting'], ['running_tool', 'working'],
+      ['read_file', 'src/ui/tui.tsx'], ['shell', 'exit 1'], ['search', 'Interrupted'],
+    ]) {
+      const row = rows.find((line) => line.includes(name as string));
+      expect(row, `missing row for ${name}`).toBeDefined();
+      expect(row).toContain(detail);
+    }
+    // Success and queued rows stay silent; only running, failed, and cancelled
+    // claim the gutter. In ASCII those glyphs are `~`, `x`, and `!`.
+    expect(rows.find((line) => line.includes('read_file'))?.startsWith(' ')).toBe(true);
+    expect(rows.find((line) => line.includes('queued_tool'))?.startsWith(' ')).toBe(true);
+    expect(rows.find((line) => line.includes('running_tool'))?.startsWith('~')).toBe(true);
+    expect(rows.find((line) => line.includes('exit 1'))?.startsWith('x')).toBe(true);
+    expect(rows.find((line) => line.includes('Interrupted'))?.startsWith('!')).toBe(true);
     for (const line of output.split('\n')) expect(displayWidth(line)).toBeLessThanOrEqual(80);
   });
 
@@ -431,8 +450,7 @@ describe('terminal presentation', () => {
         <Timeline width={columns} items={[
           {
             id: 'context', kind: 'context', engine: 'local', hits: 12, tokens: 8400,
-            budgetTier: 'broad', budgetTokens: 8_000,
-            budgetReason: 'cross-module or repository-wide evidence requested',
+            budgetTier: 'broad', truncated: true,
           },
           {
             id: 'prompt', kind: 'prompt', intent: 'debug', sections: ['working-memory', 'code:local'], tokens: 9300,
@@ -500,8 +518,11 @@ describe('terminal presentation', () => {
       </PromptBar>,
       {columns},
     );
-    if (columns >= 20) expect(output).toContain('Editor');
+    // The composer states its mode once, in the hint row. A labelled rule said
+    // the same thing again in the loudest position in the frame.
     expect(output).toContain('input paused');
+    if (columns >= 40) expect(output).toContain('external editor active');
+    expect(output).not.toContain('Editor');
     for (const line of output.split('\n')) expect(displayWidth(line)).toBeLessThanOrEqual(columns);
   });
 
@@ -905,13 +926,16 @@ describe('terminal presentation', () => {
         <Header config={config} askMode glyphMode="ascii" />
         <Timeline glyphMode="ascii" items={[
           {id: 'tool', kind: 'tool', name: 'read_file', detail: 'src/queue.ts', state: 'ok'},
+          {id: 'failed', kind: 'tool', name: 'shell', detail: 'npm test', state: 'error', errorDetail: 'exit 1'},
         ]} />
         <Footer busy tokens={800} maxTokens={10_000} changedFiles={0} glyphMode="ascii" />
       </>,
     );
     expect(output).toContain('SKEIN');
     expect(output).toContain('ASK');
-    expect(output).toContain('+ read_file');
+    // A tool that worked claims no glyph in either glyph set; a failure does.
+    expect(output).toContain('  read_file');
+    expect(output).toContain('x shell');
     expect(output).toContain('~ working');
     expect(output).not.toMatch(/[⌁●✓◌]/u);
   });
@@ -948,5 +972,66 @@ describe('terminal presentation', () => {
     expect(monochrome.accent).toBe('');
     expect(monochrome.warning).toBe('');
     expect(monochrome.border).toBe('');
+    expect(monochrome.codeLiteral).toBe('');
+  });
+
+  it('keeps syntax highlighting out of the status colours', () => {
+    // Strings used to render in `success` and numbers in `warning`, so every
+    // code block competed with real status rows for the same two colours.
+    const theme = resolveTheme('graphite');
+    for (const name of ['code', 'codeLiteral'] as const) {
+      for (const status of ['success', 'warning', 'error'] as const) {
+        expect(theme[name], `${name} must not reuse ${status}`).not.toBe(theme[status]);
+      }
+    }
+    const output = withTrueColor(() => renderToString(
+      <Timeline width={80} items={[{
+        id: 'reply',
+        kind: 'assistant',
+        text: '```ts\nconst total = 42; // sum\n```',
+      }]} />,
+      {columns: 80},
+    ));
+    const colorOf = (needle: string) => output.match(
+      new RegExp(`\\u001B\\[38;2;(\\d+;\\d+;\\d+)m${needle}`, 'u'))?.[1];
+    expect(colorOf('42')).toBe(trueColorParameters(theme.codeLiteral));
+    expect(colorOf('42')).not.toBe(trueColorParameters(theme.warning));
+  });
+
+  it('reserves each semantic colour for one meaning across a mixed frame', () => {
+    // A frame where three tools succeed and one fails must not paint three
+    // green ticks: only the failure earns a status colour, so the eye lands on
+    // the one row that needs attention.
+    const theme = resolveTheme('graphite');
+    const output = withTrueColor(() => renderToString(
+      <Timeline width={80} items={[
+        {id: 'ok1', kind: 'tool', name: 'read_file', detail: 'a.ts', state: 'ok'},
+        {id: 'ok2', kind: 'tool', name: 'grep', detail: 'pattern', state: 'ok'},
+        {id: 'ok3', kind: 'tool', name: 'apply_patch', detail: 'b.ts', state: 'ok'},
+        {id: 'bad', kind: 'tool', name: 'shell', detail: 'npm test', state: 'error', errorDetail: 'exit 1'},
+      ]} />,
+      {columns: 80},
+    ));
+    expect(output).not.toContain(`38;2;${trueColorParameters(theme.success)}`);
+    expect(output).toContain(`38;2;${trueColorParameters(theme.error)}`);
   });
 });
+
+/**
+ * Render with 24-bit colour regardless of whether the test runner has a TTY, so
+ * a colour assertion cannot silently pass by finding no colour at all. Ink and
+ * these tests share the one chalk instance, so setting its level is enough.
+ */
+function withTrueColor<T>(render: () => T): T {
+  const previous = chalk.level;
+  chalk.level = 3;
+  try {
+    return render();
+  } finally {
+    chalk.level = previous;
+  }
+}
+
+function trueColorParameters(hex: string): string {
+  return [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16)).join(';');
+}

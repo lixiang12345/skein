@@ -1,5 +1,6 @@
 import stringWidth from 'string-width';
 import stripAnsi from 'strip-ansi';
+import wrapAnsi from 'wrap-ansi';
 
 const controlCharacters = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu;
 
@@ -64,6 +65,31 @@ export function padDisplay(value: string, width: number): string {
   const truncated = truncateDisplay(value, width);
   const pad = Math.max(0, width - displayWidth(truncated));
   return truncated + ' '.repeat(pad);
+}
+
+/**
+ * Wrap text exactly the way Ink's `<Text wrap="wrap">` does, and return the
+ * rendered rows.
+ *
+ * Ink delegates to `wrap-ansi` with `{trim: false, hard: true}`, which
+ * word-wraps and only breaks inside a word when the word alone exceeds the
+ * width. Counting `ceil(width / columns)` instead — as the viewport estimator
+ * used to — undercounts every wrapped paragraph, because a word pushed to the
+ * next line leaves the previous one short. The transcript viewport anchors on
+ * these counts, so the estimate has to come from the same algorithm rather than
+ * an approximation of it.
+ *
+ * `wrap-ansi` is a direct dependency for this reason: relying on Ink's own copy
+ * would make the row contract depend on a transitive version.
+ */
+export function wrapDisplayLines(value: string, width: number): string[] {
+  const safeWidth = Math.max(1, Math.floor(width));
+  return wrapAnsi(value, safeWidth, {trim: false, hard: true}).split('\n');
+}
+
+/** Row count of `value` when Ink wraps it to `width` columns. */
+export function wrapDisplayRows(value: string, width: number): number {
+  return wrapDisplayLines(value, width).length;
 }
 
 export function compactDisplayPath(path: string, maxWidth = 54): string {

@@ -10,7 +10,29 @@ import {
 import {compactDisplayPath} from './text.js';
 import {resolveHomeNamespace} from '../utils/namespace.js';
 
-/** The small semantic palette components should use directly. */
+/**
+ * Colour contract. Each token owns exactly one meaning, and a row may claim at
+ * most one of them; everything else in the frame is a neutral. Keeping the
+ * assignment this narrow is what stops a long transcript from turning into a
+ * field of unrelated hues:
+ *
+ * - `accent`   live and interactive only — the user's prompt glyph, a running
+ *              spinner, the composer caret, the selected palette row, the
+ *              in-progress plan step. Never used for settled content.
+ * - `success`  terminal success *evidence* only — verified completion, a ready
+ *              workspace, a finished plan step. An individual tool that simply
+ *              worked is silent; it carries no glyph and no colour.
+ * - `warning`  needs a decision or degraded — approvals, cancellation,
+ *              retrieval degradation, high context pressure.
+ * - `error`    failure only.
+ * - `code`     every literal: fenced code, inline code, quoted source.
+ * - neutrals   `text` / `textStrong` / `muted` / `dim` / `border` carry all
+ *              remaining structure, including every receipt row.
+ *
+ * Syntax highlighting deliberately stays inside `code`, `accent`, and the
+ * neutrals. Reusing `success` for strings and `warning` for numbers made every
+ * code block compete with real status rows for the same two colours.
+ */
 export interface SemanticThemeTokens {
   accent: string;
   text: string;
@@ -29,6 +51,12 @@ export interface TerminalTheme extends SemanticThemeTokens {
   borderFocus: string;
   selectionText: string;
   code: string;
+  /**
+   * Literals inside a code block (strings, numbers). Deliberately a neutral
+   * step down from `code` rather than its own hue, so syntax highlighting
+   * cannot compete with the semantic status colours.
+   */
+  codeLiteral: string;
   heading: string;
   diffAdded: string;
   diffRemoved: string;
@@ -63,6 +91,8 @@ interface ThemeSeed extends SemanticThemeTokens {
    * quoted code stops competing with accent-coloured interactive chrome.
    */
   code?: string;
+  /** Literal text inside a code block. Defaults to `muted`. */
+  codeLiteral?: string;
 }
 
 function defineTheme(seed: ThemeSeed): TerminalTheme {
@@ -70,6 +100,7 @@ function defineTheme(seed: ThemeSeed): TerminalTheme {
     ...seed,
     borderFocus: seed.accent,
     code: seed.code ?? seed.accent,
+    codeLiteral: seed.codeLiteral ?? seed.muted,
     heading: seed.textStrong,
     diffAdded: seed.success,
     diffRemoved: seed.error,
@@ -97,6 +128,7 @@ export const themes: Record<string, TerminalTheme> = {
     // appear when they carry meaning, so long transcripts stay readable.
     name: 'graphite',
     code: '#A9C7E8',
+    codeLiteral: '#8FA6BF',
     accent: '#49DCC6',
     text: '#DFE1E5',
     textStrong: '#FFFFFF',
@@ -115,6 +147,7 @@ export const themes: Record<string, TerminalTheme> = {
   cinder: defineTheme({
     name: 'cinder',
     code: '#F2D9A8',
+    codeLiteral: '#CBB894',
     accent: '#FFC46B',
     text: '#F0E8DE',
     textStrong: '#FFFDF9',
@@ -133,6 +166,7 @@ export const themes: Record<string, TerminalTheme> = {
   mono: defineTheme({
     name: 'mono',
     code: '#C9C9C9',
+    codeLiteral: '#A5A5A5',
     accent: '#E7E7E7',
     text: '#D2D2D2',
     textStrong: '#FFFFFF',
@@ -151,6 +185,7 @@ export const themes: Record<string, TerminalTheme> = {
   midnight: defineTheme({
     name: 'midnight',
     code: '#D7CBFF',
+    codeLiteral: '#B0A6D6',
     accent: '#B9BCFF',
     text: '#EBEAF5',
     textStrong: '#FFFFFF',
@@ -169,6 +204,7 @@ export const themes: Record<string, TerminalTheme> = {
   paper: defineTheme({
     name: 'paper',
     code: '#7A3E9D',
+    codeLiteral: '#5B5F66',
     accent: '#236B8E',
     text: '#30343A',
     textStrong: '#15181C',
@@ -336,6 +372,7 @@ function withColor(theme: TerminalTheme, color: boolean): TerminalTheme {
     borderFocus: monochrome,
     selectionText: monochrome,
     code: monochrome,
+    codeLiteral: monochrome,
     heading: monochrome,
     diffAdded: monochrome,
     diffRemoved: monochrome,
@@ -369,6 +406,8 @@ function themeSeed(value: unknown, name: string): ThemeSeed {
   return {
     name,
     accent: themeColor(value, 'accent', fallback.accent),
+    code: themeColor(value, 'code', fallback.code),
+    codeLiteral: themeColor(value, 'codeLiteral', fallback.codeLiteral),
     text: themeColor(value, 'text', fallback.text),
     textStrong: themeColor(value, 'textStrong', fallback.textStrong),
     muted: themeColor(value, 'muted', fallback.muted),

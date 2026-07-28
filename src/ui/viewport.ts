@@ -1,5 +1,27 @@
 import type {TimelineItem} from './components.js';
-import {displayWidth, sanitizeTerminalText, sliceDisplay, sliceDisplayFromEnd, terminalEllipsis, truncateDisplay} from './text.js';
+import {
+  clarificationHint,
+  clarificationOptionLabel,
+  contextClippedReceiptText,
+  contextDegradedReceiptText,
+  contextInspectorEntries,
+  isChineseText,
+  listPanelRows,
+  resolveGlyphs,
+  richTextLine,
+  type RichTextScanState,
+} from './components.js';
+import {displayWidth, limitTerminalText, sanitizeTerminalText, sliceDisplayFromEnd, terminalEllipsis, truncateDisplay, wrapDisplayLines, wrapDisplayRows} from './text.js';
+
+/**
+ * Width of the status-glyph gutter every transcript row reserves. Must stay in
+ * sync with `components.GUTTER`: these row estimates are what anchors the
+ * viewport, and a mismatch shows up as drift while scrolling.
+ */
+const GUTTER = 2;
+
+/** Extra indent applied to expanded tool output, on top of the gutter. */
+const OUTPUT_INDENT = 2;
 
 export interface TimelineViewportOptions {
   width: number;
@@ -96,8 +118,16 @@ function fitScrolledTimelineToRows(
       visible = clipTimelineItem(visible, {...options, rows: remaining});
       visibleRows = estimateTimelineItemRows(visible, options);
     }
+    // A fully-visible item still has to respect what is left of the budget:
+    // the offset window can start mid-item, and its own minimum height (a
+    // banner's gap, a tool row's gap) may exceed the remaining rows.
+    if (visibleRows > remaining) {
+      visible = enforceRowBudget(visible, {...options, rows: remaining});
+      visibleRows = estimateTimelineItemRows(visible, options);
+    }
+    if (visibleRows > remaining) break;
     selected.unshift(visible);
-    remaining -= Math.min(remaining, visibleRows);
+    remaining -= visibleRows;
     windowEnd = itemStart + localStart;
   }
   return selected;
@@ -110,38 +140,39 @@ function clipTimelineItemRange(
   endRow: number,
 ): TimelineItem {
   const width = Math.max(1, Math.floor(options.width));
+  const contentWidth = Math.max(1, width - GUTTER);
+  const outputWidth = Math.max(1, width - GUTTER - OUTPUT_INDENT);
   const availableRows = Math.max(1, endRow - startRow);
   if (item.kind === 'assistant') {
     // Only a streaming reply spends a row on chrome; a settled reply is content
     // from its first row, matching the nameplate-free renderer.
     const chrome = item.streaming ? 1 : 0;
-    const rows = visualTextRows(item.text, Math.max(1, width - 2));
+    const rows = visualTextRows(item.text, contentWidth);
     const desiredEnd = Math.min(rows.length, Math.max(1, endRow - chrome));
     const selected = rows.slice(Math.max(0, desiredEnd - Math.max(1, availableRows - chrome)), desiredEnd);
-    return {...item, clipped: true, text: markWindowedRows(selected, desiredEnd - selected.length, desiredEnd, rows.length, Math.max(1, width - 2))};
+    return {...item, clipped: true, text: markWindowedRows(selected, desiredEnd - selected.length, desiredEnd, rows.length, contentWidth)};
   }
   if (item.kind === 'user') {
-    const rows = visualTextRows(item.text, Math.max(1, width - 2));
+    const rows = visualTextRows(item.text, contentWidth);
     const desiredEnd = Math.min(rows.length, endRow);
     const selected = rows.slice(Math.max(0, desiredEnd - availableRows), desiredEnd);
-    return {...item, clipped: true, text: markWindowedRows(selected, desiredEnd - selected.length, desiredEnd, rows.length, Math.max(1, width - 2))};
+    return {...item, clipped: true, text: markWindowedRows(selected, desiredEnd - selected.length, desiredEnd, rows.length, contentWidth)};
   }
   if (item.kind === 'notice') {
-    const rows = visualTextRows(item.text, Math.max(1, width - 2));
+    const rows = visualTextRows(item.text, contentWidth);
     const desiredEnd = Math.min(rows.length, endRow);
     const selected = rows.slice(Math.max(0, desiredEnd - availableRows), desiredEnd);
-    return {...item, text: markWindowedRows(selected, desiredEnd - selected.length, desiredEnd, rows.length, Math.max(1, width - 2))};
+    return {...item, text: markWindowedRows(selected, desiredEnd - selected.length, desiredEnd, rows.length, contentWidth)};
   }
   if (item.kind === 'tool' && item.output && (options.showToolOutput || options.expandedToolId === item.id)) {
-    const detailRows = width < 64 && (item.errorDetail || item.detail) ? 1 : 0;
-    const baseRows = 1 + detailRows + (item.meta ? 1 : 0) + (item.grouped ? 0 : 1);
-    const rows = visualTextRows(item.output, Math.max(1, width - 5));
+    const baseRows = toolChromeRows(item, options);
+    const rows = visualTextRows(item.output, outputWidth);
     const desiredEnd = Math.min(rows.length, Math.max(1, endRow - baseRows));
     const selected = rows.slice(
       Math.max(0, desiredEnd - Math.max(1, availableRows - baseRows)),
       desiredEnd,
     );
-    return {...item, output: markWindowedRows(selected, desiredEnd - selected.length, desiredEnd, rows.length, Math.max(1, width - 5))};
+    return {...item, output: markWindowedRows(selected, desiredEnd - selected.length, desiredEnd, rows.length, outputWidth)};
   }
   if (item.kind === 'list') {
     if (availableRows <= 1) return {id: item.id, kind: 'notice', text: truncateDisplay(item.title, width)};
@@ -217,40 +248,75 @@ function markWindowedRows(
   return selected.join('\n');
 }
 
+/**
+ * Split text into the rows Ink will render, so a windowed slice of a long item
+ * lines up with what the same text looks like unclipped. Each returned row
+ * already fits the width, so re-wrapping it is a no-op.
+ */
 function visualTextRows(value: string, width: number): string[] {
   const safeWidth = Math.max(1, width);
   const output: string[] = [];
   for (const source of sanitizeTerminalText(value).split('\n')) {
-    let remaining = source || ' ';
-    while (remaining) {
-      let piece = sliceDisplay(remaining, safeWidth);
-      if (!piece) piece = firstGrapheme(remaining);
-      output.push(piece);
-      remaining = remaining.slice(piece.length);
-    }
+    output.push(...wrapDisplayLines(source || ' ', safeWidth));
   }
   return output.length ? output : [' '];
 }
 
-function firstGrapheme(value: string): string {
-  if (typeof Intl.Segmenter === 'function') {
-    return new Intl.Segmenter(undefined, {granularity: 'grapheme'}).segment(value)[Symbol.iterator]().next().value?.segment ?? value[0] ?? '';
-  }
-  return [...value][0] ?? '';
+function clipTimelineItem(item: TimelineItem, options: TimelineViewportOptions): TimelineItem {
+  return enforceRowBudget(clipTimelineItemContent(item, options), options);
 }
 
-function clipTimelineItem(item: TimelineItem, options: TimelineViewportOptions): TimelineItem {
+/**
+ * Last line of defence for the row budget. Some items have a floor the content
+ * clipper cannot go below — a banner is a fixed row plus its gap, a tool row is
+ * a row plus its gap — so a one- or two-row viewport would still overflow and
+ * push the composer off screen. Drop the trailing gap first, since it is pure
+ * spacing, and only then fall back to a single truncated line.
+ */
+function enforceRowBudget(item: TimelineItem, options: TimelineViewportOptions): TimelineItem {
+  const budget = Math.max(1, options.rows);
+  if (estimateTimelineItemRows(item, options) <= budget) return item;
+  if (item.kind === 'tool') {
+    const gapless: TimelineItem = {...item, grouped: true};
+    if (estimateTimelineItemRows(gapless, options) <= budget) return gapless;
+  }
+  const summary = timelineItemSummary(item);
+  return {
+    id: item.id,
+    kind: 'notice',
+    text: truncateDisplay(summary, Math.max(1, Math.floor(options.width) - GUTTER)),
+  };
+}
+
+/**
+ * One-line stand-in for an item that cannot fit its own minimum height. The
+ * separator comes from the active glyph set, so an ASCII, dumb, or
+ * screen-reader terminal never receives a Unicode middot here.
+ */
+function timelineItemSummary(item: TimelineItem): string {
+  const separator = resolveGlyphs().separator;
+  if (item.kind === 'banner') return `${item.status === 'ready' ? 'ready' : item.status} ${separator} v${item.version}`;
+  if (item.kind === 'tool') return `${item.name} ${item.errorDetail || item.detail}`;
+  if (item.kind === 'user' || item.kind === 'assistant' || item.kind === 'notice') {
+    return sanitizeTerminalText(item.text).replace(/\s+/gu, ' ').trim() || item.kind;
+  }
+  if (item.kind === 'list') return item.title;
+  return item.kind;
+}
+
+function clipTimelineItemContent(item: TimelineItem, options: TimelineViewportOptions): TimelineItem {
   const width = Math.max(1, Math.floor(options.width));
+  const contentWidth = Math.max(1, width - GUTTER);
   if (item.kind === 'assistant') {
     // Only an active stream still costs a row above the text.
     const reserved = item.streaming ? 1 : 0;
-    return {...item, clipped: true, text: tailText(item.text, Math.max(1, width - 2), Math.max(1, options.rows - reserved))};
+    return {...item, clipped: true, text: tailText(item.text, contentWidth, Math.max(1, options.rows - reserved))};
   }
   if (item.kind === 'user') {
-    return {...item, clipped: true, text: tailText(item.text, Math.max(1, width - 2), options.rows)};
+    return {...item, clipped: true, text: tailText(item.text, contentWidth, options.rows)};
   }
   if (item.kind === 'notice') {
-    return {...item, text: tailText(item.text, Math.max(1, width - 2), options.rows)};
+    return {...item, text: tailText(item.text, contentWidth, options.rows)};
   }
   if (item.kind === 'list') {
     if (options.rows <= 1) return {id: item.id, kind: 'notice', text: truncateDisplay(item.title, width)};
@@ -296,12 +362,35 @@ function clipTimelineItem(item: TimelineItem, options: TimelineViewportOptions):
     return highlights?.length ? {...base, highlights} : base;
   }
   if (item.kind === 'tool' && item.output && (options.showToolOutput || options.expandedToolId === item.id)) {
-    const detailRows = width < 64 && (item.errorDetail || item.detail) ? 1 : 0;
-    const baseRows = 1 + detailRows + (item.meta ? 1 : 0) + (item.grouped ? 0 : 1);
-    const outputRows = Math.max(1, options.rows - baseRows);
-    return {...item, output: tailText(item.output, Math.max(1, width - 5), outputRows)};
+    const outputRows = Math.max(1, options.rows - toolChromeRows(item, options));
+    return {...item, output: tailText(item.output, Math.max(1, width - GUTTER - OUTPUT_INDENT), outputRows)};
   }
   return item;
+}
+
+/**
+ * Rows expanded tool output costs. `components.ToolRow` bounds the text with
+ * `limitTerminalText` first — which caps *source* lines and appends its own
+ * markers — and only then renders it as rich text, so the row count has to
+ * follow the same order. Scoring the raw output and clamping the total instead
+ * undercounts badly at narrow widths, where each source line wraps several times.
+ */
+function toolOutputRows(output: string, rowWidth: number, compact: boolean): number {
+  const limited = limitTerminalText(output, compact ? 24 : 80);
+  return richTextRows(limited.text, Math.max(1, rowWidth - GUTTER - OUTPUT_INDENT)) +
+    (limited.truncated ? 1 : 0);
+}
+
+/**
+ * Rows a tool row costs before its output: the aligned row itself, an optional
+ * meta line, and the trailing gap when it is the last of a contiguous run.
+ * Mirrors `components.ToolRow`.
+ */
+function toolChromeRows(
+  item: Extract<TimelineItem, {kind: 'tool'}>,
+  options: TimelineViewportOptions,
+): number {
+  return 1 + (item.meta ? 1 : 0) + (item.grouped || options.compact ? 0 : 1);
 }
 
 function tailText(value: string, width: number, maxRows: number): string {
@@ -325,7 +414,12 @@ function tailText(value: string, width: number, maxRows: number): string {
       remaining -= rows;
       continue;
     }
-    selected.unshift(sliceDisplayFromEnd(line, remaining * safeWidth));
+    // Keep the tail of the line, then take exactly the rows that fit. Slicing
+    // by `remaining * width` alone overshoots, because word wrapping leaves
+    // short rows; re-wrapping and keeping the last `remaining` rows is what
+    // makes the clipped item score the height it was budgeted.
+    const tail = sliceDisplayFromEnd(line, remaining * safeWidth);
+    selected.unshift(wrapDisplayLines(tail, safeWidth).slice(-remaining).join('\n'));
     remaining = 0;
   }
   return `${marker}\n${selected.join('\n')}`;
@@ -337,89 +431,93 @@ export function estimateTimelineItemRows(
 ): number {
   const rowWidth = Math.max(1, Math.floor(width));
   const gap = compact ? 0 : 1;
-  if (item.kind === 'user') return wrappedRows(item.text, Math.max(1, rowWidth - 2)) + (item.clipped ? 0 : gap);
+  if (item.kind === 'user') return wrappedRows(item.text, Math.max(1, rowWidth - GUTTER)) + (item.clipped ? 0 : gap);
   if (item.kind === 'assistant') {
     // No nameplate row any more; only an active stream adds a status row.
-    return (item.streaming ? 1 : 0) + richTextRows(item.text, Math.max(1, rowWidth - 2)) +
+    return (item.streaming ? 1 : 0) + richTextRows(item.text, Math.max(1, rowWidth - GUTTER)) +
       (item.clipped ? 0 : gap);
   }
-  if (item.kind === 'notice') return wrappedRows(item.text, Math.max(1, rowWidth - 2));
-  if (item.kind === 'tool-group') return 1 + (compact ? 0 : 1);
+  if (item.kind === 'notice') return wrappedRows(item.text, Math.max(1, rowWidth - GUTTER));
   if (item.kind === 'update') return (rowWidth < 48 ? 3 : 2) + (item.highlights?.length ?? 0);
   if (item.kind === 'tool') {
-    const narrow = rowWidth < 64;
-    const detail = item.errorDetail || item.detail;
-    const detailRows = narrow && detail ? 1 : 0;
+    // One aligned row, plus an optional checkpoint/meta line, plus the bounded
+    // output when expanded. `components.ToolRow` renders exactly this shape; a
+    // narrow terminal no longer adds a second detail row.
     const metaRows = item.meta ? 1 : 0;
     const outputRows = (showToolOutput || item.id === expandedToolId) && item.output
-      ? Math.min(compact ? 25 : 81, richTextRows(item.output, Math.max(1, rowWidth - 5)))
+      ? toolOutputRows(item.output, rowWidth, compact)
       : 0;
-    return 1 + detailRows + metaRows + outputRows + (item.grouped ? 0 : 1);
+    return 1 + metaRows + outputRows + (item.grouped ? 0 : gap);
   }
-  if (item.kind === 'list') {
-    const entryRows = item.entries.reduce((total, entry) => total + 1 + (entry.detail ? 1 : 0), 0);
-    return 1 + entryRows + 1;
-  }
+  if (item.kind === 'list') return listPanelRows(item.entries, rowWidth);
   if (item.kind === 'context-inspector') {
-    const workingRows = item.working
-      ? 2 + item.working.constraints.length + item.working.decisions.length + item.working.openQuestions.length
-      : 0;
-    return 3 + workingRows + (item.summary ? wrappedRows(item.summary, Math.max(1, rowWidth - 2)) : 0) + (item.sources?.length ? 2 : 0);
+    // Heading row plus the evidence list, scored from the same entries the
+    // renderer builds — a narrow terminal stacks each detail onto its own row.
+    return 1 + listPanelRows(contextInspectorEntries({
+      status: item.status,
+      working: item.working,
+      summary: item.summary,
+      compact,
+      sources: item.sources,
+      separator: resolveGlyphs().separator,
+    }), rowWidth, true);
   }
   if (item.kind === 'theme') return 3;
   if (item.kind === 'context') {
-    const metaRows = rowWidth < 64 ? 2 : 1;
-    const degradationRows = item.degradation ? metaRows : 0;
-    return metaRows + degradationRows;
+    // A routine retrieval renders nothing at all. The clipped and degraded
+    // receipts wrap rather than truncate, because they carry the remedy, so
+    // they are scored like a notice — see `components.WrappedReceipt`.
+    const contentWidth = Math.max(1, rowWidth - GUTTER);
+    const separator = resolveGlyphs().separator;
+    const clippedRows = item.truncated && !item.degradation
+      ? wrappedRows(contextClippedReceiptText(item.engine, item.hits, separator), contentWidth)
+      : 0;
+    const degradedRows = item.degradation
+      ? wrappedRows(contextDegradedReceiptText(item.degradation), contentWidth)
+      : 0;
+    return clippedRows + degradedRows;
   }
-  if (item.kind === 'prompt') {
-    return rowWidth < 64 ? 2 : 1;
-  }
-  if (item.kind === 'skill' || item.kind === 'memory' || item.kind === 'compaction') {
-    return rowWidth < 64 ? 2 : 1;
-  }
-  if (item.kind === 'agent' || item.kind === 'agent-message') return rowWidth < 64 ? 2 : 1;
-  if (item.kind === 'workflow') return rowWidth < 64 ? 2 : 1;
+  // Per-turn model-input estimates never enter the transcript.
+  if (item.kind === 'prompt') return 0;
+  // Every receipt row is now single-line at any width: the detail is dropped
+  // rather than wrapped, so a narrow terminal cannot double the height.
+  if (item.kind === 'skill' || item.kind === 'memory' || item.kind === 'compaction') return 1;
+  if (item.kind === 'agent-message' || item.kind === 'workflow') return 1;
+  if (item.kind === 'agent') return 1;
   if (item.kind === 'clarification') {
-    return 3 + item.pending.options.length * (rowWidth < 48 ? 2 : 1);
+    // A pending question wraps rather than truncates: an option whose
+    // consequence was cut off is not answerable. The trailing hint is truncated,
+    // not wrapped, and the block always keeps its gap. Mirrors `components`.
+    const contentWidth = Math.max(1, rowWidth - GUTTER);
+    const chinese = isChineseText(item.pending.question);
+    const optionSeparator = resolveGlyphs().separator;
+    const optionRows = item.pending.options.reduce((rows, option, index) => {
+      const label = clarificationOptionLabel(option, index, chinese);
+      return rows + (rowWidth < 48
+        ? 1 + wrappedRows(option.impact, contentWidth)
+        : wrappedRows(`${label} ${optionSeparator} ${option.impact}`, contentWidth));
+    }, 0);
+    return wrappedRows(item.pending.question, contentWidth) + optionRows + 1 + 1;
   }
   if (item.kind === 'banner') return 2;
   return 1;
 }
 
 /**
- * Mirror of the `RichText` renderer's row shape. Fenced code, quotes, and list
- * markers change how much width a line has left, and dropped fences emit no row
- * at all; the transcript viewport only anchors correctly while this agrees with
- * `ui/components.RichText`.
+ * Mirror of the `RichText` renderer's row shape. Each source line is turned into
+ * the exact visible string the renderer produces — including its code rail or
+ * list marker, and with inline-markup delimiters removed — and then wrapped at
+ * the same width. Scoring the content against a reduced width instead disagrees
+ * with the render as soon as a line wraps, because Ink wraps the whole `<Text>`
+ * including its prefix.
  */
 function richTextRows(value: string, width: number): number {
-  let inCode = false;
+  const state: RichTextScanState = {inCode: false};
   let rows = 0;
   for (const line of sanitizeTerminalText(value).split('\n')) {
-    const fence = line.trim().match(/^```+\s*([\w+#.-]*)/u);
-    if (fence) {
-      inCode = !inCode;
-      // A language tag renders one caption row; bare and closing fences render none.
-      if (inCode && fence[1]) rows += 1;
-      continue;
-    }
-    if (inCode) {
-      // The left rail costs two columns of the available width.
-      rows += wrappedRows(line || ' ', Math.max(1, width - 2));
-      continue;
-    }
-    const bullet = line.match(/^(\s*)([-*]|\d+\.)\s+(.+)$/);
-    if (bullet) {
-      const markerWidth = displayWidth(bullet[1] ?? '') + displayWidth(bullet[2] as string) + 1;
-      rows += wrappedRows(bullet[3] as string, Math.max(1, width - markerWidth));
-      continue;
-    }
-    if (line.startsWith('> ')) {
-      rows += wrappedRows(line.slice(2) || ' ', Math.max(1, width - 2));
-      continue;
-    }
-    rows += wrappedRows(line || ' ', width);
+    const rendered = richTextLine(line, state);
+    if (rendered === null) continue;
+    rows += wrapDisplayRows(rendered, width);
   }
   return rows;
 }
@@ -427,5 +525,5 @@ function richTextRows(value: string, width: number): number {
 function wrappedRows(value: string, width: number): number {
   const safeWidth = Math.max(1, width);
   return sanitizeTerminalText(value).split('\n').reduce((rows, line) =>
-    rows + Math.max(1, Math.ceil(displayWidth(line) / safeWidth)), 0);
+    rows + wrapDisplayRows(line || ' ', safeWidth), 0);
 }
