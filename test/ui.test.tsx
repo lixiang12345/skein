@@ -269,10 +269,13 @@ describe('terminal presentation', () => {
     }} askMode={false} width={118} expanded />, {columns: 118});
 
     const rows = output.trimEnd().split('\n');
+    // The single-row budget is the real guard: a one-cell goose lockup is
+    // identity, while the retired multi-row art spent the workspace on itself.
     expect(rows).toHaveLength(1);
     expect(output).toContain('SKEIN');
     expect(output).toContain('BUILD');
-    expect(output).not.toMatch(/╭────────╮|________|__\\●▶/u);
+    expect(output).toContain('__\\●▶');
+    expect(output).not.toMatch(/╭────────╮|________/u);
     expect(output).not.toContain('context in formation');
     for (const row of rows) expect(displayWidth(row)).toBeLessThanOrEqual(118);
   });

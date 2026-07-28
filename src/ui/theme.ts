@@ -51,13 +51,19 @@ interface ThemeSeed extends SemanticThemeTokens {
   pendingSurface: string;
   successSurface: string;
   errorSurface: string;
+  /**
+   * Literal source text. Optional: themes that omit it keep the historical
+   * behaviour of reusing the accent, while built-ins give code its own tone so
+   * quoted code stops competing with accent-coloured interactive chrome.
+   */
+  code?: string;
 }
 
 function defineTheme(seed: ThemeSeed): TerminalTheme {
   return {
     ...seed,
     borderFocus: seed.accent,
-    code: seed.accent,
+    code: seed.code ?? seed.accent,
     heading: seed.textStrong,
     diffAdded: seed.success,
     diffRemoved: seed.error,
@@ -83,6 +89,7 @@ export const themes: Record<string, TerminalTheme> = {
   graphite: defineTheme({
     // "Graphite Loom": vivid teal thread on deep graphite, tuned for dark terminals.
     name: 'graphite',
+    code: '#8FD8FF',
     accent: '#49F2D0',
     text: '#DCE5F5',
     textStrong: '#FFFFFF',
@@ -100,6 +107,7 @@ export const themes: Record<string, TerminalTheme> = {
   }),
   cinder: defineTheme({
     name: 'cinder',
+    code: '#F2D9A8',
     accent: '#FFC46B',
     text: '#F0E8DE',
     textStrong: '#FFFDF9',
@@ -117,6 +125,7 @@ export const themes: Record<string, TerminalTheme> = {
   }),
   mono: defineTheme({
     name: 'mono',
+    code: '#C9C9C9',
     accent: '#E7E7E7',
     text: '#D2D2D2',
     textStrong: '#FFFFFF',
@@ -134,6 +143,7 @@ export const themes: Record<string, TerminalTheme> = {
   }),
   midnight: defineTheme({
     name: 'midnight',
+    code: '#D7CBFF',
     accent: '#B9BCFF',
     text: '#EBEAF5',
     textStrong: '#FFFFFF',
@@ -151,6 +161,7 @@ export const themes: Record<string, TerminalTheme> = {
   }),
   paper: defineTheme({
     name: 'paper',
+    code: '#7A3E9D',
     accent: '#236B8E',
     text: '#30343A',
     textStrong: '#15181C',

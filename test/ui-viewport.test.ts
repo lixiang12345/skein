@@ -91,8 +91,14 @@ describe('timeline viewport budgeting', () => {
       {id: 'cjk', kind: 'user', text: '界'.repeat(10)},
       {width: 12, rows: 20, compact: true},
     )).toBe(2);
+    // A settled reply is content from its first row: the brand nameplate is
+    // gone, so only an active stream spends a row on chrome.
     expect(estimateTimelineItemRows(
       {id: 'assistant', kind: 'assistant', text: 'one\ntwo'},
+      {width: 80, rows: 20, compact: true},
+    )).toBe(2);
+    expect(estimateTimelineItemRows(
+      {id: 'streaming', kind: 'assistant', text: 'one\ntwo', streaming: true},
       {width: 80, rows: 20, compact: true},
     )).toBe(3);
     expect(estimateTimelineItemRows(

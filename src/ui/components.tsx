@@ -11,6 +11,7 @@ import {
   limitTerminalText,
   padDisplay,
   sanitizeTerminalText,
+  terminalEllipsis,
   truncateDisplay,
 } from './text.js';
 import {formatPercent, formatTokens, useTheme} from './theme.js';
@@ -117,6 +118,9 @@ interface UiGlyphs {
   expanded: string;
   branch: string;
   branchLast: string;
+  /** Left rail drawn beside fenced code and quoted blocks. */
+  codeRail: string;
+  listBullet: string;
   borderStyle: 'round' | 'classic';
 }
 
@@ -140,14 +144,18 @@ const unicodeGlyphs: UiGlyphs = {
   up: '↑',
   down: '↓',
   swatch: '●',
-  meterFull: '█',
-  meterEmpty: '░',
+  // A thin rail reads as a measurement; full blocks read as a wall of ink and
+  // dominate every other row in the frame.
+  meterFull: '━',
+  meterEmpty: '─',
   separator: '·',
   arrow: '→',
   collapsed: '›',
   expanded: '⌄',
   branch: '├─',
   branchLast: '└─',
+  codeRail: '│',
+  listBullet: '•',
   borderStyle: 'round',
 };
 
@@ -179,6 +187,8 @@ const asciiGlyphs: UiGlyphs = {
   expanded: 'v',
   branch: '|-',
   branchLast: '\\-',
+  codeRail: '|',
+  listBullet: '-',
   borderStyle: 'classic',
 };
 
@@ -206,6 +216,9 @@ export function Header({config, askMode, planMode = false, width = 80, glyphMode
   // Each mode gets a semantic hue: BUILD is "go" (mutations live), PLAN is the
   // amber "thinking" state, ASK is a calm read-only muted tone.
   const modeColor = planMode ? theme.warning : askMode ? theme.muted : theme.accent;
+  // A one-row goose lockup, not the retired multi-row art: the mark reads as
+  // identity on entry and leaves with the header once a conversation starts.
+  const goose = glyphs.borderStyle === 'classic' ? '__\\o>' : '__\\●▶';
   const brand = PRODUCT_NAME.toUpperCase();
   const modeLabel = mode;
   const separator = ` ${glyphs.separator} `;
@@ -213,15 +226,20 @@ export function Header({config, askMode, planMode = false, width = 80, glyphMode
     ? `@${config.activeConnection.id}/${config.model.model}`
     : `${config.model.provider}/${config.model.model}`);
   const repository = sanitizeInlineTerminalText(basename(root) || root);
+  // The mark is the first thing to drop: identity survives on the wordmark
+  // alone, so narrow terminals keep the repository and mode instead.
+  const showGoose = terminalWidth >= 48;
+  const gooseWidth = showGoose ? displayWidth(goose) + 1 : 0;
   const minimum = `${brand}${separator}${modeLabel}`;
   const withRepository = `${brand}${separator}${repository}`;
-  const showRepository = terminalWidth >= 32 && displayWidth(withRepository) <= terminalWidth;
-  const leftWidth = displayWidth(showRepository ? withRepository : minimum);
+  const showRepository = terminalWidth >= 32 && displayWidth(withRepository) + gooseWidth <= terminalWidth;
+  const leftWidth = displayWidth(showRepository ? withRepository : minimum) + gooseWidth;
   const modelSpace = terminalWidth - leftWidth - 2;
   const showModel = terminalWidth >= 72 && modelSpace >= 12;
 
   return (
     <Box marginBottom={1} height={1} overflowY="hidden">
+      {showGoose ? <Text color={theme.accent} aria-label={`${PRODUCT_NAME} goose`}>{goose} </Text> : null}
       <Text bold color={theme.accent} aria-label={PRODUCT_NAME}>{brand}</Text>
       {showRepository ? <>
         <Text color={theme.border}>{separator}</Text>
@@ -271,14 +289,27 @@ export function Timeline({items, width = 80, glyphMode = 'auto', showToolOutput 
           );
         }
         if (item.kind === 'assistant') {
+          // The reply is the surface, so it carries no nameplate: the `›` prefix
+          // on user turns is the only role marker needed, and repeating a brand
+          // label every turn spends a row on something already known. The
+          // spoken label moves to the container so assistive output is intact.
+          //
+          // Each block owns only the gap below it. A leading gap here would read
+          // better against the receipt stack, but Ink does not collapse margins
+          // and `estimateTimelineItemRows` scores items in isolation, so it
+          // would double up after a user turn and desync the viewport.
           return (
-            <Box key={item.id} flexDirection="column" marginBottom={compact || item.clipped ? 0 : 1}>
-              <Text bold color={theme.accent} aria-label={`${PRODUCT_NAME}${item.streaming ? ' streaming' : ''}`}>
-                {glyphs.brand} {PRODUCT_NAME}{item.streaming ? <Text color={theme.muted}> {glyphs.separator} streaming</Text> : null}
-              </Text>
-              <Box paddingLeft={2} flexDirection="column">
-                <RichText value={item.text} glyphs={glyphs} />
-              </Box>
+            <Box
+              key={item.id}
+              flexDirection="column"
+              paddingLeft={2}
+              marginBottom={compact || item.clipped ? 0 : 1}
+              aria-label={`${PRODUCT_NAME}${item.streaming ? ' streaming' : ''}`}
+            >
+              {item.streaming
+                ? <Text color={theme.dim}>{glyphs.brand} writing{terminalEllipsis()}</Text>
+                : null}
+              <RichText value={item.text} glyphs={glyphs} />
             </Box>
           );
         }
@@ -685,11 +716,13 @@ function MetaRow({glyph, label, detail, labelColor, width = 80}: {
   const rowWidth = safeWidth(width);
   const labelText = `${sanitizeInlineTerminalText(glyph)} ${sanitizeInlineTerminalText(label)}`;
   const detailText = sanitizeInlineTerminalText(detail);
-  const detailColor = theme.muted;
+  // Receipts are scannable evidence, not prose: both halves sit a step below
+  // body text so the eye can skip the whole row and land on the reply.
+  const detailColor = theme.dim;
   if (rowWidth < 64) {
     return (
       <Box flexDirection="column">
-        <Text color={labelColor ?? theme.muted}>{truncateDisplay(labelText, rowWidth)}</Text>
+        <Text color={labelColor ?? theme.dim}>{truncateDisplay(labelText, rowWidth)}</Text>
         {detailText ? <Text color={detailColor}>{`  ${truncateDisplay(detailText, Math.max(1, rowWidth - 2))}`}</Text> : null}
       </Box>
     );
@@ -697,7 +730,7 @@ function MetaRow({glyph, label, detail, labelColor, width = 80}: {
   const detailLimit = Math.max(1, rowWidth - displayWidth(labelText) - 2);
   return (
     <Box>
-      <Text color={labelColor ?? theme.muted}>{labelText}</Text>
+      <Text color={labelColor ?? theme.dim}>{labelText}</Text>
       {detailText ? <Text color={detailColor}>  {truncateDisplay(detailText, detailLimit)}</Text> : null}
     </Box>
   );
@@ -738,7 +771,10 @@ export function TaskRail({tasks, width = 80, glyphMode = 'auto', maxItems}: {
     {label: 'active', value: active, color: theme.accent},
   ];
   return (
-    <Box flexDirection="column" marginBottom={1} paddingLeft={2}>
+    // The rail is a panel, not a transcript entry, so it keeps a blank row above
+    // as well as below; without it the meter collides with the last reply line.
+    // `tui.taskRows` counts both gaps.
+    <Box flexDirection="column" marginTop={1} marginBottom={1} paddingLeft={2}>
       <Box>
         <Text bold color={theme.textStrong}>Plan</Text>
         <Text color={theme.dim}>  {done}/{tasks.length}</Text>
@@ -893,7 +929,10 @@ export function PromptBar({busy, value, placeholder, width = 80, mode = 'chat', 
   const theme = useTheme();
   const glyphs = resolveGlyphs(glyphMode);
   const shell = mode === 'shell';
-  const borderColor = shell ? theme.warning : busy ? theme.border : theme.borderFocus;
+  // The rule is chrome, so it stays quiet at rest and only brightens when it
+  // carries a signal: shell mode is a different execution surface, and a
+  // non-empty draft means the composer owns the next action.
+  const borderColor = shell ? theme.warning : !busy && value ? theme.borderFocus : theme.border;
   const rowWidth = safeWidth(width);
   const innerWidth = Math.max(1, rowWidth - 2);
   const safePlaceholder = sanitizeInlineTerminalText(placeholder);
@@ -1022,15 +1061,19 @@ export function Footer({busy, approval = false, changedFiles, width = 80, contex
   const pressurePart: InlinePart | undefined = contextPressure !== undefined && contextPressure >= 0.75 && rowWidth >= 40
     ? {text: `prompt ${formatPercent(contextPressure)}`, color: contextPressure >= 0.9 ? theme.error : theme.warning}
     : undefined;
+  // Read order follows urgency: live state, then anything demanding attention,
+  // then pending work, and finally static reference detail. Only the leading
+  // status and genuine signals carry colour; mode, route, and `/help` are
+  // reference material and stay dim so the row has one focal point.
   const mainParts: InlinePart[] = [
     statusPart,
     ...(pressurePart ? [pressurePart] : []),
-    ...(rowWidth >= 28 ? [{text: sanitizeInlineTerminalText(mode), color: theme.muted}] : []),
-    ...(rowWidth >= 64 && route ? [{text: sanitizeInlineTerminalText(route), color: theme.dim, optional: true}] : []),
     ...(rowWidth >= 40 && changedFiles ? [{text: changed, color: theme.text, optional: true}] : []),
     ...(activeAgents ? [{text: `${glyphs.agent}${activeAgents}`, color: theme.accent, optional: true}] : []),
     ...(queueCount ? [{text: `q${queueCount}`, color: theme.muted, optional: true}] : []),
-    ...(rowWidth >= 72 ? [{text: '/help', color: theme.muted, optional: true}] : []),
+    ...(rowWidth >= 28 ? [{text: sanitizeInlineTerminalText(mode), color: theme.muted}] : []),
+    ...(rowWidth >= 64 && route ? [{text: sanitizeInlineTerminalText(route), color: theme.dim, optional: true}] : []),
+    ...(rowWidth >= 72 ? [{text: '/help', color: theme.dim, optional: true}] : []),
   ];
   return <InlineRow parts={mainParts} width={rowWidth} separator={`  ${glyphs.separator}  `} separatorColor={theme.border} />;
 }
@@ -1366,8 +1409,9 @@ function Banner({engine, status, version, width, glyphs, files}: {
 }) {
   const theme = useTheme();
   const rowWidth = safeWidth(width);
-  const padding = rowWidth >= 24 ? 2 : 0;
-  const innerWidth = Math.max(1, rowWidth - padding);
+  // The readiness line is a receipt like any other, so its glyph shares the
+  // column-0 gutter with context/tool/notice rows instead of sitting inboard.
+  const innerWidth = rowWidth;
   const safeEngine = sanitizeInlineTerminalText(engine);
   const glyph = status === 'ready' ? glyphs.success : glyphs.warning;
   const label = status === 'ready' ? 'Workspace ready' : status === 'empty' ? 'Empty workspace' : 'Setup required';
@@ -1382,7 +1426,7 @@ function Banner({engine, status, version, width, glyphs, files}: {
       : `${status === 'ready' ? 'ready' : status === 'empty' ? 'empty' : 'setup'} ${glyphs.separator} v${version}`;
   const spokenDetail = `${label}.${status === 'ready' ? ` ${safeEngine} context.${files !== undefined && files > 0 ? ` ${files.toLocaleString('en-US')} files.` : ''}` : ''} Version v${version}.`;
   return (
-    <Box marginBottom={1} paddingLeft={padding} flexDirection="column" aria-label={spokenDetail}>
+    <Box marginBottom={1} flexDirection="column" aria-label={spokenDetail}>
       <Box height={1} overflowY="hidden">
         <Text bold color={color}>{glyph} </Text>
         <Text color={status === 'ready' ? theme.text : theme.warning}>{truncateDisplay(detail, Math.max(1, innerWidth - 2))}</Text>
@@ -1446,24 +1490,57 @@ function UpdateNotice({current, latest, command, highlights, width, glyphs}: {
   );
 }
 
+/**
+ * Render assistant markdown as terminal prose. Fenced code and quotes get a
+ * quiet left rail instead of a per-line marker, so a block reads as one unit
+ * rather than a column of punctuation. `viewport.richTextRows` mirrors these
+ * rules exactly; changing the row shape here means changing it there too.
+ */
 function RichText({value, glyphs}: {value: string; glyphs: UiGlyphs}) {
   const theme = useTheme();
   let inCode = false;
-  return <>{sanitizeTerminalText(value).split('\n').map((line, index) => {
-    if (/^```/.test(line.trim())) {
+  return <>{sanitizeTerminalText(value).split('\n').flatMap((line, index) => {
+    const fence = line.trim().match(/^```+\s*([\w+#.-]*)/u);
+    if (fence) {
       inCode = !inCode;
-      return <Text key={index} color={theme.dim}>{inCode ? `${glyphs.context} code` : glyphs.compaction}</Text>;
+      // Only an opening fence with a language carries information; a bare fence
+      // and every closing fence render nothing rather than a stray glyph.
+      const language = inCode ? fence[1] : '';
+      return language
+        ? [<Text key={index} color={theme.dim}>{`${glyphs.codeRail} ${language}`}</Text>]
+        : [];
     }
     if (inCode) {
-      const color = line.startsWith('+') ? theme.diffAdded : line.startsWith('-') ? theme.diffRemoved : theme.accent;
-      return <Text key={index} color={color}>{glyphs.separator} {line || ' '}</Text>;
+      const color = line.startsWith('+')
+        ? theme.diffAdded
+        : line.startsWith('-') ? theme.diffRemoved : theme.code;
+      return [
+        <Text key={index}>
+          <Text color={theme.border}>{glyphs.codeRail} </Text>
+          <Text color={color}>{line || ' '}</Text>
+        </Text>,
+      ];
     }
     const heading = line.match(/^#{1,4}\s+(.+)$/);
-    if (heading) return <Text key={index} bold color={theme.textStrong}><InlineMarkup value={heading[1] as string} /></Text>;
-    const bullet = line.match(/^\s*([-*]|\d+\.)\s+(.+)$/);
-    if (bullet) return <Text key={index}><Text color={theme.accent}>{bullet[1]} </Text><InlineMarkup value={bullet[2] as string} /></Text>;
-    if (line.startsWith('> ')) return <Text key={index} color={theme.muted}>{glyphs.separator} <InlineMarkup value={line.slice(2)} /></Text>;
-    return <Text key={index} color={theme.text} wrap="wrap"><InlineMarkup value={line || ' '} /></Text>;
+    if (heading) return [<Text key={index} bold color={theme.heading}><InlineMarkup value={heading[1] as string} /></Text>];
+    const bullet = line.match(/^(\s*)([-*]|\d+\.)\s+(.+)$/);
+    if (bullet) {
+      const marker = bullet[2] === '-' || bullet[2] === '*' ? glyphs.listBullet : bullet[2] as string;
+      return [
+        <Text key={index} wrap="wrap">
+          {bullet[1]}<Text color={theme.accent}>{marker} </Text><InlineMarkup value={bullet[3] as string} />
+        </Text>,
+      ];
+    }
+    if (line.startsWith('> ')) {
+      return [
+        <Text key={index} wrap="wrap">
+          <Text color={theme.border}>{glyphs.codeRail} </Text>
+          <Text color={theme.muted}><InlineMarkup value={line.slice(2)} /></Text>
+        </Text>,
+      ];
+    }
+    return [<Text key={index} color={theme.text} wrap="wrap"><InlineMarkup value={line || ' '} /></Text>];
   })}</>;
 }
 

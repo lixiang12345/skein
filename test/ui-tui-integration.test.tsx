@@ -50,7 +50,9 @@ describe('SkeinApp completion flows', () => {
     try {
       const frame = harness.lastFrame();
       expect(frame).toContain('SKEIN');
-      expect(frame).not.toMatch(/╭────────╮|________|__\\(?:●▶|o>)/u);
+      // The retired multi-row lockup stays out of the resting frame; the
+      // one-row goose mark beside the wordmark is the supported identity.
+      expect(frame).not.toMatch(/╭────────╮|________/u);
       expect(frame).not.toContain('context in formation');
       expect(frame).toContain('Type a request');
       for (const line of frame.split('\n')) expect(displayWidth(line.trimEnd())).toBeLessThanOrEqual(126);

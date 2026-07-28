@@ -112,9 +112,12 @@ function clipTimelineItemRange(
   const width = Math.max(1, Math.floor(options.width));
   const availableRows = Math.max(1, endRow - startRow);
   if (item.kind === 'assistant') {
+    // Only a streaming reply spends a row on chrome; a settled reply is content
+    // from its first row, matching the nameplate-free renderer.
+    const chrome = item.streaming ? 1 : 0;
     const rows = visualTextRows(item.text, Math.max(1, width - 2));
-    const desiredEnd = Math.min(rows.length, Math.max(1, endRow - 1));
-    const selected = rows.slice(Math.max(0, desiredEnd - Math.max(1, availableRows - 1)), desiredEnd);
+    const desiredEnd = Math.min(rows.length, Math.max(1, endRow - chrome));
+    const selected = rows.slice(Math.max(0, desiredEnd - Math.max(1, availableRows - chrome)), desiredEnd);
     return {...item, clipped: true, text: markWindowedRows(selected, desiredEnd - selected.length, desiredEnd, rows.length, Math.max(1, width - 2))};
   }
   if (item.kind === 'user') {
@@ -239,7 +242,9 @@ function firstGrapheme(value: string): string {
 function clipTimelineItem(item: TimelineItem, options: TimelineViewportOptions): TimelineItem {
   const width = Math.max(1, Math.floor(options.width));
   if (item.kind === 'assistant') {
-    return {...item, clipped: true, text: tailText(item.text, Math.max(1, width - 2), Math.max(1, options.rows - 1))};
+    // Only an active stream still costs a row above the text.
+    const reserved = item.streaming ? 1 : 0;
+    return {...item, clipped: true, text: tailText(item.text, Math.max(1, width - 2), Math.max(1, options.rows - reserved))};
   }
   if (item.kind === 'user') {
     return {...item, clipped: true, text: tailText(item.text, Math.max(1, width - 2), options.rows)};
@@ -333,7 +338,9 @@ export function estimateTimelineItemRows(
   const gap = compact ? 0 : 1;
   if (item.kind === 'user') return wrappedRows(item.text, Math.max(1, rowWidth - 2)) + (item.clipped ? 0 : gap);
   if (item.kind === 'assistant') {
-    return 1 + richTextRows(item.text, Math.max(1, rowWidth - 2)) + (item.clipped ? 0 : gap);
+    // No nameplate row any more; only an active stream adds a status row.
+    return (item.streaming ? 1 : 0) + richTextRows(item.text, Math.max(1, rowWidth - 2)) +
+      (item.clipped ? 0 : gap);
   }
   if (item.kind === 'notice') return wrappedRows(item.text, Math.max(1, rowWidth - 2));
   if (item.kind === 'update') return (rowWidth < 48 ? 3 : 2) + (item.highlights?.length ?? 0);
@@ -378,9 +385,41 @@ export function estimateTimelineItemRows(
   return 1;
 }
 
+/**
+ * Mirror of the `RichText` renderer's row shape. Fenced code, quotes, and list
+ * markers change how much width a line has left, and dropped fences emit no row
+ * at all; the transcript viewport only anchors correctly while this agrees with
+ * `ui/components.RichText`.
+ */
 function richTextRows(value: string, width: number): number {
-  return sanitizeTerminalText(value).split('\n')
-    .reduce((rows, line) => rows + wrappedRows(line || ' ', width), 0);
+  let inCode = false;
+  let rows = 0;
+  for (const line of sanitizeTerminalText(value).split('\n')) {
+    const fence = line.trim().match(/^```+\s*([\w+#.-]*)/u);
+    if (fence) {
+      inCode = !inCode;
+      // A language tag renders one caption row; bare and closing fences render none.
+      if (inCode && fence[1]) rows += 1;
+      continue;
+    }
+    if (inCode) {
+      // The left rail costs two columns of the available width.
+      rows += wrappedRows(line || ' ', Math.max(1, width - 2));
+      continue;
+    }
+    const bullet = line.match(/^(\s*)([-*]|\d+\.)\s+(.+)$/);
+    if (bullet) {
+      const markerWidth = displayWidth(bullet[1] ?? '') + displayWidth(bullet[2] as string) + 1;
+      rows += wrappedRows(bullet[3] as string, Math.max(1, width - markerWidth));
+      continue;
+    }
+    if (line.startsWith('> ')) {
+      rows += wrappedRows(line.slice(2) || ' ', Math.max(1, width - 2));
+      continue;
+    }
+    rows += wrappedRows(line || ' ', width);
+  }
+  return rows;
 }
 
 function wrappedRows(value: string, width: number): number {

@@ -2101,8 +2101,9 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const showTaskRail = terminalHeight >= 18 && Boolean(tasks.length) && !permission && !paletteVisible && !showContextInspector;
   const showActivity = terminalHeight >= 16 && !permission && Boolean(activity);
   const showFooter = !(constrainedHeight && (paletteVisible || Boolean(permission)));
+  // Heading row plus the rail's own gap above and below it.
   const taskRows = showTaskRail
-    ? 2 + Math.min(tasks.length, taskLimit) + (tasks.length > taskLimit ? 1 : 0)
+    ? 3 + Math.min(tasks.length, taskLimit) + (tasks.length > taskLimit ? 1 : 0)
     : 0;
   const palettePageSize = contentWidth < 28 ? 3 : contentWidth < 48 ? 4 : 6;
   const paletteRows = paletteVisible
@@ -2113,7 +2114,12 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const attachments = composerAttachments(input);
   const visibleAttachments = compactComposer ? [] : attachments;
   const visibleQueuePreview = compactComposer ? undefined : queue[0]?.display;
-  const composerPreview = input || (busy ? `follow-up${ellipsis}` : interactionMode === 'ask' ? `trace or explain${ellipsis}` : interactionMode === 'plan' ? `outline the implementation${ellipsis}` : `inspect, change, or verify${ellipsis}`);
+  // While a run is active the hint row is spent on steering keys, so the field
+  // itself carries the invitation. When idle the hint row already invites input;
+  // a second placeholder inside the field would just repeat it, so the empty
+  // field shows nothing but its cursor.
+  const composerPlaceholder = busy ? `follow-up${ellipsis}` : '';
+  const composerPreview = input || composerPlaceholder;
   const composerRows = permission
     ? permissionRows(contentWidth, Boolean(typeof permission.call.arguments.cwd === 'string' || runner.workspace.primaryRoot), constrainedHeight)
       + permissionPreviewRows(permission.preview, contentWidth, constrainedHeight)
@@ -2271,7 +2277,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
               {...(cursorRequest?.value === input ? {externalCursorOffset: cursorRequest.offset} : {})}
               focus={!editing}
               captureVerticalArrows={suggestionMode === 'mention' || suggestionMode === 'command' || Boolean(historySearch)}
-              placeholder={busy ? `follow-up${ellipsis}` : interactionMode === 'ask' ? `trace or explain${ellipsis}` : interactionMode === 'plan' ? `outline the implementation${ellipsis}` : `inspect, change, or verify${ellipsis}`}
+              placeholder={composerPlaceholder}
             />
           </PromptBar>
         </> : <PermissionCard call={permission.call} category={permission.category} humanOnly={permission.humanOnly ?? false} {...(permission.reason ? {reason: permission.reason} : {})} {...(permission.preview ? {preview: permission.preview} : {})} workspace={runner.workspace.primaryRoot} width={contentWidth} glyphMode={glyphMode} compact={constrainedHeight} />}
