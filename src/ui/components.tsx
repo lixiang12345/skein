@@ -15,7 +15,7 @@ import {
   truncateDisplay,
 } from './text.js';
 import {elapsed, formatPercent, formatTokens, useTheme} from './theme.js';
-import {LOGO_HEIGHT, LOGO_LINES, LOGO_WIDTH, logoRowColors, GOOSE_LINES, GOOSE_WIDTH} from './logo.js';
+import {LOGO_HEIGHT, LOGO_LINES, LOGO_WIDTH, logoRowColors, EMBLEM_LINES, EMBLEM_WIDTH} from './logo.js';
 import {resolveTerminalAccessibility} from './terminal-capabilities.js';
 
 export type TimelineItem =
@@ -1931,9 +1931,9 @@ function Banner({engine, status, version, width, glyphs, files, chunks, rebuilt,
   }
 
   const logoColors = logoRowColors(theme);
-  // The full flight lockup needs the goose's tow-thread columns; narrower
-  // frames keep the letters alone rather than clipping the animal mid-wing.
-  const goose = layout.logo && rowWidth >= GUTTER + LOGO_WIDTH + 1 + GOOSE_WIDTH + 2;
+  // The full lockup needs the coil's tow-thread columns; narrower frames keep
+  // the letters alone rather than clipping the emblem mid-ring.
+  const emblem = layout.logo && rowWidth >= GUTTER + LOGO_WIDTH + 1 + EMBLEM_WIDTH + 2;
   return (
     <Box marginBottom={1} flexDirection="column" aria-label={spokenDetail}>
       {layout.logo ? (
@@ -1941,7 +1941,7 @@ function Banner({engine, status, version, width, glyphs, files, chunks, rebuilt,
           {LOGO_LINES.map((line, index) => (
             <Box key={`logo-${index}`} height={1} overflowY="hidden" paddingLeft={GUTTER}>
               <Text color={logoColors[index] || theme.accent} aria-hidden>{line}</Text>
-              {goose ? <Text color={theme.accent} aria-hidden>{` ${GOOSE_LINES[index]}`}</Text> : null}
+              {emblem ? <Text color={theme.accent} aria-hidden>{` ${EMBLEM_LINES[index]}`}</Text> : null}
             </Box>
           ))}
           <Box height={1} overflowY="hidden" paddingLeft={GUTTER}>

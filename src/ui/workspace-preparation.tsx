@@ -5,7 +5,7 @@ import type {IndexPreparationResult, IndexProgress} from '../context/local-index
 import {PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
 import type {MosaicConfig} from '../types.js';
 import {SPINNER_FRAMES} from './components.js';
-import {GOOSE_LINES, GOOSE_WIDTH, LOGO_LINES, LOGO_WIDTH, logoRowColors} from './logo.js';
+import {EMBLEM_LINES, EMBLEM_WIDTH, LOGO_LINES, LOGO_WIDTH, logoRowColors} from './logo.js';
 import {compactDisplayPath, displayWidth, padDisplay, sanitizeTerminalText, truncateDisplay} from './text.js';
 import {resolveKittyKeyboardConfig, resolveTerminalAccessibility} from './terminal-capabilities.js';
 import {resolveThemeWithColor, ThemeProvider, useTheme} from './theme.js';
@@ -68,7 +68,7 @@ export function WorkspacePreparationView({
   // The block wordmark mounts here first and persists on the session banner,
   // so preparation clearing itself reads as the steps settling, not a reset.
   const showLogo = !ascii && !compact && !constrained && innerWidth >= LOGO_WIDTH && height >= 20;
-  const showGoose = showLogo && innerWidth >= LOGO_WIDTH + 1 + GOOSE_WIDTH;
+  const showEmblem = showLogo && innerWidth >= LOGO_WIDTH + 1 + EMBLEM_WIDTH;
   const logoColors = logoRowColors(theme);
   const phase = readiness ? 'ready' : error ? 'error' : progress.phase;
   const phaseLabel = preparationLabel(phase, progress, readiness, compact);
@@ -84,7 +84,7 @@ export function WorkspacePreparationView({
           {LOGO_LINES.map((line, index) => (
             <Box key={`logo-${index}`} height={1} overflowY="hidden">
               <Text color={logoColors[index] || theme.accent} aria-hidden>{line}</Text>
-              {showGoose ? <Text color={theme.accent} aria-hidden>{` ${GOOSE_LINES[index]}`}</Text> : null}
+              {showEmblem ? <Text color={theme.accent} aria-hidden>{` ${EMBLEM_LINES[index]}`}</Text> : null}
             </Box>
           ))}
           <Text color={theme.dim} aria-label={PRODUCT_NAME}>{`context-first coding agent  ${separator}  LOCAL CONTEXT`}</Text>

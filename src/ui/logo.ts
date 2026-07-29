@@ -18,27 +18,28 @@ export const LOGO_WIDTH = 36;
 export const LOGO_HEIGHT = LOGO_LINES.length;
 
 /**
- * The flight side of the lockup: the Skein Goose climbing ahead of the
- * wordmark, towing it by a `⌁┄┄` thread that leaves the letters' middle row —
- * the brand story ("context carried as one inspectable thread", geese moving
- * in formation) drawn as a single object rather than a mascot standing beside
- * a logotype. Head and beak use the `●▶` signature from the brand guide.
+ * The emblem side of the lockup: a wound coil of thread — the literal
+ * "skein" — with its loose end `⌁┄┄` unspooling toward the wordmark, so the
+ * letters and the coil read as one continuous thread rather than a logotype
+ * with a mascot beside it. The ring is also the resting form of the winding
+ * spinner (`◌◍◎◉`): the same object at rest here and in motion beside live
+ * work.
  *
- * Exactly `LOGO_HEIGHT` rows of `GOOSE_WIDTH` cells, composed to the right of
- * `LOGO_LINES` with one blank column between. The letters carry the vertical
- * colour ramp; the goose and its thread render in the solid accent, so the
- * one live element of the frame is the animal pulling the brand forward.
+ * Exactly `LOGO_HEIGHT` rows of `EMBLEM_WIDTH` cells, composed to the right
+ * of `LOGO_LINES` with one blank column between. The letters carry the
+ * vertical colour ramp; the coil and its thread render in the solid accent,
+ * so the one live element of the frame is the thread being pulled forward.
  * Wide Unicode terminals only; ASCII mode keeps the text wordmark.
  */
-export const GOOSE_LINES: readonly string[] = [
-  '      ▄█●▶  ',
-  '   ▄▄██▛▘   ',
-  '⌁┄┄▟████▘   ',
-  ' ▝▜█████▙▖  ',
-  '    ▀▀▀▀▘   ',
+export const EMBLEM_LINES: readonly string[] = [
+  '     ▄█████▄    ',
+  '   ▄██▀▀▀▀▀██▄  ',
+  '   ██▌     ▐██  ',
+  '   ▀██▄▄▄▄▄██▀  ',
+  '⌁┄┄┄┄▀█████▀    ',
 ];
 
-export const GOOSE_WIDTH = 12;
+export const EMBLEM_WIDTH = 16;
 
 const hexColorPattern = /^#[0-9a-f]{6}$/i;
 
