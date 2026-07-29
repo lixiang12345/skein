@@ -2111,11 +2111,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const inspectorSurface = latestSurface === 'list' || latestSurface === 'context-inspector' ||
     latestSurface === 'theme' || latestSurface === 'clarification' || latestSurface === 'update';
   const conversationStarted = timeline.some((item) => item.kind === 'user' || item.kind === 'assistant');
-  const hasFreshBanner = timeline.some((item) => item.kind === 'banner');
-  // Fresh sessions put identity on the banner; a second header wordmark made
-  // the first frame read as two entry pages. Header returns once the banner
-  // is gone and the session still has no conversation (inspectors, etc.).
-  const showHeader = terminalHeight >= 10 && !conversationStarted && !hasFreshBanner && !permission && suggestionMode === 'none' &&
+  const showHeader = terminalHeight >= 10 && !conversationStarted && !permission && suggestionMode === 'none' &&
     !showContextInspector && !teamWorkbenchOpen && !inspectorSurface;
   const taskLimit = compactUi ? 3 : 6;
   const paletteVisible = suggestions.length > 0 || Boolean(historySearch) || suggestionMode === 'mention';
@@ -2162,13 +2158,7 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
   const chromeRows = headerRows + composerRows + footerRows + taskRows + paletteRows + inspectorRows + activityRows + teamSummaryRows + scrollHintRows;
   const availableTimelineRows = Math.max(0, terminalHeight - chromeRows);
   const mainTimeline = prepareTimelineItems(
-    timeline.filter((item) => {
-      if (item.kind === 'agent' || item.kind === 'agent-message') return false;
-      // Inspectors own the surface: keep the fresh banner out so Status/Theme
-      // panels are not competing with the flight mark above them.
-      if (inspectorSurface && item.kind === 'banner') return false;
-      return true;
-    }),
+    timeline.filter((item) => item.kind !== 'agent' && item.kind !== 'agent-message'),
     expandedToolId,
     showToolOutput,
   );
@@ -2191,8 +2181,6 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
     rows: timelineRows,
     scrollOffsetRows: Math.min(timelineScrollOffsetRows, maxTimelineScrollOffset),
   });
-  const bannerVisibleInViewport = hasFreshBanner && !inspectorSurface &&
-    visibleTimeline.some((item) => item.kind === 'banner');
   const activeAgents = timeline.filter((item) => item.kind === 'agent' && item.state === 'running').length;
   const mcpServers = extensions?.mcpStatus() ?? [];
   const memoryStats = extensions?.memoryStats();
@@ -2346,7 +2334,6 @@ export function SkeinApp({runner, config, extensions, initialPrompt, askMode = f
             glyphMode={glyphMode}
             mode={interactionMode.toUpperCase()}
             identityVisible={showHeader}
-            pinProductIdentity={!showHeader && !inspectorSurface && hasFreshBanner && !bannerVisibleInViewport}
             route={config.activeConnection && config.activeConnection.source !== 'legacy'
               ? `@${config.activeConnection.id}/${config.model.model}`
               : `${config.model.provider}/${config.model.model}`}
@@ -2584,8 +2571,7 @@ function composerAttachments(value: string): string[] {
 }
 
 function permissionRows(width: number, hasCwd: boolean, compact: boolean): number {
-  // Title + target + risk + shortcuts; cwd/reason/preview are progressive.
-  const content = 3 + (hasCwd && width >= 48 ? 1 : 0) + (!compact && width >= 72 ? 1 : 0);
+  const content = 5 + (hasCwd ? 1 : 0);
   if (width >= 64) return content + 2;
   if (width >= 28) return content + 3;
   if (compact) return content + 3;

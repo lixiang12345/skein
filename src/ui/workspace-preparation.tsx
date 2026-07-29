@@ -2,10 +2,10 @@ import React, {useEffect, useRef, useState} from 'react';
 import {Box, render, Text, useApp, useInput, useWindowSize} from 'ink';
 import type {ContextEngine} from '../context/context-engine.js';
 import type {IndexPreparationResult, IndexProgress} from '../context/local-index.js';
-import {PRODUCT_FLIGHT_MARK, PRODUCT_FLIGHT_MARK_ASCII, PRODUCT_NAME} from '../brand.js';
+import {PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
 import type {MosaicConfig} from '../types.js';
 import {SPINNER_FRAMES} from './components.js';
-import {GOOSE_LINES, GOOSE_MIN_WIDTH, GOOSE_WIDTH, gooseRowColors} from './logo.js';
+import {EMBLEM_LINES, EMBLEM_WIDTH, LOGO_LINES, LOGO_WIDTH, logoRowColors} from './logo.js';
 import {compactDisplayPath, displayWidth, padDisplay, sanitizeTerminalText, truncateDisplay} from './text.js';
 import {resolveKittyKeyboardConfig, resolveTerminalAccessibility} from './terminal-capabilities.js';
 import {resolveThemeWithColor, ThemeProvider, useTheme} from './theme.js';
@@ -64,46 +64,38 @@ export function WorkspacePreparationView({
   // language.
   const spinner = (ascii ? ['.', 'o', 'O', 'o'] : [...SPINNER_FRAMES])[frame % (ascii ? 4 : SPINNER_FRAMES.length)] as string;
   const separator = ascii ? '|' : '·';
-  const mark = ascii ? PRODUCT_FLIGHT_MARK_ASCII : PRODUCT_FLIGHT_MARK;
-  // Three-row goose only when the preparation screen has room; otherwise the
-  // compact flight mark keeps the steps readable above the fold.
-  const showGoose = !ascii && !compact && !constrained && innerWidth >= GOOSE_MIN_WIDTH && height >= 20;
-  const gooseColors = gooseRowColors(theme);
+  const brand = ascii ? '*' : PRODUCT_MARK;
+  // The block wordmark mounts here first and persists on the session banner,
+  // so preparation clearing itself reads as the steps settling, not a reset.
+  const showLogo = !ascii && !compact && !constrained && innerWidth >= LOGO_WIDTH && height >= 20;
+  const showEmblem = showLogo && innerWidth >= LOGO_WIDTH + 1 + EMBLEM_WIDTH;
+  const logoColors = logoRowColors(theme);
   const phase = readiness ? 'ready' : error ? 'error' : progress.phase;
   const phaseLabel = preparationLabel(phase, progress, readiness, compact);
   const detail = preparationDetail(phase, progress, readiness, error);
   const modelLine = `model ${sanitizeTerminalText(model)}`;
   const workspaceLine = `workspace ${compactDisplayPath(sanitizeTerminalText(workspace), Math.max(1, innerWidth - 10))}`;
   const steps = preparationSteps(phase, progress, readiness, error, {ascii, spinner});
-  const besideWidth = Math.max(1, innerWidth - GOOSE_WIDTH - 1);
 
   return (
     <Box flexDirection="column" paddingX={horizontalPadding}>
-      {showGoose ? (
-        GOOSE_LINES.map((line, index) => (
-          <Box key={`goose-${index}`} height={1} overflowY="hidden">
-            <Text color={gooseColors[index] || theme.accent} aria-hidden>{line}</Text>
-            {index === 0 ? (
-              <Text color={theme.accent} aria-label={PRODUCT_NAME}>
-                {truncateDisplay(` ${PRODUCT_NAME.toUpperCase()}`, besideWidth)}
-              </Text>
-            ) : (
-              <Text color={theme.dim}>
-                {truncateDisplay(
-                  index === 1 ? ` context-first coding agent  ${separator}  LOCAL CONTEXT` : '',
-                  besideWidth,
-                )}
-              </Text>
-            )}
-          </Box>
-        ))
+      {showLogo ? (
+        <>
+          {LOGO_LINES.map((line, index) => (
+            <Box key={`logo-${index}`} height={1} overflowY="hidden">
+              <Text color={logoColors[index] || theme.accent} aria-hidden>{line}</Text>
+              {showEmblem ? <Text color={theme.accent} aria-hidden>{` ${EMBLEM_LINES[index]}`}</Text> : null}
+            </Box>
+          ))}
+          <Text color={theme.dim} aria-label={PRODUCT_NAME}>{`context-first coding agent  ${separator}  LOCAL CONTEXT`}</Text>
+        </>
       ) : (
         <Box>
-          <Text bold color={theme.accent} aria-label={PRODUCT_NAME}>{mark}  {PRODUCT_NAME.toUpperCase()}</Text>
+          <Text bold color={theme.accent} aria-label={PRODUCT_NAME}>{brand}  {PRODUCT_NAME.toUpperCase()}</Text>
           {!compact && !constrained ? <Text color={theme.dim}>  {separator}  LOCAL CONTEXT</Text> : null}
         </Box>
       )}
-      {!constrained && !showGoose ? <Text color={theme.muted}>{truncateDisplay('Ground the workspace before the first request.', innerWidth)}</Text> : null}
+      {!constrained && !showLogo ? <Text color={theme.muted}>{truncateDisplay('Ground the workspace before the first request.', innerWidth)}</Text> : null}
       {!constrained && !compact ? <Text color={theme.dim}>{truncateDisplay(`${modelLine}  ${separator}  ${workspaceLine}`, innerWidth)}</Text> : !constrained ? (
         <>
           <Text color={theme.dim}>{truncateDisplay(modelLine, innerWidth)}</Text>

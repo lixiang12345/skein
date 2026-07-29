@@ -2,23 +2,19 @@ import {readFile, stat} from 'node:fs/promises';
 import {join} from 'node:path';
 import stringWidth from 'string-width';
 import {describe, expect, it} from 'vitest';
-import {PRODUCT_FLIGHT_MARK, PRODUCT_FLIGHT_MARK_ASCII, PRODUCT_MARK, PRODUCT_NAME} from '../../src/brand.js';
+import {PRODUCT_MARK, PRODUCT_NAME} from '../../src/brand.js';
 import {resolveGlyphs} from '../../src/ui/components.js';
 
 const root = process.cwd();
 const assets = join(root, 'docs', 'assets');
 
 describe('Skein Goose brand assets', () => {
-  it('keeps the transcript mark to one cell and the flight mark recognizable', () => {
+  it('keeps the terminal identity to one cell with a deterministic ASCII fallback', () => {
     expect(PRODUCT_NAME).toBe('Skein');
     expect(PRODUCT_MARK).toBe('⌁');
     expect(stringWidth(PRODUCT_MARK)).toBe(1);
     expect(resolveGlyphs('unicode').brand).toBe(PRODUCT_MARK);
     expect(resolveGlyphs('ascii').brand).toBe('*');
-    expect(PRODUCT_FLIGHT_MARK).toBe('__\\●▶');
-    expect(PRODUCT_FLIGHT_MARK_ASCII).toBe('__\\o>');
-    expect(stringWidth(PRODUCT_FLIGHT_MARK)).toBe(5);
-    expect(stringWidth(PRODUCT_FLIGHT_MARK_ASCII)).toBe(5);
   });
 
   it.each([
