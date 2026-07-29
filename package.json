@@ -1,6 +1,6 @@
 {
   "name": "@skein-code/cli",
-  "version": "0.3.65",
+  "version": "0.3.66",
   "description": "A context-first, model-agnostic coding agent with an auditable terminal workspace.",
   "type": "module",
   "license": "MIT",
@@ -24,7 +24,7 @@
   },
   "skein": {
     "releaseNotes": [
-      "The lockup's flight goose is replaced by the skein coil: a wound ring of thread whose loose end unspools toward the block wordmark, matching the geometric letterforms and echoing the winding spinner's resting ring form; layout, colour ramp, and accessibility fallbacks are unchanged",
+      "The fresh-session identity returns to the Skein Goose flight mark and a slimmer first frame: compact __\\●▶ SKEIN at ordinary widths, a three-row goose lockup only at 100+ columns, one readiness receipt, and workspace/model/trust moved back to /status; the footer pins the wordmark once the banner scrolls away, and screen-reader announcements use Skein vX.Y.Z",
       "The startup identity is now a fused flight lockup: the Skein Goose climbs ahead of the block SKEIN wordmark, towing it by the ⌁ context thread, with a per-row theme colour ramp on the letters and the solid accent on the animal, in both the preparation screen and the persistent session banner; ASCII, narrow, constrained-height, and screen-reader terminals keep the deterministic text wordmark",
       "Workspace preparation results persist as banner receipts (index size and chunks, build duration, workspace, model route, trust posture) instead of vanishing when the loading surface clears, and every model interaction settles into a quiet turn receipt carrying the model, duration, and separated input/output token flow",
       "Live runs show weaving-metaphor phase words (Gathering threads, Spinning, Weaving the reply) beside a run clock, streaming token counters, and an esc hint; the footer gains a dim session token total on wide terminals, and the one-cell winding-thread spinner is now the single motion glyph across preparation, tool rows, the activity line, and the footer",

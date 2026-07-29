@@ -2,7 +2,7 @@ import React, {useEffect, useState} from 'react';
 import {Box, Text} from 'ink';
 import {basename} from 'node:path';
 import type {AgentPhase, ContextBudgetTier, ContextDegradation, ContextSource, MosaicConfig, PendingInput, PromptTokenBreakdown, RouteCostReceipt, SessionTask, ToolCall, ToolCategory, WorkingMemory} from '../types.js';
-import {PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
+import {PRODUCT_FLIGHT_MARK, PRODUCT_FLIGHT_MARK_ASCII, PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
 import {commandForCall} from '../tools/permissions.js';
 import {commandSuggestions, type CommandSuggestion} from './commands.js';
 import {
@@ -15,7 +15,7 @@ import {
   truncateDisplay,
 } from './text.js';
 import {elapsed, formatPercent, formatTokens, useTheme} from './theme.js';
-import {LOGO_HEIGHT, LOGO_LINES, LOGO_WIDTH, logoRowColors, EMBLEM_LINES, EMBLEM_WIDTH} from './logo.js';
+import {GOOSE_HEIGHT, GOOSE_LINES, GOOSE_MIN_WIDTH, GOOSE_WIDTH, gooseRowColors} from './logo.js';
 import {resolveTerminalAccessibility} from './terminal-capabilities.js';
 
 export type TimelineItem =
@@ -126,14 +126,17 @@ const unicodeGlyphs: UiGlyphs = {
   running: '◌',
   success: '✓',
   error: '×',
-  context: '◇',
-  skill: '+',
-  memory: '#',
-  agent: '@',
-  compaction: '~',
+  // Meta rows share the quiet pending dot; role lives in the `skill/` / `memory`
+  // / `agent` text prefix so the gutter stays a three-glyph status system:
+  // live spinner, success, failure/warning.
+  context: '·',
+  skill: '·',
+  memory: '·',
+  agent: '·',
+  compaction: '·',
   pending: '·',
   notice: '·',
-  info: 'i',
+  info: '·',
   warning: '!',
   bullet: '·',
   up: '↑',
@@ -164,14 +167,14 @@ const asciiGlyphs: UiGlyphs = {
   running: '~',
   success: '+',
   error: 'x',
-  context: '@',
-  skill: '+',
-  memory: '#',
-  agent: '@',
-  compaction: '~',
+  context: '-',
+  skill: '-',
+  memory: '-',
+  agent: '-',
+  compaction: '-',
   pending: '-',
   notice: '-',
-  info: 'i',
+  info: '-',
   warning: '!',
   bullet: '-',
   up: 'up',
@@ -189,6 +192,11 @@ const asciiGlyphs: UiGlyphs = {
   listBullet: '-',
   borderStyle: 'classic',
 };
+
+/** Compact goose-in-flight mark for headers and the fresh banner identity row. */
+export function flightMark(glyphs: UiGlyphs): string {
+  return glyphs.borderStyle === 'classic' ? PRODUCT_FLIGHT_MARK_ASCII : PRODUCT_FLIGHT_MARK;
+}
 
 export function resolveGlyphs(mode: GlyphMode = 'auto'): UiGlyphs {
   const configured = process.env.SKEIN_GLYPHS ?? process.env.MOSAIC_GLYPHS;
@@ -214,9 +222,10 @@ export function Header({config, askMode, planMode = false, width = 80, glyphMode
   // Each mode gets a semantic hue: BUILD is "go" (mutations live), PLAN is the
   // amber "thinking" state, ASK is a calm read-only muted tone.
   const modeColor = planMode ? theme.warning : askMode ? theme.muted : theme.accent;
-  // One cell of identity is enough in a work surface. It retracts with the
-  // header after the conversation starts and leaves the transcript unbranded.
-  const mark = glyphs.brand;
+  // The compact flight mark is the product animal at ordinary widths. It
+  // retracts with the header after the conversation starts; the transcript
+  // keeps the one-cell thread mark instead of repeating the goose.
+  const mark = flightMark(glyphs);
   const brand = PRODUCT_NAME.toUpperCase();
   const modeLabel = mode;
   const separator = ` ${glyphs.separator} `;
@@ -224,9 +233,9 @@ export function Header({config, askMode, planMode = false, width = 80, glyphMode
     ? `@${config.activeConnection.id}/${config.model.model}`
     : `${config.model.provider}/${config.model.model}`);
   const repository = sanitizeInlineTerminalText(basename(root) || root);
-  // The mark is the first thing to drop: identity survives on the wordmark
-  // alone, so narrow terminals keep the repository and mode instead.
-  const showMark = terminalWidth >= 48;
+  // The flight mark is the first thing to drop: identity survives on the
+  // wordmark alone, so narrow terminals keep the repository and mode instead.
+  const showMark = terminalWidth >= 40;
   const markWidth = showMark ? displayWidth(mark) + 1 : 0;
   const minimum = `${brand}${separator}${modeLabel}`;
   const withRepository = `${brand}${separator}${repository}`;
@@ -622,7 +631,7 @@ export function TeamSummary({items, width = 36, glyphMode = 'auto'}: {
   const queued = active.length - running;
   const reviewing = active.filter((agent) => agent.phase === 'review').length;
   const summary = [
-    `${glyphs.agent} ${active.length} agent${active.length === 1 ? '' : 's'}`,
+    `${active.length} agent${active.length === 1 ? '' : 's'}`,
     running ? `${running} running` : '',
     queued ? `${queued} queued` : '',
     reviewing ? `${reviewing} review` : '',
@@ -1079,10 +1088,8 @@ export function PermissionCard({call, category, reason, humanOnly = false, width
   const rowWidth = safeWidth(width);
   const innerWidth = Math.max(1, rowWidth - 2);
   const title = truncateDisplay(`${humanOnly ? 'Live human approval required' : 'Permission required'} ${glyphs.separator} ${category}`, innerWidth);
-  const tool = truncateDisplay(`tool ${sanitizeInlineTerminalText(call.name)}`, innerWidth);
-  const summaryLine = truncateDisplay(`target ${summary.label} ${summary.value}`, innerWidth);
-  const reasonLine = truncateDisplay(`reason ${redactPermissionText(reason ?? `${category} tools require approval.`)}`, innerWidth);
-  const riskLine = truncateDisplay(`risk ${permissionRisk(category)}`, innerWidth);
+  const summaryLine = truncateDisplay(`${sanitizeInlineTerminalText(call.name)} ${glyphs.separator} ${summary.label} ${summary.value}`, innerWidth);
+  const riskLine = truncateDisplay(permissionRisk(category), innerWidth);
   const argumentCwd = typeof call.arguments.cwd === 'string' ? call.arguments.cwd : undefined;
   const cwd = sanitizeInlineTerminalText(argumentCwd || workspace || '');
   const shortcuts: InlinePart[] = [
@@ -1105,14 +1112,19 @@ export function PermissionCard({call, category, reason, humanOnly = false, width
         {text: '[Esc]', color: theme.muted},
       ];
   const marker = glyphs.borderStyle === 'classic' ? '!' : '▎';
+  // Decision surface: what, where, risk, keys. Reason prose stays out unless
+  // the terminal is wide enough that an extra line does not bury the shortcuts.
+  const showReason = !compact && rowWidth >= 72 && reason;
+  const reasonLine = showReason
+    ? truncateDisplay(redactPermissionText(reason), innerWidth)
+    : undefined;
   return (
     <Box flexDirection="column" marginBottom={1} aria-role="radiogroup">
       <PermissionLine marker={marker}><Text bold color={theme.warning}>{title}</Text></PermissionLine>
-      <PermissionLine marker={marker}><Text color={theme.muted}>{tool}</Text></PermissionLine>
       <PermissionLine marker={marker}><Text color={theme.text}>{summaryLine}</Text></PermissionLine>
-      <PermissionLine marker={marker}><Text color={theme.muted}>{reasonLine}</Text></PermissionLine>
       <PermissionLine marker={marker}><Text color={theme.warning}>{riskLine}</Text></PermissionLine>
-      {cwd ? <PermissionLine marker={marker}><Text color={theme.muted}>{truncateDisplay(`cwd ${compactDisplayPath(cwd, Math.max(1, innerWidth - 4))}`, innerWidth)}</Text></PermissionLine> : null}
+      {cwd && rowWidth >= 48 ? <PermissionLine marker={marker}><Text color={theme.muted}>{truncateDisplay(`cwd ${compactDisplayPath(cwd, Math.max(1, innerWidth - 4))}`, innerWidth)}</Text></PermissionLine> : null}
+      {reasonLine ? <PermissionLine marker={marker}><Text color={theme.muted}>{reasonLine}</Text></PermissionLine> : null}
       {preview && !compact && rowWidth >= 48 ? (
         <>
           {preview.lines.map((line, index) => (
@@ -1306,7 +1318,7 @@ function InlineRow({parts, width, separator, separatorColor}: {
   );
 }
 
-export function Footer({busy, approval = false, tokens = 0, changedFiles, width = 80, contextPressure, queueCount = 0, activeAgents = 0, frame, glyphMode = 'auto', mode = 'BUILD', route, identityVisible = false}: {
+export function Footer({busy, approval = false, tokens = 0, changedFiles, width = 80, contextPressure, queueCount = 0, activeAgents = 0, frame, glyphMode = 'auto', mode = 'BUILD', route, identityVisible = false, pinProductIdentity = false}: {
   busy: boolean;
   approval?: boolean;
   tokens?: number;
@@ -1327,9 +1339,14 @@ export function Footer({busy, approval = false, tokens = 0, changedFiles, width 
    * the same frame.
    */
   identityVisible?: boolean;
+  /** Keep the product wordmark in the footer after the opening banner scrolls away. */
+  pinProductIdentity?: boolean;
 }) {
   const theme = useTheme();
   const glyphs = resolveGlyphs(glyphMode);
+  const identityLabel = resolveTerminalAccessibility().screenReader
+    ? PRODUCT_NAME
+    : PRODUCT_NAME.toUpperCase();
   const rowWidth = safeWidth(width);
   const contentWidth = Math.max(1, rowWidth - GUTTER);
   // A spinner frame is one cell by contract; bound it to the gutter so a longer
@@ -1351,8 +1368,11 @@ export function Footer({busy, approval = false, tokens = 0, changedFiles, width 
     {text: statusLabel, color: statusColor},
     ...(pressurePart ? [pressurePart] : []),
     ...(rowWidth >= 40 && changedFiles ? [{text: `${changedFiles} changed`, color: theme.text, optional: true}] : []),
-    ...(activeAgents ? [{text: `${glyphs.agent}${activeAgents}`, color: theme.accent, optional: true}] : []),
+    ...(activeAgents ? [{text: `@${activeAgents}`, color: theme.accent, optional: true}] : []),
     ...(queueCount ? [{text: `q${queueCount}`, color: theme.muted, optional: true}] : []),
+    // Pin the wordmark in the footer whenever the header is hidden so identity
+    // survives after the opening banner scrolls out of the transcript viewport.
+    ...(pinProductIdentity ? [{text: identityLabel, color: theme.muted, optional: true}] : []),
     ...(!identityVisible && rowWidth >= 28 ? [{text: sanitizeInlineTerminalText(mode), color: theme.muted}] : []),
     ...(!identityVisible && rowWidth >= 64 && route ? [{text: sanitizeInlineTerminalText(route), color: theme.dim, optional: true}] : []),
     ...(rowWidth >= 72 && tokens > 0 ? [{text: `${formatTokens(tokens)} tok`, color: theme.dim, optional: true}] : []),
@@ -1812,17 +1832,25 @@ export function bannerLayout(item: BannerItem, width: number, glyphs: UiGlyphs):
   const separator = ` ${glyphs.separator} `;
   const unicode = glyphs.borderStyle === 'round';
   if (rowWidth < 30) {
-    const line = `${item.status === 'ready' ? 'ready' : item.status === 'empty' ? 'empty' : 'setup'}${separator}v${item.version}`;
+    const state = item.status === 'ready' ? 'ready' : item.status === 'empty' ? 'empty' : 'setup';
+    // Ultra-narrow terminals keep the product name in the one-line banner; the
+    // footer still carries the live ready state when the line cannot fit it.
+    const line = rowWidth < 24
+      ? `${PRODUCT_NAME.toUpperCase()}${separator}v${item.version}`
+      : `${PRODUCT_NAME.toUpperCase()}${separator}${state}${separator}v${item.version}`;
     return {logo: false, receipts: [], line, rows: 1};
   }
 
-  const wide = rowWidth >= LOGO_WIDTH + GUTTER + 6;
+  // The three-row goose is a wide-terminal ceremony only. Ordinary widths keep
+  // the compact flight mark so the composer stays inside the first handful of
+  // rows; workspace/model/trust stay in `/status`, not the resting frame.
+  const logo = unicode && rowWidth >= GOOSE_MIN_WIDTH;
   const indexDetail = item.status === 'ready'
     ? item.files !== undefined
       ? [
         'local context',
         `${item.files.toLocaleString('en-US')} files`,
-        ...(item.chunks !== undefined ? [`${item.chunks.toLocaleString('en-US')} chunks`] : []),
+        ...(item.chunks !== undefined && rowWidth >= 64 ? [`${item.chunks.toLocaleString('en-US')} chunks`] : []),
         item.rebuilt
           ? `indexed${item.durationMs !== undefined ? ` in ${formatBannerDuration(item.durationMs)}` : ''}`
           : 'reused',
@@ -1833,31 +1861,31 @@ export function bannerLayout(item: BannerItem, width: number, glyphs: UiGlyphs):
       : 'setup required — follow the notice below';
   const receipts: BannerReceipt[] = [{
     tone: item.status === 'ready' ? 'success' : 'warning',
-    label: item.status === 'blocked' ? 'setup' : 'index',
+    label: item.status === 'blocked' ? 'setup' : item.status === 'ready' ? 'ready' : 'index',
     detail: indexDetail,
   }];
-  if (wide) {
-    if (item.workspace) {
-      receipts.push({tone: 'meta', label: 'workspace', detail: compactDisplayPath(sanitizeTerminalText(item.workspace), Math.max(8, rowWidth - GUTTER - BANNER_LABEL_COLUMN))});
-    }
-    if (item.model) receipts.push({tone: 'meta', label: 'model', detail: sanitizeTerminalText(item.model)});
-    if (item.trust) {
-      receipts.push({tone: 'quiet', label: 'trust', detail: `${sanitizeTerminalText(item.trust)} permissions${separator}nothing leaves this machine`});
-    }
-  }
-  const hint = wide
-    ? `try "explain this codebase"${separator}@path attaches context${separator}/ commands`
-    : `/ commands${separator}@ attach`;
-  const logo = unicode && wide;
-  const tagline = wide
+  const hint = logo
+    ? undefined
+    : rowWidth >= 56
+      ? `/help${separator}@file${separator}/commands`
+      : `/help${separator}@file`;
+  // Keep the version visible at ordinary widths: the long tagline truncates
+  // before `vX` on 40-column terminals, which hides the only version signal.
+  const tagline = logo || rowWidth >= 56
     ? `${BANNER_TAGLINE}${separator}v${item.version}`
     : `v${item.version}`;
-  // Logo layout spends a blank row before the receipts and before the hint so
-  // the mark, the evidence, and the invitation read as three settled groups.
+  // Goose lockup: art (with wordmark/tagline beside) + one receipt. Compact:
+  // flight identity + receipt + short hint. No blank spacer rows.
   const rows = logo
-    ? LOGO_HEIGHT + 1 + 1 + receipts.length + 1 + 1
-    : 1 + receipts.length + 1;
-  return {logo, tagline, receipts, hint, rows};
+    ? GOOSE_HEIGHT + receipts.length
+    : 1 + receipts.length + (hint ? 1 : 0);
+  return {
+    logo,
+    tagline,
+    receipts,
+    rows,
+    ...(hint ? {hint} : {}),
+  };
 }
 
 /** Exact content height of a banner at `width`; the viewport adds the trailing gap. */
@@ -1871,10 +1899,8 @@ function BannerReceiptRow({receipt, width, glyphs}: {receipt: BannerReceipt; wid
     ? glyphs.success
     : receipt.tone === 'warning'
       ? glyphs.warning
-      : receipt.tone === 'meta'
-        ? glyphs.context
-        : glyphs.bullet;
-  const color = receipt.tone === 'success' ? theme.success : receipt.tone === 'warning' ? theme.warning : receipt.tone === 'meta' ? theme.muted : theme.dim;
+      : glyphs.pending;
+  const color = receipt.tone === 'success' ? theme.success : receipt.tone === 'warning' ? theme.warning : theme.muted;
   const detailWidth = Math.max(1, width - GUTTER - BANNER_LABEL_COLUMN);
   return (
     <Box height={1} overflowY="hidden">
@@ -1917,7 +1943,7 @@ function Banner({engine, status, version, width, glyphs, files, chunks, rebuilt,
     ...(trust ? {trust} : {}),
   };
   const layout = bannerLayout(item, rowWidth, glyphs);
-  const spokenDetail = `${PRODUCT_NAME} version ${version}. ${layout.receipts.map((receipt) => `${receipt.label}: ${receipt.detail}.`).join(' ') || `${status}.`}`;
+  const spokenDetail = `${PRODUCT_NAME} v${version}. ${layout.receipts.map((receipt) => `${receipt.label}: ${receipt.detail}.`).join(' ') || `${status}.`}`;
 
   if (layout.line) {
     const glyph = status === 'ready' ? glyphs.success : glyphs.warning;
@@ -1930,40 +1956,46 @@ function Banner({engine, status, version, width, glyphs, files, chunks, rebuilt,
     );
   }
 
-  const logoColors = logoRowColors(theme);
-  // The full lockup needs the coil's tow-thread columns; narrower frames keep
-  // the letters alone rather than clipping the emblem mid-ring.
-  const emblem = layout.logo && rowWidth >= GUTTER + LOGO_WIDTH + 1 + EMBLEM_WIDTH + 2;
+  const gooseColors = gooseRowColors(theme);
+  const mark = flightMark(glyphs);
+  const wordmark = PRODUCT_NAME.toUpperCase();
+  // Beside the goose: product name on the head row, tagline on the body, so
+  // the animal and the type form one lockup rather than a logo stacked on copy.
+  const besideWidth = Math.max(1, contentWidth - GOOSE_WIDTH - 1);
+  const identityRemainder = Math.max(
+    1,
+    rowWidth - displayWidth(mark) - 1 - displayWidth(wordmark) - 2,
+  );
   return (
     <Box marginBottom={1} flexDirection="column" aria-label={spokenDetail}>
       {layout.logo ? (
-        <>
-          {LOGO_LINES.map((line, index) => (
-            <Box key={`logo-${index}`} height={1} overflowY="hidden" paddingLeft={GUTTER}>
-              <Text color={logoColors[index] || theme.accent} aria-hidden>{line}</Text>
-              {emblem ? <Text color={theme.accent} aria-hidden>{` ${EMBLEM_LINES[index]}`}</Text> : null}
-            </Box>
-          ))}
-          <Box height={1} overflowY="hidden" paddingLeft={GUTTER}>
-            <Text color={theme.dim}>{truncateDisplay(layout.tagline ?? '', contentWidth)}</Text>
+        GOOSE_LINES.map((line, index) => (
+          <Box key={`goose-${index}`} height={1} overflowY="hidden" paddingLeft={GUTTER}>
+            <Text color={gooseColors[index] || theme.accent} aria-hidden>{line}</Text>
+            <Text color={index === 0 ? theme.accent : theme.dim}>
+              {truncateDisplay(
+                index === 0 ? ` ${wordmark}` : index === 1 ? ` ${layout.tagline ?? ''}` : '',
+                besideWidth,
+              )}
+            </Text>
           </Box>
-          <Text> </Text>
-        </>
+        ))
       ) : (
         <Box height={1} overflowY="hidden">
-          <Box width={GUTTER}><Text color={theme.accent} aria-hidden>{glyphs.brand}</Text></Box>
-          <Text bold color={theme.accent}>{PRODUCT_NAME.toUpperCase()}</Text>
-          <Text color={theme.dim}>{truncateDisplay(`  ${layout.tagline ?? ''}`, Math.max(1, contentWidth - displayWidth(PRODUCT_NAME)))}</Text>
+          <Text color={theme.accent} aria-hidden>{mark} </Text>
+          <Text bold color={theme.accent} aria-label={PRODUCT_NAME}>{wordmark}</Text>
+          <Text color={theme.dim}>{truncateDisplay(`  ${layout.tagline ?? ''}`, identityRemainder)}</Text>
         </Box>
       )}
       {layout.receipts.map((receipt) => (
         <BannerReceiptRow key={receipt.label} receipt={receipt} width={rowWidth} glyphs={glyphs} />
       ))}
-      {layout.logo ? <Text> </Text> : null}
-      <Box height={1} overflowY="hidden">
-        <Box width={GUTTER}><Text color={theme.accent}>{glyphs.prompt}</Text></Box>
-        <Text color={theme.dim}>{truncateDisplay(layout.hint ?? '', contentWidth)}</Text>
-      </Box>
+      {layout.hint ? (
+        <Box height={1} overflowY="hidden">
+          <Box width={GUTTER}><Text color={theme.accent}>{glyphs.prompt}</Text></Box>
+          <Text color={theme.dim}>{truncateDisplay(layout.hint, contentWidth)}</Text>
+        </Box>
+      ) : null}
     </Box>
   );
 }

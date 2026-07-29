@@ -275,12 +275,11 @@ describe('terminal presentation', () => {
     }} askMode={false} width={118} expanded />, {columns: 118});
 
     const rows = output.trimEnd().split('\n');
-    // A one-cell product mark carries identity without turning the work surface
-    // into an illustration.
+    // The compact flight mark carries the goose without a multi-row illustration.
     expect(rows).toHaveLength(1);
     expect(output).toContain('SKEIN');
     expect(output).toContain('BUILD');
-    expect(output).toContain('⌁ SKEIN');
+    expect(output).toContain('__\\●▶ SKEIN');
     expect(output).not.toMatch(/╭────────╮|________/u);
     expect(output).not.toContain('context in formation');
     for (const row of rows) expect(displayWidth(row)).toBeLessThanOrEqual(118);
@@ -535,8 +534,8 @@ describe('terminal presentation', () => {
     const output = renderToString(<PermissionCard call={call} category="shell" reason="Shell tools require approval by policy." />);
     expect(output).toContain('Permission required');
     expect(output).toContain('npm test');
-    expect(output).toContain('reason Shell tools require approval by policy.');
-    expect(output).toContain('risk a local process may read or change workspace state');
+    expect(output).toContain('Shell tools require approval by policy.');
+    expect(output).toContain('a local process may read or change workspace state');
     expect(output).toContain('y');
     expect(output).toContain('n');
     expect(output).not.toMatch(/[┌┐└┘╭╮╰╯│]/u);
@@ -890,8 +889,9 @@ describe('terminal presentation', () => {
       version: '0.3.5',
     }]} />, {columns});
 
-    expect(output).toContain(columns < 30 ? 'ready' : 'local context');
+    expect(output).toContain('SKEIN');
     expect(output).toContain('v0.3.5');
+    if (columns >= 24) expect(output).toContain('ready');
     expect(output.trimEnd().split('\n')).toHaveLength(columns < 30 ? 1 : 3);
     expect(output).not.toContain('S K E I N');
     expect(output).not.toContain('cwd ');
@@ -901,7 +901,7 @@ describe('terminal presentation', () => {
     }
   });
 
-  it('opens wide fresh sessions on the block wordmark without boxed chrome', () => {
+  it('opens ordinary fresh sessions on the flight mark without boxed chrome', () => {
     const output = renderToString(<Timeline width={80} items={[{
       id: 'banner',
       kind: 'banner',
@@ -910,13 +910,33 @@ describe('terminal presentation', () => {
       version: '0.3.5',
     }]} />, {columns: 80});
 
-    expect(output).toContain('███');
+    expect(output).toContain('__\\●▶');
+    expect(output).toContain('SKEIN');
     expect(output).toContain('context-first coding agent · v0.3.5');
     expect(output).toContain('local context');
+    expect(output).not.toContain('███████');
     expect(output).not.toContain('cwd ');
     expect(output).not.toMatch(/[┌┐└┘╭╮╰╯]/u);
     for (const line of output.split('\n')) {
       expect(displayWidth(line), `80-column banner overflowed: ${JSON.stringify(line)}`).toBeLessThanOrEqual(80);
+    }
+  });
+
+  it('opens ultra-wide fresh sessions on the three-row goose lockup', () => {
+    const output = renderToString(<Timeline width={120} items={[{
+      id: 'banner',
+      kind: 'banner',
+      engine: 'local',
+      status: 'ready',
+      version: '0.3.5',
+    }]} />, {columns: 120});
+
+    expect(output).toContain('▄█●▶');
+    expect(output).toContain('SKEIN');
+    expect(output).toContain('context-first coding agent · v0.3.5');
+    expect(output).not.toContain('███████');
+    for (const line of output.split('\n')) {
+      expect(displayWidth(line), `120-column banner overflowed: ${JSON.stringify(line)}`).toBeLessThanOrEqual(120);
     }
   });
 

@@ -26,17 +26,18 @@ describe('SkeinApp completion flows', () => {
       const frame = harness.lastFrame();
       const lines = frame.split('\n');
       const nonEmptyLines = lines.filter((line) => line.trim());
-      const logoRow = nonEmptyLines.findIndex((line) => line.includes('███'));
+      const identityRow = nonEmptyLines.findIndex((line) => line.includes('SKEIN') || line.includes('__\\'));
       const summaryRow = nonEmptyLines.findIndex((line) => line.includes('local context'));
       const composerRow = nonEmptyLines.findIndex((line) => line.includes('Type a request'));
-      // Wordmark, then the persistent readiness receipt, then the composer.
-      expect(logoRow).toBeGreaterThanOrEqual(0);
-      expect(summaryRow).toBeGreaterThan(logoRow);
+      // Flight mark (or goose), then the readiness receipt, then the composer.
+      expect(identityRow).toBeGreaterThanOrEqual(0);
+      expect(summaryRow).toBeGreaterThan(identityRow);
       expect(composerRow).toBeGreaterThan(summaryRow);
       expect(composerRow - summaryRow).toBeLessThanOrEqual(8);
-      expect(composerRow).toBeLessThan(16);
+      expect(composerRow).toBeLessThan(12);
       expect(lines.length).toBeLessThan(24);
       expect(frame.match(/SKEIN/gu)).toHaveLength(1);
+      expect(frame).not.toContain('███████');
       expect(frame).not.toContain('context runs automatically');
     } finally {
       await harness.cleanup();
@@ -53,10 +54,12 @@ describe('SkeinApp completion flows', () => {
     try {
       const frame = harness.lastFrame();
       expect(frame).toContain('SKEIN');
-      // The retired multi-row lockup stays out of the resting frame; the
-      // one-row goose mark beside the wordmark is the supported identity.
+      // Integration mounts inherit TERM=dumb → ASCII flight mark. The three-row
+      // Unicode goose is covered by banner unit tests under explicit glyphMode.
+      expect(frame).toMatch(/__\\(?:●▶|o>)/u);
       expect(frame).not.toMatch(/╭────────╮|________/u);
       expect(frame).not.toContain('context in formation');
+      expect(frame).not.toContain('███████');
       expect(frame).toContain('Type a request');
       for (const line of frame.split('\n')) expect(displayWidth(line.trimEnd())).toBeLessThanOrEqual(126);
 
@@ -748,9 +751,11 @@ describe('SkeinApp completion flows', () => {
       await vi.waitFor(() => expect(harness.output()).toContain('Team run run-1 accepted'));
       await vi.waitFor(() => expect(harness.output()).toContain('judge accept 3 pass 0 fail 0 unknown'));
       const completedFrame = harness.lastFrame();
-      expect(completedFrame).not.toContain('SKEIN');
+      // Fresh-session banner keeps the flight wordmark in scrollback; the
+      // retired permanent header chrome must stay gone after the run.
       expect(completedFrame).not.toContain('TEAM COCKPIT');
       expect(completedFrame).not.toContain('agent/architect');
+      expect(completedFrame).not.toMatch(/╭────────╮|________/u);
       harness.stdin.write('\u0014');
       await vi.waitFor(() => expect(harness.output()).toContain('TEAM WORKBENCH'));
       await vi.waitFor(() => expect(harness.output()).toContain('unpriced'));

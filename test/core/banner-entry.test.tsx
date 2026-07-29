@@ -21,15 +21,18 @@ function renderBanner(width: number, extras: Record<string, unknown> = {}): stri
 }
 
 describe('fresh-session banner', () => {
-  it('opens wide sessions on the block wordmark with a persistent readiness receipt', () => {
+  it('opens ordinary sessions on the flight mark with one readiness receipt', () => {
     const wide = renderBanner(80, {files: 279, chunks: 1204, rebuilt: false, workspace: '/tmp/demo', model: 'openai/gpt-test', trust: 'guarded'});
-    expect(wide).toContain('███');
+    expect(wide).toContain('__\\●▶');
+    expect(wide).toContain('SKEIN');
     expect(wide).toContain('context-first coding agent · v0.3.47');
     expect(wide).toContain('local context · 279 files · 1,204 chunks · reused');
-    expect(wide).toContain('workspace');
-    expect(wide).toContain('openai/gpt-test');
-    expect(wide).toContain('guarded permissions');
-    expect(wide).toContain('try "explain this codebase"');
+    // Workspace / model / trust stay in /status, not the resting banner.
+    expect(wide).not.toContain('workspace');
+    expect(wide).not.toContain('openai/gpt-test');
+    expect(wide).not.toContain('guarded permissions');
+    expect(wide).not.toContain('███████ ██');
+    expect(wide).toContain('/help');
   });
 
   it('reports a rebuilt index with its build duration', () => {
@@ -37,14 +40,24 @@ describe('fresh-session banner', () => {
     expect(wide).toContain('28 files · 71 chunks · indexed in 42ms');
   });
 
-  it('drops to the text wordmark before the logo can overflow narrow terminals', () => {
+  it('keeps the three-row goose for wide terminals only', () => {
+    const ultra = renderBanner(120, {files: 279, chunks: 1204, rebuilt: false});
+    expect(ultra).toContain('▄█●▶');
+    expect(ultra).toContain('SKEIN');
+    expect(ultra).toContain('local context · 279 files');
+    // Block-letter wordmark stays retired; goose body uses denser cells that
+    // would false-positive a bare `███` check.
+    expect(ultra).not.toContain('███████');
+  });
+
+  it('drops to the text wordmark before the goose can overflow narrow terminals', () => {
     const narrow = renderBanner(40, {files: 279});
     expect(narrow).not.toContain('█');
     expect(narrow).toContain('SKEIN');
     expect(narrow).toContain('279 files');
     const tiny = renderBanner(24);
+    expect(tiny).toContain('SKEIN');
     expect(tiny).toContain('ready');
-    expect(tiny).not.toContain('SKEIN');
     expect(stripAnsi(tiny).trimEnd().split('\n')).toHaveLength(1);
   });
 
@@ -59,6 +72,7 @@ describe('fresh-session banner', () => {
   it('estimates the exact banner height the renderer produces', () => {
     const base = {id: 'b', kind: 'banner', engine: 'local', status: 'ready', version: '0'} as const;
     for (const [width, extras] of [
+      [120, {files: 279, chunks: 1204}],
       [80, {}],
       [80, {files: 279, chunks: 1204, workspace: '/tmp/demo', model: 'openai/gpt-test', trust: 'guarded'}],
       [48, {files: 279}],

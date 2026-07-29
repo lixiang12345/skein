@@ -3,7 +3,7 @@ import {Box, render, Text, useApp, useInput, useWindowSize} from 'ink';
 import TextInput from 'ink-text-input';
 import {redactEndpoint, saveUserConfig} from '../config.js';
 import {createAgentConnectionSetup} from '../agent/model-setup.js';
-import {PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
+import {PRODUCT_FLIGHT_MARK, PRODUCT_FLIGHT_MARK_ASCII, PRODUCT_NAME} from '../brand.js';
 import type {
   AgentTeamConfig,
   ConnectionApiKeyHeader,
@@ -411,16 +411,21 @@ export function OnboardingScreen({state, dispatch, width, compact = false}: {
   const theme = useTheme();
   const ascii = process.env.SKEIN_GLYPHS === 'ascii' || process.env.MOSAIC_GLYPHS === 'ascii';
   const marker = ascii ? '>' : '›';
-  const mark = ascii ? '*' : PRODUCT_MARK;
+  // Flight mark needs five cells; below ~28 columns keep the bare wordmark so
+  // "SKEIN" itself is never truncated away by the signature.
+  const mark = ascii ? PRODUCT_FLIGHT_MARK_ASCII : PRODUCT_FLIGHT_MARK;
   const inputField = inputFieldForStep(state);
   const stage = setupStage(state);
   const summary = connectionSummary(state);
   const horizontalPadding = width >= 32 ? 1 : 0;
   const headerWidth = Math.max(1, width - horizontalPadding * 2);
+  const brand = headerWidth >= 28
+    ? `${mark}  ${PRODUCT_NAME.toUpperCase()}`
+    : PRODUCT_NAME.toUpperCase();
   return (
     <Box width={width} paddingX={horizontalPadding} flexDirection="column">
       <Box width={headerWidth} justifyContent="space-between">
-        <Text bold color={theme.accent} aria-label={PRODUCT_NAME}>{truncateDisplay(`${mark}  ${PRODUCT_NAME.toUpperCase()}`, Math.max(1, headerWidth - displayWidth(stage.progress) - 1))}</Text>
+        <Text bold color={theme.accent} aria-label={PRODUCT_NAME}>{truncateDisplay(brand, Math.max(1, headerWidth - displayWidth(stage.progress) - 1))}</Text>
         <Text color={theme.dim}>{stage.progress}</Text>
       </Box>
       <Text color={theme.border}>{truncateDisplay(stageDivider(ascii, headerWidth), headerWidth)}</Text>
