@@ -1,6 +1,6 @@
 import {constants} from 'node:fs';
 import {access, lstat, mkdir, realpath, stat} from 'node:fs/promises';
-import {basename, dirname, isAbsolute, relative, resolve, sep} from 'node:path';
+import {basename, dirname, isAbsolute, resolve, sep} from 'node:path';
 import {isInside, workspaceAliasPath} from '../utils/path.js';
 
 export interface ResolveWorkspacePathOptions {
@@ -145,11 +145,4 @@ async function pathExists(path: string): Promise<boolean> {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
     throw error;
   }
-}
-
-export function relativeToWorkspace(path: string, workspace: WorkspaceAccess): string {
-  for (const root of workspace.roots) {
-    if (isInside(root, path)) return relative(root, path) || '.';
-  }
-  return path;
 }

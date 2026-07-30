@@ -188,13 +188,13 @@ recognised as the product animal, while the otherwise prompt-first frame became
 dense again once retrieval paths, prompt-token partitions, a long prior-session
 title, and a verbose recovery notice accumulated.
 
-The corrected contract is:
+The corrected contract proposed during that experiment was:
 
 - render a three-row code-native Goose only at 100+ content columns and 22+
   rows; cap the main reading width so ultra-wide terminals do not create
   dashboard-length rules and telemetry lines;
-- use `__\●▶` or ASCII `__\o>` at ordinary widths and keep screen-reader output
-  textual;
+- use the then-proposed `__\●▶` or ASCII `__\o>` signature at ordinary widths
+  and keep screen-reader output textual;
 - keep prior-session prose, retrieval paths, adaptive-budget reasons, and token
   partitions out of the resting timeline; `/context`, `/status`, and `/recover`
   remain the evidence surfaces;

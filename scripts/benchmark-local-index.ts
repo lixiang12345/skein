@@ -1,4 +1,4 @@
-import {readFile, rm} from 'node:fs/promises';
+import {access, readFile, rm} from 'node:fs/promises';
 import {performance} from 'node:perf_hooks';
 import {relative, resolve, sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -97,6 +97,7 @@ export async function runLocalIndexBenchmark(
   const caseFile = resolve(options.cases);
   const topK = options.topK ?? 20;
   const fixture = await loadFixture(caseFile);
+  await assertWorkspaceContainsRelevantFiles(workspace, fixture.cases);
   const index = new LocalContextIndex([workspace]);
   if (options.freshIndex) await rm(index.indexPath, {force: true});
 
@@ -185,7 +186,7 @@ export async function runLocalIndexBenchmark(
 
 function parseArguments(values: string[]): ParsedArguments {
   const defaults: ParsedArguments = {
-    workspace: process.cwd(),
+    workspace: resolve(process.cwd(), 'test/fixtures/context-benchmark'),
     cases: resolve(process.cwd(), 'test/fixtures/context-benchmark.json'),
     topK: 20,
     freshIndex: false,
@@ -214,6 +215,34 @@ function parseArguments(values: string[]): ParsedArguments {
     }
   }
   return defaults;
+}
+
+async function assertWorkspaceContainsRelevantFiles(
+  workspace: string,
+  cases: BenchmarkCase[],
+): Promise<void> {
+  const missing: string[] = [];
+  for (const path of new Set(cases.flatMap((benchmark) => benchmark.relevant))) {
+    const candidate = resolve(workspace, path);
+    const relativePath = relative(workspace, candidate);
+    const withinWorkspace = relativePath === '' ||
+      (!relativePath.startsWith(`..${sep}`) && relativePath !== '..');
+    if (!withinWorkspace) {
+      missing.push(path);
+      continue;
+    }
+    try {
+      await access(candidate);
+    } catch {
+      missing.push(path);
+    }
+  }
+  if (missing.length) {
+    throw new Error(
+      `Benchmark workspace is missing manifest relevant files: ${missing.join(', ')}. ` +
+      'Use --workspace to select a corpus that matches --cases.',
+    );
+  }
 }
 
 async function loadFixture(path: string): Promise<BenchmarkFixture> {

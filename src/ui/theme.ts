@@ -7,7 +7,6 @@ import {
   ThemeProvider as InkUiThemeProvider,
   type Theme as InkUiTheme,
 } from '@inkjs/ui';
-import {compactDisplayPath} from './text.js';
 import {resolveHomeNamespace} from '../utils/namespace.js';
 
 /**
@@ -451,9 +450,4 @@ export function elapsed(startedAt: number): string {
   const seconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1_000));
   if (seconds < 60) return `${seconds}s`;
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-}
-
-/** @deprecated Use compactDisplayPath from ui/text for terminal-width-aware output. */
-export function compactPath(path: string, max = 54): string {
-  return compactDisplayPath(path, max);
 }

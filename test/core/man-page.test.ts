@@ -1,8 +1,9 @@
+import {execFileSync} from 'node:child_process';
 import {readFile} from 'node:fs/promises';
 import {describe, expect, it} from 'vitest';
 
 // @ts-expect-error scripts/ ships plain ESM without type declarations.
-import {escapeRoff, parseCommandNames, renderManPage} from '../../scripts/generate-man.mjs';
+import {escapeRoff, generateManPage, parseCommandNames, renderManPage} from '../../scripts/generate-man.mjs';
 
 describe('man page generator', () => {
   it('escapes roff control characters', () => {
@@ -49,11 +50,22 @@ describe('man page generator', () => {
     expect(page).toContain('.SH SEE ALSO');
   });
 
-  it('keeps a generated man/skein.1 checked in and fresh in shape', async () => {
-    const page = await readFile('man/skein.1', 'utf8');
-    expect(page.startsWith('.TH SKEIN 1 ')).toBe(true);
-    expect(page).toContain('.SH COMMANDS');
-    expect(page).toContain('.SS skein session');
-    expect(page).toContain('.SS skein feedback');
-  });
+  it('keeps man/skein.1 byte-identical to the current CLI source output', async () => {
+    const packageJson = JSON.parse(await readFile('package.json', 'utf8')) as {
+      version: string;
+      homepage: string;
+      bugs: {url: string};
+      skein: {manPageDate: string};
+    };
+    const {page} = generateManPage({
+      packageJson,
+      run: (args: string[]) => execFileSync(process.execPath, ['--import', 'tsx', 'src/cli.tsx', ...args], {
+        cwd: process.cwd(),
+        encoding: 'utf8',
+        env: {...process.env, NO_COLOR: '1'},
+      }),
+    });
+
+    expect(await readFile('man/skein.1', 'utf8')).toBe(page);
+  }, 60_000);
 });

@@ -4,7 +4,7 @@ import {basename} from 'node:path';
 import type {AgentPhase, ContextBudgetTier, ContextDegradation, ContextSource, MosaicConfig, PendingInput, PromptTokenBreakdown, RouteCostReceipt, SessionTask, ToolCall, ToolCategory, WorkingMemory} from '../types.js';
 import {PRODUCT_MARK, PRODUCT_NAME} from '../brand.js';
 import {commandForCall} from '../tools/permissions.js';
-import {commandSuggestions, type CommandSuggestion} from './commands.js';
+import type {CommandSuggestion} from './commands.js';
 import {
   compactDisplayPath,
   displayWidth,
@@ -1362,30 +1362,6 @@ export function Footer({busy, approval = false, tokens = 0, changedFiles, width 
     <Row glyph={<Text color={statusColor}>{statusGlyph}</Text>}>
       <InlineRow parts={mainParts} width={contentWidth} separator={`  ${glyphs.separator}  `} separatorColor={theme.border} />
     </Row>
-  );
-}
-
-export function CommandHints({input, selectedIndex = 0}: {input: string; selectedIndex?: number}) {
-  const theme = useTheme();
-  const glyphs = resolveGlyphs();
-  const suggestions = commandSuggestions(input).slice(0, 5);
-  if (!suggestions.length) return null;
-  return (
-    <Box flexDirection="column" paddingLeft={2} marginBottom={1}>
-      {suggestions.map((suggestion, index) => {
-        const selected = index === selectedIndex;
-        const label = sanitizeInlineTerminalText(suggestion.label);
-        const description = sanitizeInlineTerminalText(suggestion.description);
-        return (
-          <Box key={suggestion.value}>
-            <Text bold={selected} color={selected ? theme.accent : theme.muted}>
-              {selected ? glyphs.prompt : ' '} {label}
-            </Text>
-            <Text color={theme.muted}>  {description}</Text>
-          </Box>
-        );
-      })}
-    </Box>
   );
 }
 

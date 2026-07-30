@@ -50,7 +50,7 @@ describe('batched ask approvals', () => {
   it('prompts once for a multi-category shell command', async () => {
     const runner = await makeRunner();
     const prompts: ToolCategory[] = [];
-    const {result} = await runner.runUserShellCommand('mkdir -p made && npm install left-pad --dry-run', {
+    const {result} = await runner.runUserShellCommand('mkdir -p made && npm install --help', {
       requestPermission: async (_call, category) => {
         prompts.push(category);
         return true;

@@ -5,31 +5,6 @@ export function isInside(parent: string, candidate: string): boolean {
   return rel === '' || (!rel.startsWith('..') && !rel.startsWith(sep));
 }
 
-export function resolveInRoots(
-  input: string,
-  roots: string[],
-  options: {allowMissing?: boolean} = {},
-): string {
-  const candidates = input.startsWith('/')
-    ? [resolve(input)]
-    : roots.map((root) => resolve(root, input));
-  const found = candidates.find((candidate) =>
-    roots.some((root) => isInside(root, candidate)),
-  );
-  if (!found) throw new Error(`Path is outside configured workspace roots: ${input}`);
-  return found;
-}
-
-export function displayPath(path: string, roots: string[]): string {
-  for (const root of roots) {
-    if (isInside(root, path)) {
-      const rel = relative(root, path);
-      return roots.length > 1 ? `${root.split(sep).at(-1)}/${rel}` : rel;
-    }
-  }
-  return path;
-}
-
 /**
  * Stable path labels shared with the local retrieval multi-root contract.
  * Basenames are not sufficient because two workspace roots may have the same

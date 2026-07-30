@@ -61,21 +61,19 @@ only carrier of identity or status.
 
 ## Terminal Identity
 
-- Wide interactive lockup: a three-row code-native Goose silhouette with a
-  contrasting woven lower wing, paired with repository, route, model, and mode.
-- Compact Unicode signature: `__\●▶`
-- Compact ASCII fallback: `__\o>`
-- Transcript signer: `⌁` (`U+2301`) or `*` in ASCII mode, where repeating the
-  full animal would add noise to every assistant response.
-- Accessible name: `Skein`
-
-The former single-cell-only header passed width tests but failed real-user
-recognition: `⌁` read as an abstract thread, not the Goose. Interactive sessions
-therefore use the recognizable responsive lockup above. Terminals under 100
-columns keep the compact flight signature; constrained-height and screen-reader
-modes never receive multi-line artwork. `TERM=dumb`, `SKEIN_GLYPHS=ascii`, and
-screen-reader modes retain deterministic ASCII/name paths. Decorative glyphs
-receive the accessible label “Skein”.
+- Wide interactive Unicode banner: the 5-row block `SKEIN` wordmark from
+  `LOGO_LINES`. It appears at 44 or more terminal columns; at 44--56 columns
+  the wordmark renders without an emblem.
+- At 57 or more terminal columns, the wound-coil thread emblem from
+  `EMBLEM_LINES` is appended after one blank cell. The width leaves the
+  two-cell gutter, 36-cell wordmark, 16-cell emblem, and two cells of safety.
+- Compact Unicode fallback: the one-cell transcript signer `⌁` (`U+2301`) with
+  the text name `SKEIN`; it is used instead of clipped multi-line artwork.
+- ASCII fallback: `*` with the text name `SKEIN`. `SKEIN_GLYPHS=ascii`,
+  `TERM=dumb`, and screen-reader sessions select this deterministic path;
+  screen-reader and dumb sessions never receive the multi-line artwork.
+- Accessible name: `Skein`. Decorative logo and emblem glyphs are hidden from
+  assistive output while their containing terminal surface carries that name.
 
 ## Size Contract
 

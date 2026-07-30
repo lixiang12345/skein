@@ -63,6 +63,36 @@ export function renderManPage({version, date, homepage, bugs, rootHelp, commandH
   return `${lines.join('\n')}\n`;
 }
 
+/** Resolve the release-controlled man page date from package metadata. */
+export function resolveManPageDate(packageJson) {
+  const date = packageJson?.skein?.manPageDate;
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(date ?? '')) {
+    throw new Error('package.json skein.manPageDate must be an ISO date (YYYY-MM-DD)');
+  }
+  return date;
+}
+
+export function writeManPage(path, page) {
+  mkdirSync(dirname(path), {recursive: true});
+  writeFileSync(path, page);
+}
+
+export function generateManPage({packageJson, run}) {
+  const rootHelp = run(['--help']);
+  const commandHelps = parseCommandNames(rootHelp).map((name) => ({name, help: run([name, '--help'])}));
+  return {
+    page: renderManPage({
+      version: packageJson.version,
+      date: resolveManPageDate(packageJson),
+      homepage: packageJson.homepage,
+      bugs: packageJson.bugs.url,
+      rootHelp,
+      commandHelps,
+    }),
+    commandCount: commandHelps.length,
+  };
+}
+
 function main() {
   const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
   const cli = join(root, 'dist', 'cli.js');
@@ -70,19 +100,9 @@ function main() {
     encoding: 'utf8',
     env: {...process.env, NO_COLOR: '1'},
   });
-  const rootHelp = run(['--help']);
-  const commandHelps = parseCommandNames(rootHelp).map((name) => ({name, help: run([name, '--help'])}));
-  const page = renderManPage({
-    version: packageJson.version,
-    date: new Date().toISOString().slice(0, 10),
-    homepage: packageJson.homepage,
-    bugs: packageJson.bugs.url,
-    rootHelp,
-    commandHelps,
-  });
-  mkdirSync(join(root, 'man'), {recursive: true});
-  writeFileSync(join(root, 'man', 'skein.1'), page);
-  process.stdout.write(`man/skein.1 generated for ${commandHelps.length} subcommands.\n`);
+  const {page, commandCount} = generateManPage({packageJson, run});
+  writeManPage(join(root, 'man', 'skein.1'), page);
+  process.stdout.write(`man/skein.1 generated for ${commandCount} subcommands.\n`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
